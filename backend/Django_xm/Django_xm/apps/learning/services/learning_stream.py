@@ -29,9 +29,6 @@ SSE 实时性设计（为什么用"线程泵"而非 astream）：
     daphne 实时 flush，步骤条逐节点实时推进。
 """
 
-import asyncio
-import threading
-
 from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.common.event_schema import EventSource, EventType
 from Django_xm.common.realtime_events import publish_event

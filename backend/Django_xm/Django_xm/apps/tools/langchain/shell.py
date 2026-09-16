@@ -17,6 +17,7 @@ import signal
 import subprocess
 from pathlib import Path
 
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
@@ -378,7 +379,20 @@ def _sandbox_result_to_standard(sandbox_result, command: str) -> StandardToolRes
         output_parts.append(f"[stderr]\n{sandbox_result.stderr.strip()}")
 
     output = "\n\n".join(output_parts) if output_parts else "(命令执行完成，无输出)"
-    sandbox_tag = " [沙箱执行]" if sandbox_result.sandboxed else " [沙箱降级-本机执行]"
+    # fail-closed 错误：优先展示明确错误（含原因与建议），不再出现"降级"标签
+    if sandbox_result.error:
+        return StandardToolResult(
+            content=f"沙箱执行失败: {sandbox_result.error}\n命令: {command}",
+            status=ToolStatus.ERROR,
+            source="shell_exec",
+            metadata={
+                "return_code": sandbox_result.return_code,
+                "command": command,
+                "sandboxed": sandbox_result.sandboxed,
+                "sandbox_error": sandbox_result.error,
+            },
+        )
+    sandbox_tag = " [沙箱执行]" if sandbox_result.sandboxed else ""
 
     if sandbox_result.timed_out:
         return StandardToolResult(
@@ -420,28 +434,34 @@ def _execute_command(
     command: str,
     timeout: int = DEFAULT_TIMEOUT,
     working_dir: str = "",
+    *,
+    enable_sandbox: bool = False,
+    thread_id: str = "",
 ) -> StandardToolResult:
     """执行 Shell 命令并返回结果
 
-    Phase D 集成：HIGH 级命令通过沙箱执行器路由。
-    - sandbox_executor.should_sandbox() → True → Docker 容器内执行（或降级本机）
-    - 否则 → 本机直接执行（原有逻辑）
+    Phase D 集成：HIGH 级命令通过沙箱执行器路由（任务级开关 enable_sandbox 判定）。
+    - sandbox_executor.should_sandbox(command, enable_sandbox=...) → True
+      → 长驻 Docker 容器内执行（docker exec 复用，自愈重建，fail-closed）
+    - 否则 → 本机直接执行（原有逻辑，行为不变）
 
     使用 Popen + communicate(timeout) 替代 subprocess.run，
     超时后通过 _kill_process_tree 终止整个进程树，
     解决 Windows shell=True 下子进程不被杀导致管道挂起的问题。
     """
-    # Phase D: HIGH 级命令沙箱路由
+    # Phase D: HIGH 级命令沙箱路由（任务级开关判定）
     try:
         from Django_xm.common.sandbox import sandbox_executor
 
-        if sandbox_executor.should_sandbox(command):
+        if sandbox_executor.should_sandbox(command, enable_sandbox=enable_sandbox):
             effective_timeout = min(_get_effective_timeout(command, timeout), MAX_TIMEOUT)
             safe_cwd = _get_safe_working_dir(working_dir)
             sandbox_result = sandbox_executor.execute(
                 command,
                 working_dir=safe_cwd,
                 timeout=effective_timeout,
+                enable_sandbox=enable_sandbox,
+                thread_id=thread_id,
             )
             # 记录沙箱执行指标（F2）
             try:
@@ -451,11 +471,20 @@ def _execute_command(
             except Exception:
                 # 指标记录失败不影响沙箱执行主流程
                 logger.debug("记录沙箱执行指标失败")
+            # fail-closed：沙箱执行失败（容器二次失败/不可用）时返回明确错误，
+            # 绝不静默降级本机执行
             return _sandbox_result_to_standard(sandbox_result, command)
     except ImportError:
         pass  # 沙箱模块不可用，走本机执行
     except Exception as sandbox_err:
-        logger.warning(f"shell_exec: 沙箱路由异常(降级本机): {sandbox_err}")
+        # fail-closed：沙箱路由异常不静默降级本机，返回明确错误（含建议）
+        logger.exception("shell_exec: 沙箱路由异常（fail-closed）")
+        return StandardToolResult(
+            content=f"沙箱执行路由异常: {sandbox_err}。请检查 Docker 服务，或关闭沙箱后重试。",
+            status=ToolStatus.ERROR,
+            source="shell_exec",
+            metadata={"command": command, "sandbox_error": str(sandbox_err)},
+        )
 
     effective_timeout = _get_effective_timeout(command, timeout)
     effective_timeout = min(effective_timeout, MAX_TIMEOUT)
@@ -598,11 +627,16 @@ class ShellExecTool(AsyncToolMixin, BaseTool):
         command: str,
         timeout: int = DEFAULT_TIMEOUT,
         working_dir: str = "",
+        config: RunnableConfig | None = None,
     ) -> str:
         """执行 Shell 命令
 
         审批由 ApprovalMiddleware 在 after_model 钩子统一处理，
         工具层不参与审批判断。到达此方法的命令已通过审批或无需审批。
+
+        config：工具调用运行时配置（langchain-core 自动注入）。
+        从 config.configurable 读取任务级开关 enable_sandbox 与 thread_id，
+        用于沙箱路由判定与长驻容器定位（与 execute_research_async 注入同源）。
         """
         # 参数校验：防止 LLM 传入空参数导致不可预期的行为
         if not command or not command.strip():
@@ -629,7 +663,18 @@ class ShellExecTool(AsyncToolMixin, BaseTool):
 
         # 执行命令（审批已由 ApprovalMiddleware 统一处理）
         logger.info(f"shell_exec: 执行命令: {command[:100]}")
-        result = _execute_command(command, timeout, working_dir)
+        # 任务级沙箱开关与 thread_id 从工具调用上下文（config.configurable）读取：
+        # 与 execute_research_async 注入 configurable 同源，默认关闭（本机执行，行为不变）
+        configurable = ((config or {}).get("configurable") or {}) if config else {}
+        enable_sandbox = bool(configurable.get("enable_sandbox", False))
+        thread_id = str(configurable.get("thread_id", "") or "")
+        result = _execute_command(
+            command,
+            timeout,
+            working_dir,
+            enable_sandbox=enable_sandbox,
+            thread_id=thread_id,
+        )
         return result.to_tool_message()
 
 

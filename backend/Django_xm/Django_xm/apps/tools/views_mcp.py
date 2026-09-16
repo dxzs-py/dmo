@@ -2,6 +2,7 @@ import logging
 
 from asgiref.sync import sync_to_async
 from drf_spectacular.utils import extend_schema
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -13,7 +14,8 @@ from Django_xm.apps.tools.views_common import (
 )
 from Django_xm.async_utils import run_async
 from Django_xm.common.error_codes import ErrorCode
-from Django_xm.common.responses import error_response, success_response
+from Django_xm.common.exceptions import BaseAppError
+from Django_xm.common.responses import success_response
 from Django_xm.common.serializers import EmptySerializer
 
 logger = logging.getLogger(__name__)
@@ -187,19 +189,15 @@ class McpServerTestView(APIView):
                 break
 
         if not target:
-            return error_response(message=f"未找到 MCP Server: {name}")
+            raise NotFound(f"未找到 MCP Server: {name}")
 
         try:
             from Django_xm.apps.tools.mcp import get_mcp_tools  # noqa: F401  # 仅用于导入可用性检测
-        except ImportError:
-            return error_response(message="langchain-mcp-adapters 未安装")
+        except ImportError as e:
+            raise BaseAppError("langchain-mcp-adapters 未安装", business_code=ErrorCode.SERVICE_UNAVAILABLE) from e
 
-        try:
-            data = run_async(_test_mcp_server(name, target))
-            return success_response(data=data)
-        except Exception:
-            logger.exception(f"MCP Server 连接测试失败 ({name})")
-            return error_response(message="连接失败，详细信息请查看服务端日志")
+        data = run_async(_test_mcp_server(name, target))
+        return success_response(data=data)
 
 
 async def _test_mcp_server(server_name, target):
@@ -329,16 +327,12 @@ class McpServerView(MethodThrottleMixin, APIView):
         from Django_xm.apps.tools.managers import McpToolManager
 
         manager = McpToolManager()
-        try:
-            tools = manager.get_tool_info_list(request.user)
-            paginator = StandardPagination()
-            page = paginator.paginate_queryset(tools, request)
-            if page is not None:
-                return paginator.get_paginated_response(page)
-            return success_response(data={"servers": tools, "total": len(tools)})
-        except Exception:
-            logger.exception("获取 MCP Server 列表失败")
-            return error_response(message="获取 MCP Server 列表失败")
+        tools = manager.get_tool_info_list(request.user)
+        paginator = StandardPagination()
+        page = paginator.paginate_queryset(tools, request)
+        if page is not None:
+            return paginator.get_paginated_response(page)
+        return success_response(data={"servers": tools, "total": len(tools)})
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request):
@@ -347,9 +341,9 @@ class McpServerView(MethodThrottleMixin, APIView):
 
         serializer = McpServerAddSerializer(data=request.data)
         if not serializer.is_valid():
-            return error_response(
-                message="数据验证失败",
-                code=ErrorCode.VALIDATION_FAILED,
+            raise BaseAppError(
+                "数据验证失败",
+                business_code=ErrorCode.VALIDATION_FAILED,
                 data={"details": serializer.errors},
             )
 
@@ -372,9 +366,9 @@ class McpServerDetailView(APIView):
         data = {**request.data, "name": name}
         serializer = McpServerAddSerializer(data=data)
         if not serializer.is_valid():
-            return error_response(
-                message="数据验证失败",
-                code=ErrorCode.VALIDATION_FAILED,
+            raise BaseAppError(
+                "数据验证失败",
+                business_code=ErrorCode.VALIDATION_FAILED,
                 data={"details": serializer.errors},
             )
 
@@ -419,28 +413,24 @@ class McpServerDiscoverView(APIView):
 
         serializer = McpServerDiscoverSerializer(data=request.data)
         if not serializer.is_valid():
-            return error_response(
-                message="数据验证失败",
-                code=ErrorCode.VALIDATION_FAILED,
+            raise BaseAppError(
+                "数据验证失败",
+                business_code=ErrorCode.VALIDATION_FAILED,
                 data={"details": serializer.errors},
             )
         registry_url = serializer.validated_data["registry_url"]
 
-        try:
-            from Django_xm.apps.tools.mcp.discovery import get_mcp_discovery
+        from Django_xm.apps.tools.mcp.discovery import get_mcp_discovery
 
-            discovery = get_mcp_discovery()
-            servers = run_async(discovery.discover_from_registry(registry_url))
-            return success_response(
-                data={
-                    "registry_url": registry_url,
-                    "servers": servers,
-                    "total": len(servers),
-                }
-            )
-        except Exception:
-            logger.exception(f"MCP Server 发现失败 ({registry_url})")
-            return error_response(message="MCP Server 发现失败")
+        discovery = get_mcp_discovery()
+        servers = run_async(discovery.discover_from_registry(registry_url))
+        return success_response(
+            data={
+                "registry_url": registry_url,
+                "servers": servers,
+                "total": len(servers),
+            }
+        )
 
 
 class ToolListView(APIView):
@@ -467,20 +457,16 @@ class ToolListView(APIView):
 
         if tool_type:
             if tool_type not in managers:
-                return error_response(
-                    message=f"无效的工具类型 '{tool_type}'，可选值: langchain, mcp, skill",
-                    code=ErrorCode.VALIDATION_FAILED,
+                raise BaseAppError(
+                    f"无效的工具类型 '{tool_type}'，可选值: langchain, mcp, skill",
+                    business_code=ErrorCode.VALIDATION_FAILED,
                 )
-            try:
-                tools = managers[tool_type].get_tool_info_list(user)
-                paginator = StandardPagination()
-                page = paginator.paginate_queryset(tools, request)
-                if page is not None:
-                    return paginator.get_paginated_response(page)
-                return success_response(data={tool_type: tools, "total": len(tools)})
-            except Exception:
-                logger.exception(f"获取 {tool_type} 工具列表失败")
-                return error_response(message="获取工具列表失败")
+            tools = managers[tool_type].get_tool_info_list(user)
+            paginator = StandardPagination()
+            page = paginator.paginate_queryset(tools, request)
+            if page is not None:
+                return paginator.get_paginated_response(page)
+            return success_response(data={tool_type: tools, "total": len(tools)})
 
         result = {}
         total = 0
@@ -557,9 +543,9 @@ class CustomToolView(MethodThrottleMixin, APIView):
 
         serializer = McpToolUploadSerializer(data=request.data)
         if not serializer.is_valid():
-            return error_response(
-                message="数据验证失败",
-                code=ErrorCode.VALIDATION_FAILED,
+            raise BaseAppError(
+                "数据验证失败",
+                business_code=ErrorCode.VALIDATION_FAILED,
                 data={"details": serializer.errors},
             )
         data = serializer.validated_data
@@ -569,49 +555,45 @@ class CustomToolView(MethodThrottleMixin, APIView):
         category_code = data.get("category", "general")
 
         if "@tool" not in tool_code:
-            return error_response(message="代码必须包含 @tool 装饰器定义的 LangChain 工具")
+            raise BaseAppError("代码必须包含 @tool 装饰器定义的 LangChain 工具", business_code=ErrorCode.INVALID_PARAMS)
 
         if CustomTool.objects.filter(user=request.user, name=tool_name).exists():
-            return error_response(message=f"工具 '{tool_name}' 已存在")
+            raise BaseAppError(f"工具 '{tool_name}' 已存在", business_code=ErrorCode.DUPLICATE_RESOURCE)
 
         try:
             compile(tool_code, f"<tool:{tool_name}>", "exec")
         except SyntaxError as e:
-            return error_response(message=f"代码语法错误: {e.msg} (行 {e.lineno})")
+            raise BaseAppError(f"代码语法错误: {e.msg} (行 {e.lineno})", business_code=ErrorCode.INVALID_PARAMS) from e
 
         try:
             category = ToolCategory.objects.get(code=category_code)
         except ToolCategory.DoesNotExist:
             category = ToolCategory.objects.get(code="general")
 
-        try:
-            tool_obj = CustomTool.objects.create(
-                user=request.user,
-                name=tool_name,
-                description=description,
-                code=tool_code,
-                tool_type="langchain",
-                category=category,
-                source="user",
-                status="active",
-                # 默认 approval_status='pending'，需管理员审核通过后才生效
-            )
-            logger.info(
-                f"用户上传自定义工具: {tool_name} (user={request.user.id}, approval_status={tool_obj.approval_status})"
-            )
-            return success_response(
-                data={
-                    "id": tool_obj.id,
-                    "name": tool_obj.name,
-                    "description": tool_obj.description,
-                    "status": tool_obj.status,
-                    "approval_status": tool_obj.approval_status,
-                },
-                message=f"工具 '{tool_name}' 上传成功，等待管理员审核",
-            )
-        except Exception:
-            logger.exception("工具上传失败")
-            return error_response(message="工具上传失败")
+        tool_obj = CustomTool.objects.create(
+            user=request.user,
+            name=tool_name,
+            description=description,
+            code=tool_code,
+            tool_type="langchain",
+            category=category,
+            source="user",
+            status="active",
+            # 默认 approval_status='pending'，需管理员审核通过后才生效
+        )
+        logger.info(
+            f"用户上传自定义工具: {tool_name} (user={request.user.id}, approval_status={tool_obj.approval_status})"
+        )
+        return success_response(
+            data={
+                "id": tool_obj.id,
+                "name": tool_obj.name,
+                "description": tool_obj.description,
+                "status": tool_obj.status,
+                "approval_status": tool_obj.approval_status,
+            },
+            message=f"工具 '{tool_name}' 上传成功，等待管理员审核",
+        )
 
 
 class CustomToolDetailView(APIView):
@@ -625,7 +607,7 @@ class CustomToolDetailView(APIView):
 
         tool_obj = CustomTool.objects.filter(user=request.user, name=name).first()
         if not tool_obj:
-            return error_response(message=f"未找到自定义工具 '{name}'")
+            raise NotFound(f"未找到自定义工具 '{name}'")
 
         new_code = request.data.get("code")
         new_desc = request.data.get("description")
@@ -633,11 +615,17 @@ class CustomToolDetailView(APIView):
 
         if new_code is not None:
             if "@tool" not in new_code:
-                return error_response(message="代码必须包含 @tool 装饰器定义的 LangChain 工具")
+                raise BaseAppError(
+                    "代码必须包含 @tool 装饰器定义的 LangChain 工具",
+                    business_code=ErrorCode.INVALID_PARAMS,
+                )
             try:
                 compile(new_code, f"<tool:{name}>", "exec")
             except SyntaxError as e:
-                return error_response(message=f"代码语法错误: {e.msg} (行 {e.lineno})")
+                raise BaseAppError(
+                    f"代码语法错误: {e.msg} (行 {e.lineno})",
+                    business_code=ErrorCode.INVALID_PARAMS,
+                ) from e
             tool_obj.code = new_code
 
         if new_desc is not None:
@@ -706,12 +694,8 @@ class SkillView(MethodThrottleMixin, APIView):
         from Django_xm.apps.tools.managers import SkillToolManager
 
         manager = SkillToolManager()
-        try:
-            skills = manager.get_tool_info_list(request.user)
-            return success_response(data={"skills": skills, "total": len(skills)})
-        except Exception:
-            logger.exception("获取 Skill 列表失败")
-            return error_response(message="获取 Skill 列表失败")
+        skills = manager.get_tool_info_list(request.user)
+        return success_response(data={"skills": skills, "total": len(skills)})
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request):
@@ -720,9 +704,9 @@ class SkillView(MethodThrottleMixin, APIView):
 
         serializer = SkillCreateSerializer(data=request.data)
         if not serializer.is_valid():
-            return error_response(
-                message="数据验证失败",
-                code=ErrorCode.VALIDATION_FAILED,
+            raise BaseAppError(
+                "数据验证失败",
+                business_code=ErrorCode.VALIDATION_FAILED,
                 data={"details": serializer.errors},
             )
 
@@ -745,9 +729,9 @@ class SkillDetailView(APIView):
         data = {**request.data, "name": name}
         serializer = SkillCreateSerializer(data=data)
         if not serializer.is_valid():
-            return error_response(
-                message="数据验证失败",
-                code=ErrorCode.VALIDATION_FAILED,
+            raise BaseAppError(
+                "数据验证失败",
+                business_code=ErrorCode.VALIDATION_FAILED,
                 data={"details": serializer.errors},
             )
 
@@ -779,9 +763,9 @@ class SkillStatusView(APIView):
             data["status"] = request.data["status"]
         serializer = SkillToggleSerializer(data=data)
         if not serializer.is_valid():
-            return error_response(
-                message="数据验证失败",
-                code=ErrorCode.VALIDATION_FAILED,
+            raise BaseAppError(
+                "数据验证失败",
+                business_code=ErrorCode.VALIDATION_FAILED,
                 data={"details": serializer.errors},
             )
 
@@ -846,18 +830,18 @@ class SkillPackageView(MethodThrottleMixin, APIView):
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request):
-        from Django_xm.apps.tools.skills.loader import SkillLoader
         from Django_xm.apps.tools.serializers import (
             RESOURCE_NAME_ERROR_MESSAGE,
             RESOURCE_NAME_PATTERN,
         )
+        from Django_xm.apps.tools.skills.loader import SkillLoader
 
         uploaded_file = request.FILES.get("file")
         if not uploaded_file:
-            return error_response(message="请上传 ZIP 文件")
+            raise BaseAppError("请上传 ZIP 文件", business_code=ErrorCode.INVALID_PARAMS)
 
         if not uploaded_file.name.endswith(".zip"):
-            return error_response(message="仅支持 .zip 格式的 Skill 包")
+            raise BaseAppError("仅支持 .zip 格式的 Skill 包", business_code=ErrorCode.INVALID_PARAMS)
 
         # 保存临时文件
         import tempfile
@@ -875,15 +859,12 @@ class SkillPackageView(MethodThrottleMixin, APIView):
             if is_valid and frontmatter:
                 pkg_name = frontmatter.get("name", "")
                 if not RESOURCE_NAME_PATTERN.match(pkg_name):
-                    return error_response(
-                        message=RESOURCE_NAME_ERROR_MESSAGE,
-                        code=ErrorCode.VALIDATION_FAILED,
-                    )
+                    raise BaseAppError(RESOURCE_NAME_ERROR_MESSAGE, business_code=ErrorCode.VALIDATION_FAILED)
 
             success, message, metadata = loader.install_skill_package(tmp_path, request.user, source="user")
             if success:
                 return success_response(data=metadata, message=message)
-            return error_response(message=message)
+            raise BaseAppError(message, business_code=ErrorCode.INVALID_PARAMS)
         finally:
             import os
 
@@ -903,7 +884,7 @@ class SkillPackageDetailView(APIView):
         loader = SkillLoader()
         content = loader.activate_skill(name, user_id=request.user.id)
         if content is None:
-            return error_response(message=f"未找到 Skill '{name}' 或 SKILL.md 不存在")
+            raise NotFound(f"未找到 Skill '{name}' 或 SKILL.md 不存在")
 
         return success_response(
             data={
@@ -920,8 +901,9 @@ class SkillPackageDetailView(APIView):
         success, message = loader.uninstall_skill_package(name, request.user)
         if success:
             return success_response(message=message)
-        http_status = 403 if "系统级" in message else 400
-        return error_response(message=message, http_status=http_status)
+        if "系统级" in message:
+            raise PermissionDenied(message)
+        raise BaseAppError(message, business_code=ErrorCode.INVALID_PARAMS)
 
 
 class SkillPackageStatusView(APIView):
@@ -936,7 +918,7 @@ class SkillPackageStatusView(APIView):
         status = request.data.get("status")
         pkg = SkillPackage.objects.filter(user=request.user, name=name).first()
         if not pkg:
-            return error_response(message=f"未找到 Skill 包 '{name}'")
+            raise NotFound(f"未找到 Skill 包 '{name}'")
 
         if status in ("active", "disabled"):
             pkg.status = status

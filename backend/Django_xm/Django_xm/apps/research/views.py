@@ -4,7 +4,7 @@ import uuid
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
-from rest_framework import status
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -13,7 +13,8 @@ from Django_xm.apps.core.services.file_manager import get_file_manager
 from Django_xm.apps.core.throttling import ResearchRateThrottle
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventType
-from Django_xm.common.responses import error_response, not_found_response, success_response
+from Django_xm.common.exceptions import BaseAppError
+from Django_xm.common.responses import success_response
 from Django_xm.common.serializers import EmptySerializer
 from Django_xm.common.signal_bus import (
     SESSION_TYPE_RESEARCH,
@@ -58,11 +59,10 @@ class DeepResearchStartView(APIView):
     def post(self, request):
         serializer = ResearchStartSerializer(data=request.data)
         if not serializer.is_valid():
-            return error_response(
-                code=ErrorCode.VALIDATION_FAILED,
-                message="数据验证失败",
+            raise BaseAppError(
+                "数据验证失败",
+                business_code=ErrorCode.VALIDATION_FAILED,
                 data=serializer.errors,
-                http_status=status.HTTP_400_BAD_REQUEST,
             )
 
         data = serializer.validated_data
@@ -79,10 +79,10 @@ class DeepResearchStartView(APIView):
                     .filter(task_id=thread_id, created_by=request.user, is_deleted=False)
                     .exists()
                 ):
-                    return error_response(
-                        code=ErrorCode.DUPLICATE_RESOURCE,
-                        message=f"研究任务 {thread_id} 已存在",
-                        http_status=status.HTTP_400_BAD_REQUEST,
+                    # http_status 400->409：原视图显式传 400，单轨制后由 DUPLICATE_RESOURCE 枚举决定（409）
+                    raise BaseAppError(
+                        f"研究任务 {thread_id} 已存在",
+                        business_code=ErrorCode.DUPLICATE_RESOURCE,
                     )
 
                 task_manager.create_task(
@@ -90,6 +90,7 @@ class DeepResearchStartView(APIView):
                     data["query"],
                     enable_web_search=data.get("enable_web_search", True),
                     enable_doc_analysis=data.get("enable_doc_analysis", False),
+                    enable_sandbox=data.get("enable_sandbox", False),
                     created_by=request.user,
                 )
 
@@ -98,6 +99,7 @@ class DeepResearchStartView(APIView):
                     use_mcp=data.get("use_mcp", False),
                     selected_mcp_servers=data.get("selected_mcp_servers", []),
                     selected_tools=data.get("selected_tools", []),
+                    enable_sandbox=data.get("enable_sandbox", False),
                 )
 
             research_depth = data.get("research_depth", "standard")
@@ -120,6 +122,7 @@ class DeepResearchStartView(APIView):
                     "message_id": "",
                     "enable_web_search": data.get("enable_web_search", True),
                     "enable_doc_analysis": data.get("enable_doc_analysis", False),
+                    "enable_sandbox": data.get("enable_sandbox", False),
                     "knowledge_base_ids": knowledge_base_ids,
                     "use_mcp": data.get("use_mcp", False),
                     "selected_mcp_servers": data.get("selected_mcp_servers", []),
@@ -169,18 +172,11 @@ class DeepResearchStartView(APIView):
             )
 
         except IntegrityError:
-            return error_response(
-                code=ErrorCode.DUPLICATE_RESOURCE,
-                message=f"研究任务 {thread_id} 已存在",
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
-        except Exception:
-            logger.exception("启动研究任务失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR,
-                message="研究任务启动失败，请稍后重试",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            # http_status 400->409：原视图显式传 400，单轨制后由 DUPLICATE_RESOURCE 枚举决定（409）
+            raise BaseAppError(
+                f"研究任务 {thread_id} 已存在",
+                business_code=ErrorCode.DUPLICATE_RESOURCE,
+            ) from None
 
 
 class DeepResearchContinueView(APIView):
@@ -191,11 +187,10 @@ class DeepResearchContinueView(APIView):
     def post(self, request, task_id):
         serializer = ResearchContinueSerializer(data=request.data)
         if not serializer.is_valid():
-            return error_response(
-                code=ErrorCode.VALIDATION_FAILED,
-                message="数据验证失败",
+            raise BaseAppError(
+                "数据验证失败",
+                business_code=ErrorCode.VALIDATION_FAILED,
                 data=serializer.errors,
-                http_status=status.HTTP_400_BAD_REQUEST,
             )
 
         data = serializer.validated_data
@@ -209,10 +204,9 @@ class DeepResearchContinueView(APIView):
                 )
 
                 if parent_task.status != ResearchTaskStatus.COMPLETED:
-                    return error_response(
-                        code=ErrorCode.VALIDATION_FAILED,
-                        message="只能继续已完成的研究任务",
-                        http_status=status.HTTP_400_BAD_REQUEST,
+                    raise BaseAppError(
+                        "只能继续已完成的研究任务",
+                        business_code=ErrorCode.VALIDATION_FAILED,
                     )
 
                 additional_query = data.get("additional_query", "").strip()
@@ -230,6 +224,7 @@ class DeepResearchContinueView(APIView):
                     query=new_query,
                     enable_web_search=data.get("enable_web_search", parent_task.enable_web_search),
                     enable_doc_analysis=data.get("enable_doc_analysis", parent_task.enable_doc_analysis),
+                    enable_sandbox=data.get("enable_sandbox", parent_task.enable_sandbox),
                     knowledge_base_ids=data.get("knowledge_base_ids", parent_task.knowledge_base_ids),
                     use_mcp=data.get("use_mcp", parent_task.use_mcp),
                     selected_mcp_servers=data.get("selected_mcp_servers", parent_task.selected_mcp_servers),
@@ -254,6 +249,7 @@ class DeepResearchContinueView(APIView):
                     "message_id": "",
                     "enable_web_search": new_task.enable_web_search,
                     "enable_doc_analysis": new_task.enable_doc_analysis,
+                    "enable_sandbox": new_task.enable_sandbox,
                     "knowledge_base_ids": new_task.knowledge_base_ids,
                     "use_mcp": new_task.use_mcp,
                     "selected_mcp_servers": new_task.selected_mcp_servers,
@@ -283,14 +279,7 @@ class DeepResearchContinueView(APIView):
             )
 
         except ResearchTask.DoesNotExist:
-            return not_found_response(message="研究任务不存在")
-        except Exception:
-            logger.exception("启动续研任务失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR,
-                message="续研任务启动失败，请稍后重试",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            raise NotFound("研究任务不存在") from None
 
 
 class DeepResearchStatusView(APIView):
@@ -298,61 +287,52 @@ class DeepResearchStatusView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request, task_id):
+        cached_status = get_task_status(task_id)
+
         try:
-            cached_status = get_task_status(task_id)
-
-            try:
-                task = ResearchTask.objects.select_related("created_by").get(
-                    task_id=task_id,
-                    created_by=request.user,
-                    is_deleted=False,
-                )
-
-                response_data = {
-                    "task_id": task.task_id,
-                    "status": task.status,
-                    "query": task.query,
-                    "session_id": task.session_id or "",
-                    "created_at": task.created_at.isoformat() if task.created_at else "",
-                    "updated_at": task.updated_at.isoformat() if task.updated_at else "",
-                    "enable_web_search": task.enable_web_search,
-                    "enable_doc_analysis": task.enable_doc_analysis,
-                    "knowledge_base_ids": task.knowledge_base_ids or [],
-                    "current_step": cached_status.get("current_step", "unknown") if cached_status else task.status,
-                    "final_report": task.final_report if task.status == "completed" else "",
-                    "tool_calls": task.tool_calls or [],
-                    "subagent_contents": task.subagent_contents or {},
-                    "content": task.content or "",
-                }
-
-                if task.status == "completed" and task.final_report:
-                    if cached_status:
-                        result = cached_status.get("result", {})
-                        response_data["plan"] = result.get("plan")
-                        response_data["steps_completed"] = result.get("steps_completed")
-
-                if task.status == "completed":
-                    try:
-                        from Django_xm.apps.core.services.file_manager import get_file_manager
-
-                        fm = get_file_manager()
-                        file_list = fm.list_task_files(task_id, "research")
-                        response_data["files"] = [f.to_dict() for f in file_list]
-                    except Exception:
-                        response_data["files"] = []
-
-                return success_response(data=response_data)
-
-            except ResearchTask.DoesNotExist:
-                return not_found_response(message="研究任务不存在")
-
-        except Exception:
-            logger.exception("查询研究状态失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR,
-                message="查询研究状态失败，请稍后重试",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            task = ResearchTask.objects.select_related("created_by").get(
+                task_id=task_id,
+                created_by=request.user,
+                is_deleted=False,
             )
+        except ResearchTask.DoesNotExist:
+            raise NotFound("研究任务不存在") from None
+
+        response_data = {
+            "task_id": task.task_id,
+            "status": task.status,
+            "query": task.query,
+            "session_id": task.session_id or "",
+            "created_at": task.created_at.isoformat() if task.created_at else "",
+            "updated_at": task.updated_at.isoformat() if task.updated_at else "",
+            "enable_web_search": task.enable_web_search,
+            "enable_doc_analysis": task.enable_doc_analysis,
+            "knowledge_base_ids": task.knowledge_base_ids or [],
+            "current_step": cached_status.get("current_step", "unknown") if cached_status else task.status,
+            "final_report": task.final_report if task.status == "completed" else "",
+            "tool_calls": task.tool_calls or [],
+            "subagent_contents": task.subagent_contents or {},
+            "content": task.content or "",
+        }
+
+        if task.status == "completed" and task.final_report:
+            if cached_status:
+                result = cached_status.get("result", {})
+                response_data["plan"] = result.get("plan")
+                response_data["steps_completed"] = result.get("steps_completed")
+
+        if task.status == "completed":
+            # files 拉取失败降级为空列表（非致命容错，保留）
+            try:
+                from Django_xm.apps.core.services.file_manager import get_file_manager
+
+                fm = get_file_manager()
+                file_list = fm.list_task_files(task_id, "research")
+                response_data["files"] = [f.to_dict() for f in file_list]
+            except Exception:
+                response_data["files"] = []
+
+        return success_response(data=response_data)
 
 
 class DeepResearchResultView(APIView):
@@ -361,53 +341,43 @@ class DeepResearchResultView(APIView):
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request, task_id):
         try:
-            try:
-                task = ResearchTask.objects.select_related("created_by").get(
-                    task_id=task_id,
-                    created_by=request.user,
-                    is_deleted=False,
-                )
-
-                if task.status != "completed":
-                    status_msg = "研究任务尚未完成" if task.status == "running" else "研究任务失败"
-                    return success_response(
-                        data={
-                            "status": task.status,
-                            "thread_id": task.task_id,
-                            "query": task.query,
-                        },
-                        message=status_msg,
-                    )
-
-                cached_status = get_task_status(task_id)
-                result = cached_status.get("result", {}) if cached_status else {}
-
-                return success_response(
-                    data={
-                        "status": "completed",
-                        "task_id": task.task_id,
-                        "query": task.query,
-                        "report": task.final_report,
-                        "plan": result.get("plan"),
-                        "steps_completed": result.get("steps_completed"),
-                        "created_at": task.created_at.isoformat() if task.created_at else "",
-                        "updated_at": task.updated_at.isoformat() if task.updated_at else "",
-                        "enable_web_search": task.enable_web_search,
-                        "enable_doc_analysis": task.enable_doc_analysis,
-                        "knowledge_base_ids": task.knowledge_base_ids or [],
-                    }
-                )
-
-            except ResearchTask.DoesNotExist:
-                return not_found_response(message="研究任务不存在")
-
-        except Exception:
-            logger.exception("获取研究结果失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR,
-                message="获取研究结果失败，请稍后重试",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            task = ResearchTask.objects.select_related("created_by").get(
+                task_id=task_id,
+                created_by=request.user,
+                is_deleted=False,
             )
+        except ResearchTask.DoesNotExist:
+            raise NotFound("研究任务不存在") from None
+
+        if task.status != "completed":
+            status_msg = "研究任务尚未完成" if task.status == "running" else "研究任务失败"
+            return success_response(
+                data={
+                    "status": task.status,
+                    "thread_id": task.task_id,
+                    "query": task.query,
+                },
+                message=status_msg,
+            )
+
+        cached_status = get_task_status(task_id)
+        result = cached_status.get("result", {}) if cached_status else {}
+
+        return success_response(
+            data={
+                "status": "completed",
+                "task_id": task.task_id,
+                "query": task.query,
+                "report": task.final_report,
+                "plan": result.get("plan"),
+                "steps_completed": result.get("steps_completed"),
+                "created_at": task.created_at.isoformat() if task.created_at else "",
+                "updated_at": task.updated_at.isoformat() if task.updated_at else "",
+                "enable_web_search": task.enable_web_search,
+                "enable_doc_analysis": task.enable_doc_analysis,
+                "knowledge_base_ids": task.knowledge_base_ids or [],
+            }
+        )
 
 
 class DeepResearchTaskDeleteView(APIView):
@@ -415,64 +385,57 @@ class DeepResearchTaskDeleteView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def delete(self, request, task_id):
-        try:
-            logger.info(f"删除研究任务：{task_id}")
+        logger.info(f"删除研究任务：{task_id}")
 
-            with transaction.atomic():
-                task_obj = (
-                    ResearchTask.objects.select_for_update()
-                    .filter(task_id=task_id, created_by=request.user, is_deleted=False)
-                    .first()
-                )
-
-                if not task_obj:
-                    return not_found_response(message="研究任务不存在或无权删除")
-
-                # 保留 ChatMessage.research_task_id 引用，不置空
-                # 原因：置空后删除聊天会话时无法通过 ChatMessage 反查关联的已删除研究任务，
-                # 导致磁盘文件无法清理。前端应通过 research_task_id 对应的 ResearchTask.is_deleted
-                # 判断是否显示"查看研究"按钮。
-
-                result = task_manager.delete_task(task_id, user_id=request.user.id)
-
-                if not result:
-                    return not_found_response(message="研究任务不存在或无权删除")
-
-            # 事务提交后检查是否需要清理后端数据
-            # 规则：无活跃聊天关联 → 清理后端数据；有活跃聊天关联 → 保留
-            should_cleanup = True
-            # 统一通过 chat cross_app 门面反查所有活跃聊天会话
-            # （覆盖 session_id 和非 session_id 两种情况）
-            active_session_ids = get_active_session_ids_for_research_task(task_id)
-            if active_session_ids:
-                should_cleanup = False
-                logger.info(f"研究任务 {task_id} 仍有活跃聊天关联 {active_session_ids}，保留后端数据")
-
-            if should_cleanup:
-                self._cleanup_backend_data(task_id, task_obj.created_by_id)
-
-            # 事务提交后发布 task_deleted 实时事件，通知所有浏览器刷新深度研究任务列表
-            # （与 task_created 对称，实现删除的跨浏览器实时同步）
-            transaction.on_commit(
-                lambda: self._publish_task_deleted(task_id, request.user.id)
+        with transaction.atomic():
+            task_obj = (
+                ResearchTask.objects.select_for_update()
+                .filter(task_id=task_id, created_by=request.user, is_deleted=False)
+                .first()
             )
 
-            return success_response(
-                data={
-                    "status": "success",
-                    "message": f"研究任务 {task_id} 已删除",
-                    "backend_cleaned": should_cleanup,
-                },
-                message="删除成功",
-            )
+            if not task_obj:
+                raise NotFound("研究任务不存在或无权删除")
 
-        except Exception:
-            logger.exception("删除研究任务失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR,
-                message="删除研究任务失败，请稍后重试",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            # 保留 ChatMessage.research_task_id 引用，不置空
+            # 原因：置空后删除聊天会话时无法通过 ChatMessage 反查关联的已删除研究任务，
+            # 导致磁盘文件无法清理。前端应通过 research_task_id 对应的 ResearchTask.is_deleted
+            # 判断是否显示"查看研究"按钮。
+
+            result = task_manager.delete_task(task_id, user_id=request.user.id)
+
+            if not result:
+                # delete_task 返回 False 的路径（任务不存在/归属不符）均未产生 DB 写操作，
+                # raise 触发的事务回滚与原 return 行为等价
+                raise NotFound("研究任务不存在或无权删除")
+
+        # 事务提交后检查是否需要清理后端数据
+        # 规则：无活跃聊天关联 → 清理后端数据；有活跃聊天关联 → 保留
+        should_cleanup = True
+        # 统一通过 chat cross_app 门面反查所有活跃聊天会话
+        # （覆盖 session_id 和非 session_id 两种情况）
+        active_session_ids = get_active_session_ids_for_research_task(task_id)
+        if active_session_ids:
+            should_cleanup = False
+            logger.info(f"研究任务 {task_id} 仍有活跃聊天关联 {active_session_ids}，保留后端数据")
+
+        if should_cleanup:
+            self._cleanup_backend_data(task_id, task_obj.created_by_id)
+
+        # 事务提交后发布 task_deleted 实时事件，通知所有浏览器刷新深度研究任务列表
+        # （与 task_created 对称，实现删除的跨浏览器实时同步）
+        transaction.on_commit(
+            lambda: self._publish_task_deleted(task_id, request.user.id)
+        )
+
+        return success_response(
+            data={
+                "status": "success",
+                "message": f"研究任务 {task_id} 已删除",
+                "backend_cleaned": should_cleanup,
+            },
+            message="删除成功",
+        )
 
     def _cleanup_backend_data(self, task_id: str, user_id: int):
         """清理后端数据：checkpoint、store、磁盘文件（复用 cross_app 统一清理函数）"""
@@ -527,49 +490,40 @@ class DeepResearchTaskListView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
-        try:
-            status_filter = request.query_params.get("status")
-            search_query = request.query_params.get("search")
-            page = int(request.query_params.get("page", 1))
-            page_size = min(int(request.query_params.get("page_size", 20)), 100)
+        status_filter = request.query_params.get("status")
+        search_query = request.query_params.get("search")
+        page = int(request.query_params.get("page", 1))
+        page_size = min(int(request.query_params.get("page_size", 20)), 100)
 
-            queryset = ResearchTask.objects.filter(
-                created_by=request.user,
-                is_deleted=False,
-            ).select_related("created_by")
+        queryset = ResearchTask.objects.filter(
+            created_by=request.user,
+            is_deleted=False,
+        ).select_related("created_by")
 
-            if status_filter:
-                queryset = queryset.filter(status=status_filter)
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
 
-            if search_query:
-                queryset = queryset.filter(query__icontains=search_query)
+        if search_query:
+            queryset = queryset.filter(query__icontains=search_query)
 
-            queryset = queryset.order_by("-created_at")
+        queryset = queryset.order_by("-created_at")
 
-            total = queryset.count()
-            start = (page - 1) * page_size
-            end = start + page_size
-            tasks = queryset[start:end]
+        total = queryset.count()
+        start = (page - 1) * page_size
+        end = start + page_size
+        tasks = queryset[start:end]
 
-            serializer = ResearchTaskSerializer(tasks, many=True)
+        serializer = ResearchTaskSerializer(tasks, many=True)
 
-            return success_response(
-                data={
-                    "items": serializer.data,
-                    "total": total,
-                    "page": page,
-                    "page_size": page_size,
-                    "total_pages": (total + page_size - 1) // page_size,
-                }
-            )
-
-        except Exception:
-            logger.exception("获取研究任务列表失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR,
-                message="获取研究任务列表失败，请稍后重试",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        return success_response(
+            data={
+                "items": serializer.data,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": (total + page_size - 1) // page_size,
+            }
+        )
 
 
 class DeepResearchRetrySubagentView(APIView):
@@ -590,11 +544,10 @@ class DeepResearchRetrySubagentView(APIView):
     def post(self, request, task_id):
         serializer = ResearchRetrySubagentSerializer(data=request.data)
         if not serializer.is_valid():
-            return error_response(
-                code=ErrorCode.VALIDATION_FAILED,
-                message="数据验证失败",
+            raise BaseAppError(
+                "数据验证失败",
+                business_code=ErrorCode.VALIDATION_FAILED,
                 data=serializer.errors,
-                http_status=status.HTTP_400_BAD_REQUEST,
             )
 
         data = serializer.validated_data
@@ -608,22 +561,20 @@ class DeepResearchRetrySubagentView(APIView):
                 is_deleted=False,
             )
         except ResearchTask.DoesNotExist:
-            return not_found_response(message="研究任务不存在或无权访问")
+            raise NotFound("研究任务不存在或无权访问") from None
 
         if task.status == ResearchTaskStatus.COMPLETED:
-            return error_response(
-                code=ErrorCode.VALIDATION_FAILED,
-                message="研究任务已完成，无法重试失败子代理",
-                http_status=status.HTTP_400_BAD_REQUEST,
+            raise BaseAppError(
+                "研究任务已完成，无法重试失败子代理",
+                business_code=ErrorCode.VALIDATION_FAILED,
             )
 
         subagent_info = self._validate_failed_subagent(task, agent_path, tool_call_id)
         if subagent_info is None:
-            return error_response(
-                code=ErrorCode.VALIDATION_FAILED,
-                message="目标子代理不存在或未处于失败状态，无法重试",
+            raise BaseAppError(
+                "目标子代理不存在或未处于失败状态，无法重试",
+                business_code=ErrorCode.VALIDATION_FAILED,
                 data={"agent_path": agent_path, "tool_call_id": tool_call_id},
-                http_status=status.HTTP_400_BAD_REQUEST,
             )
 
         agent_name = agent_path[-1] if agent_path else ""

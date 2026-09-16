@@ -349,25 +349,26 @@ export function transformFrontendMessageToBackend(msg) {
         id: v.id,
         content: v.content || '',
         sources: v.sources || [],
-        plan: v.plan || null,
-        chainOfThought: v.chainOfThought || null,
+        // 后端 JSONField(default=dict, blank=True) 禁止 null，缺省时以空集合兜底
+        plan: v.plan || {},
+        chainOfThought: v.chainOfThought || [],
         toolCalls: v.toolCalls || [],
         subagentContents: v.subagentContents || {},
-        reasoning: v.reasoning || null,
-        suggestions: v.suggestions || null,
-        context: v.context || null,
+        reasoning: v.reasoning || {},
+        suggestions: v.suggestions || [],
+        context: v.context || {},
       }))
     : [{
         id: msg.id,
         content: msg.content || '',
         sources: msg.sources || [],
-        plan: msg.plan || null,
-        chainOfThought: msg.chainOfThought || null,
+        plan: msg.plan || {},
+        chainOfThought: msg.chainOfThought || [],
         toolCalls: msg.toolCalls || [],
         subagentContents: msg.subagentContents || {},
-        reasoning: msg.reasoning || null,
-        suggestions: msg.suggestions || null,
-        context: msg.context || null,
+        reasoning: msg.reasoning || {},
+        suggestions: msg.suggestions || [],
+        context: msg.context || {},
       }]
 
   // 输出 camelCase，由 axios 请求拦截器的 toSnakeCase 统一转换为 snake_case
@@ -377,16 +378,18 @@ export function transformFrontendMessageToBackend(msg) {
   // transformBackendMessageToFrontend 刷新后从 activeVersion 恢复工具调用数据。
   // subagent_contents 同样为 read_only，顶层不发送；versions[].subagentContents
   // 用于刷新后从 activeVersion 恢复子代理图层正文快照。
+  // chain_of_thought 亦为 read_only，顶层不发送（同 tool_calls 契约）；
+  // context 不在 ChatMessageSerializer.fields 中，发送纯属无效负载，顶层一并移除。
+  // plan/approval/reasoning/suggestions：后端为 JSONField(default=dict/blank=True)、
+  // 禁止 null（null 会触发 400 ValidationError），缺省时以空集合兜底。
   return {
     role: msg.role,
     content: msg.content,
     sources: msg.sources || [],
-    plan: msg.plan || null,
-    chainOfThought: msg.chainOfThought || null,
-    approval: msg.approval || null,
-    reasoning: msg.reasoning || null,
-    suggestions: msg.suggestions || null,
-    context: msg.context || null,
+    plan: msg.plan || {},
+    approval: msg.approval || {},
+    reasoning: msg.reasoning || {},
+    suggestions: msg.suggestions || [],
     attachmentIds: msg.attachmentIds || [],
     attachments: msg.attachments || [],
     researchContext: msg.researchContext || null,

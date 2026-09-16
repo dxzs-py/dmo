@@ -17,16 +17,16 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # # 加载 .env 文件到环境变量
 
 load_dotenv()
 
-_project_root = Path(__file__).resolve().parent.parent.parent
+_project_root = Path(__file__).resolve().parent.parent.parent  # # 项目根路径加入 sys.path，确保模块可导入
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from Django_xm.apps.ai_engine.config import settings as app_cfg
-from Django_xm.apps.core.config import settings as project_cfg
+from Django_xm.apps.ai_engine.config import settings as app_cfg # Pydantic 真相源
+from Django_xm.apps.core.config import settings as project_cfg # AI 配置真相源
 
 if app_cfg.langsmith_tracing and app_cfg.langsmith_api_key:
     os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
@@ -235,6 +235,7 @@ REST_FRAMEWORK = {
         "chat_stream": "30/min",
         "research": "5/min",
         "knowledge": "60/min",
+        "learning": "10/min",
         "sensitive": "10/min",
         "snapshot": "120/min",
         # 页面加载即请求的只读元数据接口（多浏览器并发时单页约 13 个请求），
@@ -326,7 +327,17 @@ TOOLS_MCP_DIR = TOOLS_DIR / "mcp"
 LOGS_DIR = BASE_DIR.parent / "logs"
 CELERYBEAT_DIR = PROJECT_ROOT / "data" / "celerybeat"
 
-for directory in [DATA_DIR, UPLOADS_DIR, TOOLS_DIR, TOOLS_SKILLS_DIR, TOOLS_LANGCHAIN_DIR, TOOLS_MCP_DIR, MEDIA_ROOT, LOGS_DIR, CELERYBEAT_DIR]:
+for directory in [
+    DATA_DIR,
+    UPLOADS_DIR,
+    TOOLS_DIR,
+    TOOLS_SKILLS_DIR,
+    TOOLS_LANGCHAIN_DIR,
+    TOOLS_MCP_DIR,
+    MEDIA_ROOT,
+    LOGS_DIR,
+    CELERYBEAT_DIR,
+]:
     directory.mkdir(parents=True, exist_ok=True)
 
 CELERY_ACCEPT_CONTENT = ["json"]
@@ -422,7 +433,9 @@ SANDBOX_CONFIG = {
     "CPU_LIMIT": int(os.environ.get("SANDBOX_CPUS", "1")),
     "NETWORK_MODE": os.environ.get("SANDBOX_NETWORK", "none"),
     "SESSION_TIMEOUT": int(os.environ.get("SANDBOX_SESSION_TIMEOUT", "3600")),
-    "WORK_DIR_MOUNT": str(PROJECT_ROOT),
+    # 挂载最小化（沙箱加固）：仅挂载 DATA_DIR 到容器 /workspace，
+    # 不再挂载整个项目根（容器内破坏性操作不触及挂载区外的宿主文件）
+    "WORK_DIR_MOUNT": str(DATA_DIR),
 }
 AI_RATE_LIMIT_MAX_TOOL_CALLS = 30
 AI_LLM_TIMEOUT = 120.0

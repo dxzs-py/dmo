@@ -1,8 +1,8 @@
-"""chat 流式事件广播辅助（WebSocket 同步）。
+"""chat 流式执行事件 → WebSocket 广播桥。
 
-执行与连接解耦后，chat agent 由 FastAPI 执行服务单协程运行，SSE 已不再承载
-chat 流。此模块仅保留 ``publish_stream_event``，将执行事件统一广播到 WebSocket
-会话频道，供触发/非触发浏览器消费。
+chat agent 由 FastAPI 执行服务单协程运行，执行事件经 ``publish_stream_event``
+统一广播到 WebSocket 会话频道，供触发/非触发浏览器消费；另承载正文尾部
+重叠去重（``find_content_overlap``，全项目唯一权威实现，恢复轮拼接防重复）。
 """
 
 from __future__ import annotations

@@ -30,13 +30,23 @@ def _get_user_sync(user_id):
 
 
 @sync_to_async(thread_sensitive=True)
-def _create_task_sync(task_manager, thread_id, title, enable_web_search, enable_doc_analysis, created_by, session_id):
+def _create_task_sync(
+    task_manager,
+    thread_id,
+    title,
+    enable_web_search,
+    enable_doc_analysis,
+    enable_sandbox,
+    created_by,
+    session_id,
+):
     """同步创建研究任务"""
     task_manager.create_task(
         thread_id,
         title,
         enable_web_search=enable_web_search,
         enable_doc_analysis=enable_doc_analysis,
+        enable_sandbox=enable_sandbox,
         created_by=created_by,
         session_id=session_id,
     )
@@ -142,6 +152,7 @@ class DeepChatService:
         selected_tools: list | None = None,
         use_mcp: bool = False,
         selected_mcp_servers: list | None = None,
+        enable_sandbox: bool = False,
     ) -> str:
         """创建深度研究任务并返回 task_id（不执行研究）
 
@@ -149,6 +160,7 @@ class DeepChatService:
             selected_tools: 用户选择的工具名称列表（不含 knowledge_base_ 前缀的检索工具）
             use_mcp: 是否启用 MCP 工具
             selected_mcp_servers: 选中的 MCP 服务器名称列表
+            enable_sandbox: 任务级沙箱开关（HIGH 级命令在容器内隔离）
         """
         from django.contrib.auth import get_user_model
 
@@ -172,6 +184,7 @@ class DeepChatService:
             task_title or query,
             use_web_search,
             retriever_tool is not None,
+            enable_sandbox,
             created_by,
             session_id,
         )
@@ -210,6 +223,7 @@ class DeepChatService:
         special_params: dict | None = None,
         continue_task_id: str | None = None,
         message_id: str | None = None,
+        enable_sandbox: bool = False,
     ) -> str:
         """发布深度研究执行启动信令（触发 FastAPI 执行服务，不等待结果）
 
@@ -258,6 +272,7 @@ class DeepChatService:
                 "message_id": message_id or "",
                 "enable_web_search": use_web_search,
                 "enable_doc_analysis": retriever_tool is not None,
+                "enable_sandbox": enable_sandbox,
                 "knowledge_base_ids": knowledge_base_ids,
                 "use_mcp": use_mcp or bool(selected_mcp_servers),
                 "selected_mcp_servers": selected_mcp_servers or None,

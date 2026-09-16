@@ -2,7 +2,10 @@
 
 覆盖：业务等待 interrupt 判定、wait_for_subagent 结果格式化、
 SessionExecutor 挂起注册 awaiter、调度器唤醒（mismatch 忽略 / 正常恢复清理）、
-run() finally 挂起态跳过清理（固化规则：保留会话槽 + 不释放 checkpointer）。
+run() finally 挂起态跳过清理（固化规则：保留会话槽 + 不释放 checkpointer）、
+子代理审批归属（根会话标识判定 source/source_id）、configurable 契约
+（tool_names 逐层继承）、FastAPI 重启恢复（configurable 内存 registry 丢失
+→ metadata 兜底：路由键 / 三层兜底链 / routing_config 消费）。
 
 隔离策略：不触碰真实 DB/Redis/LLM——execute_research_async / runtime / lifecycle 均 mock。
 
@@ -404,6 +407,44 @@ class TestSubAgentConfigurableContract(unittest.TestCase):
         self.assertIs(cfg["_on_tool_event"], callback)
         self.assertNotIn("tool_names", cfg)
 
+    def test_metadata_fallback_when_configurable_lost(self):
+        """FastAPI 重启恢复：内存 configurable registry 丢失（configurable=None）
+        → 路由键 chat_session_id / assistant_message_id 从持久化 metadata 兜底，
+        保证 graph 内消费者与孙代理 spawn 继承不断链。"""
+        instance = SimpleNamespace(
+            thread_id="sub_a",
+            metadata={
+                "depth": 1,
+                "agent_name": "web-researcher",
+                "risk_ceiling": None,
+                "chat_session_id": "main-session",
+                "assistant_message_id": "msg-42",
+            },
+        )
+        cfg = self._make_adapter()._build_configurable(instance, None, None)
+        self.assertEqual(cfg["chat_session_id"], "main-session")
+        self.assertEqual(cfg["assistant_message_id"], "msg-42")
+
+    def test_configurable_takes_priority_over_metadata(self):
+        """正常运行：configurable 携带真实父链路值时优先，metadata 兜底不覆盖。"""
+        instance = SimpleNamespace(
+            thread_id="sub_a",
+            metadata={
+                "depth": 1,
+                "agent_name": "web-researcher",
+                "risk_ceiling": None,
+                "chat_session_id": "stale-session",
+                "assistant_message_id": "stale-msg",
+            },
+        )
+        cfg = self._make_adapter()._build_configurable(
+            instance,
+            {"chat_session_id": "live-session", "assistant_message_id": "live-msg"},
+            None,
+        )
+        self.assertEqual(cfg["chat_session_id"], "live-session")
+        self.assertEqual(cfg["assistant_message_id"], "live-msg")
+
 
 class TestSubAgentToolEventInterruptPassthrough(unittest.TestCase):
     """awrap_tool_call 对 LangGraph Interrupt 精确放行（不转发 FAILED）。
@@ -436,9 +477,8 @@ class TestSubAgentToolEventInterruptPassthrough(unittest.TestCase):
         ), mock.patch(
             "Django_xm.apps.agent_hub.builders.subagent_support._read_configurable",
             return_value={},
-        ):
-            with self.assertRaises(GraphInterrupt):
-                asyncio.run(mw.awrap_tool_call(request, _execute))
+        ), self.assertRaises(GraphInterrupt):
+            asyncio.run(mw.awrap_tool_call(request, _execute))
         mw._forward_event.assert_not_awaited()
 
     def test_real_exception_still_fails(self):
@@ -462,9 +502,8 @@ class TestSubAgentToolEventInterruptPassthrough(unittest.TestCase):
         ), mock.patch(
             "Django_xm.apps.agent_hub.builders.subagent_support._read_configurable",
             return_value={"_on_tool_event": mock.Mock()},
-        ):
-            with self.assertRaises(RuntimeError):
-                asyncio.run(mw.awrap_tool_call(request, _execute))
+        ), self.assertRaises(RuntimeError):
+            asyncio.run(mw.awrap_tool_call(request, _execute))
         mw._forward_event.assert_awaited_once()
 
 
@@ -546,7 +585,7 @@ class TestSubagentApprovalAttribution(unittest.TestCase):
             ]
         )
 
-    def _call_create(self, configurable: dict | None, parent_thread_id: str):
+    def _call_create(self, configurable: dict | None, parent_thread_id: str, metadata: dict | None = None):
         from Django_xm.apps.ai_engine.subagent_runtime.adapters.langgraph_adapter import (
             LangGraphAdapter,
         )
@@ -554,7 +593,7 @@ class TestSubagentApprovalAttribution(unittest.TestCase):
         instance = SimpleNamespace(
             thread_id="subagent_b",
             parent_thread_id=parent_thread_id,
-            metadata={"depth": 2, "user_id": 1},
+            metadata=metadata or {"depth": 2, "user_id": 1},
         )
         adapter = LangGraphAdapter(mock.Mock(), graph_factory=mock.AsyncMock())
         with mock.patch(
@@ -596,6 +635,91 @@ class TestSubagentApprovalAttribution(unittest.TestCase):
         kwargs = self._call_create(None, "subagent_110b8c7c0a674400")
         self.assertEqual(kwargs["source"], "chat")
         self.assertEqual(kwargs["source_id"], "subagent_110b8c7c0a674400")
+
+    def test_metadata_fallback_when_configurable_none(self):
+        """FastAPI 重启后内存 configurable registry 丢失（configurable=None）：
+        审批创建从持久化 metadata 兜底 chat_session_id / assistant_message_id /
+        session_id，不再触发『chat 模块审批缺少 chat_session_id，拒绝创建』。"""
+        metadata = {
+            "depth": 2,
+            "user_id": 1,
+            "session_id": "main-session",
+            "chat_session_id": "main-session",
+            "assistant_message_id": "msg-42",
+        }
+        kwargs = self._call_create(None, "subagent_110b8c7c0a674400", metadata=metadata)
+        self.assertEqual(kwargs["source"], "chat")
+        self.assertEqual(kwargs["source_id"], "main-session")
+        self.assertEqual(kwargs["chat_session_id"], "main-session")
+        self.assertEqual(kwargs["message_id"], "msg-42")
+
+
+class TestSubAgentExecuteRoutingConfig(unittest.TestCase):
+    """_execute 重启恢复：审批创建与状态事件消费 routing_config（经
+    _build_configurable metadata 兜底后齐全），替代可能为 None 的 raw
+    configurable（FastAPI 重启后 _configurable_registry 为空的场景）。"""
+
+    def test_execute_uses_routing_config_from_metadata_fallback(self):
+        runtime = mock.Mock()
+        runtime._update_status = mock.AsyncMock()
+        adapter = LangGraphAdapter(runtime, graph_factory=mock.AsyncMock())
+
+        instance = SimpleNamespace(
+            thread_id="sub_a",
+            parent_thread_id="main-session",
+            metadata={
+                "depth": 1,
+                "agent_name": "web-researcher",
+                "task": "do research",
+                "chat_session_id": "main-session",
+                "assistant_message_id": "msg-42",
+            },
+        )
+
+        # graph 工厂返回 mock agent：astream 空转，aget_state 返回审批中断 state
+        agent = mock.Mock()
+
+        async def _astream(*_args, **_kwargs):
+            return
+            yield  # pragma: no cover
+
+        async def _aget_state(*_args, **_kwargs):
+            return SimpleNamespace(
+                next=("agent",),
+                tasks=[
+                    SimpleNamespace(
+                        interrupts=[
+                            SimpleNamespace(
+                                value={
+                                    "_approval": True,
+                                    "requests": [{"tool_call_id": "tc1", "tool_name": "shell_exec"}],
+                                },
+                                id="int-1",
+                            )
+                        ]
+                    )
+                ],
+            )
+
+        agent.graph.astream = _astream
+        agent.graph.aget_state = _aget_state
+        adapter._graph_factory = mock.AsyncMock(return_value=agent)
+
+        with mock.patch.object(
+            adapter, "_publish_status_event", new_callable=mock.AsyncMock
+        ) as publish, mock.patch.object(
+            adapter, "_create_approvals_from_interrupts", new_callable=mock.AsyncMock
+        ) as create:
+            # 重启恢复场景：configurable=None（内存 registry 已丢失）
+            asyncio.run(adapter._execute(instance, None, None, None))
+
+        # 审批创建收到 routing_config：chat_session_id 经 metadata 兜底后齐全
+        routing_cfg = create.call_args.args[1]
+        self.assertEqual(routing_cfg["chat_session_id"], "main-session")
+        self.assertEqual(routing_cfg["assistant_message_id"], "msg-42")
+        # 状态事件同样消费 routing_config（而非 None）
+        publish_cfg = publish.call_args.args[1]
+        self.assertEqual(publish_cfg["chat_session_id"], "main-session")
 
 
 if __name__ == "__main__":

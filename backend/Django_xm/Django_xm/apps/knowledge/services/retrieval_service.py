@@ -48,11 +48,84 @@ def _is_embedding_error(exc: Exception) -> bool:
     return any(pat.lower() in exc_name.lower() or pat.lower() in exc_msg for pat in _EMBEDDING_ERROR_PATTERNS)
 
 
-def _keyword_search_fallback(query: str, collection_name: str, k: int = 4) -> list[Document]:
-    """PostgreSQL 全文检索降级方案
+# ── 关键词降级检索（CJK 友好） ────────────────────────────────────────────────
 
-    当 Embedding 服务不可用时，使用 PostgreSQL 的 to_tsvector + to_tsquery
-    对 langchain_pg_embedding 表做全文关键词检索。
+# 连续 CJK 字符片段（含扩展 A 区）或 ASCII 词
+_GRAM_TOKEN_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]+|[A-Za-z0-9_]+")
+
+# CJK 2-gram：中文无空格，单字召回噪声过大，3-gram 又会显著漏召回
+_CJK_GRAM_SIZE = 2
+_MAX_GRAMS = 16
+
+
+def _build_retrieval_grams(query: str, max_grams: int = _MAX_GRAMS) -> list[str]:
+    """把查询拆成适合 PostgreSQL 子串匹配的检索单元。
+
+    - 连续 CJK 片段切为 2-gram：无需分词词典即可覆盖中文，兼顾精度与召回
+    - ASCII 词整词保留（长度 >= 2）：避免 "SQL" 被切成 "SQ"/"QL" 造成误召回
+    - 按 gram 长度降序（长 gram 区分度更高）去重后截断
+
+    Args:
+        query: 用户查询文本
+        max_grams: 最多保留的 gram 数量，防止超长查询导致 SQL 开销失控
+
+    Returns:
+        gram 列表；查询不含有效字符时返回空列表
+    """
+    grams: list[str] = []
+
+    for token in _GRAM_TOKEN_RE.findall(query or ""):
+        if token.isascii():
+            if len(token) >= 2:
+                grams.append(token.lower())
+        elif len(token) < _CJK_GRAM_SIZE:
+            grams.append(token)
+        else:
+            grams.extend(token[i : i + _CJK_GRAM_SIZE] for i in range(len(token) - _CJK_GRAM_SIZE + 1))
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for gram in sorted(grams, key=len, reverse=True):
+        if gram not in seen:
+            seen.add(gram)
+            ordered.append(gram)
+
+    return ordered[:max_grams]
+
+
+# 中文全文检索降级 SQL。
+# 关键点：不能使用 to_tsvector/to_tsquery('simple', ...) —— PostgreSQL 的 simple
+# 配置不做中文分词，整段连续中文会被解析成**单一词元**，导致任何中文子串查询都无法命中
+# （实测 30 题中文评测集召回率为 0）。此处改为 unnest gram 数组后做 ILIKE 子串计数，
+# 以命中 gram 数排序，命中数相同者优先短文档（主题更集中）。
+_KEYWORD_FALLBACK_SQL = """
+WITH grams AS (
+    SELECT unnest(%s::text[]) AS gram
+)
+SELECT e.document,
+       e.cmetadata,
+       m.hit_count
+  FROM {embedding_table} e
+  JOIN {collection_table} c ON e.collection_id = c.uuid
+ CROSS JOIN LATERAL (
+       SELECT count(*) AS hit_count
+         FROM grams g
+        WHERE e.document ILIKE '%%' || g.gram || '%%'
+ ) m
+ WHERE c.name = %s
+   AND m.hit_count > 0
+ ORDER BY m.hit_count DESC, length(e.document) ASC
+ LIMIT %s
+"""
+
+
+def _keyword_search_fallback(query: str, collection_name: str, k: int = 4) -> list[Document]:
+    """PostgreSQL 关键词降级检索（Embedding 服务不可用时的兜底路径）
+
+    以字符 2-gram 子串匹配替代 PostgreSQL 全文检索，从而支持中文查询。
+    代价是失去 GIN 索引支持、退化为顺序扫描；作为兜底路径可接受。
+    如需恢复索引加速，可在 PostgreSQL 侧引入 zhparser / pg_jieba 分词扩展或
+    pg_bigm / pg_trgm 三元组索引（见 README Roadmap）。
 
     Args:
         query: 用户查询文本
@@ -60,7 +133,8 @@ def _keyword_search_fallback(query: str, collection_name: str, k: int = 4) -> li
         k: 返回文档数量
 
     Returns:
-        Document 列表，metadata 中包含 degraded=True 标记和 score
+        Document 列表，metadata 含 degraded=True、degraded_score（∈[0,1] 的 gram 命中率）
+        与 degraded_hits（命中 gram 数）；无可检索内容或出错时返回空列表
     """
     from django.db import connections
 
@@ -71,6 +145,11 @@ def _keyword_search_fallback(query: str, collection_name: str, k: int = 4) -> li
         _quote_identifier,
     )
 
+    grams = _build_retrieval_grams(query)
+    if not grams:
+        logger.warning("降级关键词检索: 查询未提取到有效检索单元，返回空结果")
+        return []
+
     collection_table = _get_collection_table_name()
     embedding_table = _get_embedding_table_name()
     # 使用 _quote_identifier 包装表名，防止 SQL 注入与保留字冲突
@@ -78,48 +157,46 @@ def _keyword_search_fallback(query: str, collection_name: str, k: int = 4) -> li
     embedding_table_quoted = _quote_identifier(embedding_table)
 
     if not _check_table_exists(collection_table) or not _check_table_exists(embedding_table):
-        logger.warning("降级检索: PGVector 表不存在，返回空结果")
+        logger.warning("降级关键词检索: PGVector 表不存在，返回空结果")
         return []
 
-    # 构造 tsquery：将空格替换为 &（AND 语义），提高精准度
-    ts_query_str = " & ".join(query.split())
+    sql = _KEYWORD_FALLBACK_SQL.format(
+        embedding_table=embedding_table_quoted,
+        collection_table=collection_table_quoted,
+    )
 
     try:
         with connections["default"].cursor() as cursor:
             # 表名来自固定内部函数并经 _quote_identifier 白名单包装（非用户输入），
-            # 查询值（ts_query_str/collection_name/k）已全部 %s 参数化
-            table_clause = (
-                f"FROM {embedding_table_quoted} e "
-                f"JOIN {collection_table_quoted} c ON e.collection_id = c.uuid"
-            )
-            cursor.execute(
-                "SELECT e.document, e.cmetadata, "
-                "ts_rank_cd(to_tsvector('simple', e.document), to_tsquery('simple', %s)) as rank "
-                f"{table_clause} "
-                "WHERE c.name = %s "
-                "AND to_tsvector('simple', e.document) @@ to_tsquery('simple', %s) "
-                "ORDER BY rank DESC "
-                "LIMIT %s",
-                [ts_query_str, collection_name, ts_query_str, k],
-            )
+            # 查询值（grams/collection_name/k）已全部 %s 参数化
+            cursor.execute(sql, [grams, collection_name, k])
+            rows = cursor.fetchall()
 
-            results = []
-            for row in cursor.fetchall():
-                doc_content = row[0]
-                metadata = row[1] or {}
-                rank = row[2]
-                # 在 metadata 中标记降级
-                metadata["degraded"] = True
-                metadata["degraded_score"] = float(rank)
-                results.append(Document(page_content=doc_content, metadata=metadata))
+        results: list[Document] = []
+        for document, cmetadata, hit_count in rows:
+            # cmetadata 可能已是 dict，也可能是未反序列化的 JSON 字符串
+            # （取决于驱动对 json/jsonb 列的解析行为），两种形态都要兼容。
+            # 历史实现因 tsquery 从不命中、循环体从未执行，此处一直未被覆盖。
+            if isinstance(cmetadata, str):
+                try:
+                    cmetadata = json.loads(cmetadata)
+                except ValueError:
+                    logger.warning("降级关键词检索: cmetadata 反序列化失败，按空元数据处理")
+                    cmetadata = {}
+            metadata = dict(cmetadata) if isinstance(cmetadata, dict) else {}
+            metadata["degraded"] = True
+            metadata["degraded_hits"] = int(hit_count)
+            metadata["degraded_score"] = round(int(hit_count) / len(grams), 4)
+            results.append(Document(page_content=document, metadata=metadata))
 
-            logger.info(
-                f"降级全文检索: query='{query[:50]}...', collection={collection_name}, 返回 {len(results)} 个文档"
-            )
-            return results
+        logger.info(
+            f"降级关键词检索: query='{query[:50]}', collection={collection_name}, "
+            f"grams={len(grams)}, 返回 {len(results)} 个文档"
+        )
+        return results
 
     except Exception as e:
-        logger.warning(f"降级全文检索也失败，返回空结果: {e}")
+        logger.warning(f"降级关键词检索也失败，返回空结果: {e}")
         return []
 
 

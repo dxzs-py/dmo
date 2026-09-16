@@ -19,7 +19,7 @@ import logging
 
 from asgiref.sync import sync_to_async
 
-from Django_xm.apps.chat.services.sse_generator import publish_stream_event
+from Django_xm.apps.chat.services.stream_broadcast import publish_stream_event
 from Django_xm.apps.chat.services.stream_persistence import persist_chat_tool_calls
 
 logger = logging.getLogger(__name__)

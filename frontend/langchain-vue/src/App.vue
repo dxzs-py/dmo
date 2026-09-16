@@ -10,6 +10,7 @@ import ChatQuickAccess from './components/common/ChatQuickAccess.vue'
 import { useThemeStore } from './stores/theme'
 import { useUserStore } from './stores/user'
 import { useLoadingStore } from './stores/loading'
+import { logger } from './utils/logger'
 
 const route = useRoute()
 const themeStore = useThemeStore()
@@ -72,7 +73,7 @@ onMounted(async () => {
   try {
     themeStore.setTheme(themeStore.currentTheme)
   } catch (e) {
-    console.error('Failed to set theme:', e)
+    logger.error('Failed to set theme:', e)
   }
 })
 </script>

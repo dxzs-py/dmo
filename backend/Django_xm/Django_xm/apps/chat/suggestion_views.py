@@ -13,7 +13,8 @@ from rest_framework.views import APIView
 from Django_xm.apps.ai_engine.services.suggestion_service import generate_suggestions
 from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
 from Django_xm.common.error_codes import ErrorCode
-from Django_xm.common.responses import error_response, success_response
+from Django_xm.common.exceptions import BaseAppError
+from Django_xm.common.responses import success_response
 
 logger = logging.getLogger(__name__)
 
@@ -44,25 +45,20 @@ class SuggestionsView(APIView):
 
     @extend_schema(exclude=True)
     def post(self, request):
-        try:
-            query = request.data.get("query", "").strip()
-            context = request.data.get("context", "")
+        query = request.data.get("query", "").strip()
+        context = request.data.get("context", "")
 
-            if not query:
-                return error_response(code=ErrorCode.INVALID_PARAMS, message="查询内容不能为空", http_status=400)
+        if not query:
+            raise BaseAppError("查询内容不能为空", business_code=ErrorCode.INVALID_PARAMS)
 
-            cache_key = f"suggestions:{hash(query)}:{hash(context)}"
-            cached = CacheService.get(cache_key)
-            if cached is not None:
-                logger.info("建议缓存命中")
-                return success_response(data={"suggestions": cached})
+        cache_key = f"suggestions:{hash(query)}:{hash(context)}"
+        cached = CacheService.get(cache_key)
+        if cached is not None:
+            logger.info("建议缓存命中")
+            return success_response(data={"suggestions": cached})
 
-            suggestions = generate_suggestions(query, context)
+        suggestions = generate_suggestions(query, context)
 
-            CacheService.set(cache_key, suggestions, CacheTTL.QUERY_LONG)
+        CacheService.set(cache_key, suggestions, CacheTTL.QUERY_LONG)
 
-            return success_response(data={"suggestions": suggestions})
-
-        except Exception:
-            logger.exception("生成建议失败")
-            return error_response(code=ErrorCode.SERVER_ERROR, message="生成建议失败")
+        return success_response(data={"suggestions": suggestions})

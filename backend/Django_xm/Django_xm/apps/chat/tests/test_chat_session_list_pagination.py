@@ -18,7 +18,7 @@
 """
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.test")
@@ -36,7 +36,7 @@ from Django_xm.apps.chat.models import ChatSession
 SESSIONS_URL = "/api/v1/chat/sessions/"
 SESSION_COUNT = 25
 # updated_at 基准：sess-00 最旧 → sess-24 最新（每条间隔 1 分钟）
-UPDATED_AT_BASE = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+UPDATED_AT_BASE = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 def _updated_at(index):

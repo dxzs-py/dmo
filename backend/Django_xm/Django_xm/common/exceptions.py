@@ -4,6 +4,8 @@
 将所有 DRF/Python 异常转换为统一的 {code, message, data/details} 格式。
 本模块是 DRF EXCEPTION_HANDLER 的唯一入口，避免循环依赖。
 同时定义项目级异常统一基类 BaseAppError，供各 app 异常体系继承。
+
+异常驱动单轨制约定：视图层业务错误一律 ``raise``，禁止手动构造错误响应。
 """
 
 import logging
@@ -23,7 +25,7 @@ from rest_framework.exceptions import (
 from rest_framework.response import Response
 from rest_framework_simplejwt.exceptions import InvalidToken
 
-from .error_codes import ErrorCode
+from .error_codes import ErrorCode, infer_error_code_from_http_status
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +36,30 @@ class BaseAppError(Exception):
     提供最小多态接口（error_code / recoverable / to_dict），
     子类可通过类属性或实例属性覆盖默认值，也可按需覆盖 to_dict()
     提供更丰富的结构（如 LCAgentException 额外携带 user_message/details）。
+
+    视图层业务错误的标准抛出方式::
+
+        raise BaseAppError("工作流已结束", business_code=ErrorCode.WORKFLOW_ALREADY_FINISHED)
+
+    ``business_code`` 直接携带 ErrorCode 枚举，全局处理器优先按它生成
+    响应体 code/message 与 HTTP 状态码（异常驱动单轨制的核心契约）。
     """
 
     error_code: str = "UNEXPECTED_ERROR"
     recoverable: bool = True
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        business_code: ErrorCode | None = None,
+        data: dict | None = None,
+    ):
+        if message is None and business_code is not None:
+            message = business_code.message
+        super().__init__(message)
+        self.business_code = business_code
+        self.data = data
 
     def to_dict(self) -> dict:
         """返回异常的最小结构化表示，供统一异常处理器消费。"""
@@ -131,9 +153,12 @@ def custom_exception_handler(exc, context):
 
     if isinstance(exc, APIException):
         logger.warning(f"未处理的API异常: {type(exc).__name__}: {exc!s}")
+        # 按 HTTP 状态码反推业务错误码（如 NotFound→40401），保持
+        # body code 与 HTTP 语义一致，避免 HTTP 404 携带 50001 的错位
+        error_code = infer_error_code_from_http_status(exc.status_code)
         return Response(
             {
-                "code": int(ErrorCode.SERVER_ERROR),
+                "code": int(error_code),
                 "message": str(exc.detail) if hasattr(exc, "detail") else "服务器内部错误",
             },
             status=exc.status_code,
@@ -228,16 +253,26 @@ def _handle_auth_error(exc) -> Response:
 
 
 def _handle_agent_error(exc: BaseAppError) -> Response:
-    """将 BaseAppError 子类（如 LCAgentException）映射到统一业务错误码
+    """将 BaseAppError 子类映射到统一业务错误码
 
-    根据 exc.error_code 在 _AGENT_ERROR_CODE_MAP 中查找业务错误码；
-    未映射的 error_code 回退到 SERVER_ERROR。
-    HTTP 状态码优先级：
-      1. 不可恢复 → 503
-      2. RATE_LIMIT_EXCEEDED → 429
-      3. GUARDRAILS_VALIDATION_ERROR → 400
-      4. 其他 → 500
+    优先级：
+      1. ``exc.business_code`` 显式携带的业务错误码（视图层 raise 的标准形态）：
+         code/message/http_status 全部由该枚举决定，data 原样透传
+      2. 兜底走 ``exc.error_code`` 在 _AGENT_ERROR_CODE_MAP 中的映射
+         （LCAgentException 等 agent 执行体系异常，HTTP 状态码由
+         recoverable 与业务错误码综合判定）
     """
+    # 视图层业务错误：直接按显式 business_code 生成响应
+    if exc.business_code is not None:
+        return Response(
+            {
+                "code": int(exc.business_code),
+                "message": str(exc) or exc.business_code.message,
+                "data": exc.data or None,
+            },
+            status=exc.business_code.http_status,
+        )
+
     error_data = exc.to_dict()
     business_code = _AGENT_ERROR_CODE_MAP.get(exc.error_code, ErrorCode.SERVER_ERROR)
 

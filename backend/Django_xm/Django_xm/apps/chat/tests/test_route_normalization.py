@@ -70,6 +70,5 @@ class ChatRouteNormalizationTests(TestCase):
             ("chat:message_pair_delete", {"session_id": "s1"}),
         ]
         for name, kwargs in cases:
-            with self.subTest(name=name):
-                with self.assertRaises(NoReverseMatch):
-                    reverse(name, kwargs=kwargs)
+            with self.subTest(name=name), self.assertRaises(NoReverseMatch):
+                reverse(name, kwargs=kwargs)

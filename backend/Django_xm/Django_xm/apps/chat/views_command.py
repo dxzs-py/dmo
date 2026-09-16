@@ -12,7 +12,8 @@ from rest_framework.views import APIView
 
 from Django_xm.apps.core.throttling import MetaRateThrottle
 from Django_xm.common.error_codes import ErrorCode
-from Django_xm.common.responses import error_response, success_response
+from Django_xm.common.exceptions import BaseAppError
+from Django_xm.common.responses import success_response
 
 from .models import ChatMessage
 
@@ -51,10 +52,7 @@ class ChatCommandExecuteView(APIView):
 
         parsed = parse_command(command)
         if not parsed:
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message="无效的命令格式",
-            )
+            raise BaseAppError("无效的命令格式", business_code=ErrorCode.INVALID_PARAMS)
 
         command_name, args = parsed
         context = {
@@ -96,17 +94,10 @@ class ProjectContextView(APIView):
             logger.debug("项目上下文缓存命中")
             return success_response(data=cached)
 
-        try:
-            from Django_xm.apps.ai_engine.services.project_context import detect_project_context
+        from Django_xm.apps.ai_engine.services.project_context import detect_project_context
 
-            search_path = request.query_params.get("path")
-            context = detect_project_context(search_path)
-            result = context.to_dict()
-            CacheService.set(cache_key, result, CacheTTL.QUERY_LONG)
-            return success_response(data=result)
-        except Exception:
-            logger.exception("获取项目上下文失败")
-            return error_response(
-                code=ErrorCode.INTERNAL_ERROR,
-                message="获取项目上下文失败",
-            )
+        search_path = request.query_params.get("path")
+        context = detect_project_context(search_path)
+        result = context.to_dict()
+        CacheService.set(cache_key, result, CacheTTL.QUERY_LONG)
+        return success_response(data=result)

@@ -9,7 +9,7 @@ import logging
 from typing import Any
 
 from drf_spectacular.utils import extend_schema
-from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from Django_xm.apps.ai_engine.config import HELPER_MODEL_PRIORITY, get_available_providers
@@ -26,8 +26,9 @@ from Django_xm.apps.ai_engine.services.registry_service import (
 from Django_xm.apps.core.throttling import MetaRateThrottle
 from Django_xm.apps.knowledge.services.index_service import IndexManager
 from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.permissions import IsAdmin
-from Django_xm.common.responses import error_response, success_response
+from Django_xm.common.responses import success_response
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,27 @@ def _get_affected_indexes(user, new_dimension: int) -> list:
                 }
             )
     return affected
+
+
+class SandboxAvailabilityView(APIView):
+    """沙箱全局可用性（只读）
+
+    普通用户可访问（IsAuthenticated）：返回 SANDBOX_CONFIG.ENABLED，
+    供前端"沙箱模式"开关置灰（未启用时提示"沙箱模式不可用（后端未启用）"）。
+    不挂在管理员专属的 AISettingsView 上，避免普通用户 403 拿不到该标志。
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [MetaRateThrottle]
+
+    @extend_schema(exclude=True)
+    def get(self, request):
+        from django.conf import settings as django_settings
+
+        sandbox_enabled = bool(
+            getattr(django_settings, "SANDBOX_CONFIG", {}).get("ENABLED", False)
+        )
+        return success_response(data={"sandbox_enabled": sandbox_enabled})
 
 
 class AISettingsView(APIView):
@@ -219,11 +241,7 @@ class AISettingsView(APIView):
             provider_id = chat_model.get("provider_id", "")
             model_name = chat_model.get("model_name", "")
             if provider_id and not is_provider_valid(provider_id):
-                return error_response(
-                    code=ErrorCode.INVALID_PARAMS,
-                    message=f"未知的 LLM provider: {provider_id}",
-                    http_status=status.HTTP_400_BAD_REQUEST,
-                )
+                raise BaseAppError(f"未知的 LLM provider: {provider_id}", business_code=ErrorCode.INVALID_PARAMS)
             if provider_id:
                 SystemConfig.set_value(
                     "default_chat_model",
@@ -240,11 +258,7 @@ class AISettingsView(APIView):
             provider_id = helper_model.get("provider_id", "")
             model_name = helper_model.get("model_name", "")
             if provider_id and not is_provider_valid(provider_id):
-                return error_response(
-                    code=ErrorCode.INVALID_PARAMS,
-                    message=f"未知的 LLM provider: {provider_id}",
-                    http_status=status.HTTP_400_BAD_REQUEST,
-                )
+                raise BaseAppError(f"未知的 LLM provider: {provider_id}", business_code=ErrorCode.INVALID_PARAMS)
             # 空字符串视为重置，存 null
             if provider_id:
                 SystemConfig.set_value(
@@ -270,11 +284,7 @@ class AISettingsView(APIView):
             fb_provider_id = fallback_chat.get("provider_id", "")
             fb_model_name = fallback_chat.get("model_name", "")
             if fb_provider_id and not is_provider_valid(fb_provider_id):
-                return error_response(
-                    code=ErrorCode.INVALID_PARAMS,
-                    message=f"未知的 LLM provider: {fb_provider_id}",
-                    http_status=status.HTTP_400_BAD_REQUEST,
-                )
+                raise BaseAppError(f"未知的 LLM provider: {fb_provider_id}", business_code=ErrorCode.INVALID_PARAMS)
             if fb_provider_id:
                 SystemConfig.set_value(
                     "fallback_chat_model",
@@ -295,10 +305,9 @@ class AISettingsView(APIView):
             if new_provider_id:
                 valid_ids = set(get_embedding_provider_ids())
                 if new_provider_id not in valid_ids:
-                    return error_response(
-                        code=ErrorCode.INVALID_PARAMS,
-                        message=f"未知的 Embedding provider: {new_provider_id}",
-                        http_status=status.HTTP_400_BAD_REQUEST,
+                    raise BaseAppError(
+                        f"未知的 Embedding provider: {new_provider_id}",
+                        business_code=ErrorCode.INVALID_PARAMS,
                     )
 
             # 获取旧配置
@@ -311,12 +320,8 @@ class AISettingsView(APIView):
             if new_provider_id and new_dimension is not None:
                 try:
                     new_dimension = int(new_dimension)
-                except (TypeError, ValueError):
-                    return error_response(
-                        code=ErrorCode.INVALID_PARAMS,
-                        message="dimension 必须是整数",
-                        http_status=status.HTTP_400_BAD_REQUEST,
-                    )
+                except (TypeError, ValueError) as e:
+                    raise BaseAppError("dimension 必须是整数", business_code=ErrorCode.INVALID_PARAMS) from e
                 # 找到 provider 配置，校验范围
                 provider_cfg = None
                 for p in get_embedding_registry():
@@ -324,10 +329,9 @@ class AISettingsView(APIView):
                         provider_cfg = p
                         break
                 if provider_cfg is None:
-                    return error_response(
-                        code=ErrorCode.INVALID_PARAMS,
-                        message=f"未找到 Embedding provider 配置: {new_provider_id}",
-                        http_status=status.HTTP_400_BAD_REQUEST,
+                    raise BaseAppError(
+                        f"未找到 Embedding provider 配置: {new_provider_id}",
+                        business_code=ErrorCode.INVALID_PARAMS,
                     )
                 # MRL 截断校验：min_dimension > 0 且 native_max_dimension > 0 表示支持 MRL
                 # 范围：[min_dimension, native_max_dimension] 之间任意整数
@@ -336,16 +340,14 @@ class AISettingsView(APIView):
 
                 if native_max > 0 and min_dim > 0:
                     if new_dimension < min_dim or new_dimension > native_max:
-                        return error_response(
-                            code=ErrorCode.INVALID_PARAMS,
-                            message=f"dimension 必须在 {min_dim}~{native_max} 范围内",
-                            http_status=status.HTTP_400_BAD_REQUEST,
+                        raise BaseAppError(
+                            f"dimension 必须在 {min_dim}~{native_max} 范围内",
+                            business_code=ErrorCode.INVALID_PARAMS,
                         )
                 else:
-                    return error_response(
-                        code=ErrorCode.INVALID_PARAMS,
-                        message="此 Embedding 不支持 MRL 截断（min_dimension 或 native_max_dimension 未配置）",
-                        http_status=status.HTTP_400_BAD_REQUEST,
+                    raise BaseAppError(
+                        "此 Embedding 不支持 MRL 截断（min_dimension 或 native_max_dimension 未配置）",
+                        business_code=ErrorCode.INVALID_PARAMS,
                     )
                 # 等于 native_max 时清空（表示不截断）
                 if native_max and new_dimension == native_max:
@@ -392,10 +394,9 @@ class AISettingsView(APIView):
             if fb_emb_id:
                 valid_ids = set(get_embedding_provider_ids())
                 if fb_emb_id not in valid_ids:
-                    return error_response(
-                        code=ErrorCode.INVALID_PARAMS,
-                        message=f"未知的 Embedding provider: {fb_emb_id}",
-                        http_status=status.HTTP_400_BAD_REQUEST,
+                    raise BaseAppError(
+                        f"未知的 Embedding provider: {fb_emb_id}",
+                        business_code=ErrorCode.INVALID_PARAMS,
                     )
                 SystemConfig.set_value(
                     "fallback_embedding_provider",
@@ -436,20 +437,12 @@ class RebuildIndexesView(APIView):
         index_names = request.data.get("index_names", [])
 
         if not provider_id:
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message="provider_id 不能为空",
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise BaseAppError("provider_id 不能为空", business_code=ErrorCode.INVALID_PARAMS)
 
         # 验证 provider
         valid_ids = set(get_embedding_provider_ids())
         if provider_id not in valid_ids:
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message=f"未知的 Embedding provider: {provider_id}",
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise BaseAppError(f"未知的 Embedding provider: {provider_id}", business_code=ErrorCode.INVALID_PARAMS)
 
         # 获取新维度
         new_dimension = None

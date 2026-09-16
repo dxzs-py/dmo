@@ -21,6 +21,9 @@ class ResearchStartSerializer(serializers.Serializer):
     research_depth = serializers.CharField(default="standard", help_text="研究深度：basic / standard / comprehensive")
     enable_web_search = serializers.BooleanField(default=True, required=False, help_text="是否启用网络搜索")
     enable_doc_analysis = serializers.BooleanField(default=False, required=False, help_text="是否启用文档分析")
+    enable_sandbox = serializers.BooleanField(
+        default=False, required=False, help_text="是否启用沙箱执行（HIGH 级命令在容器内隔离）"
+    )
     knowledge_base_ids = serializers.ListField(
         child=serializers.CharField(), default=list, required=False, allow_empty=True, help_text="关联的知识库 ID 列表"
     )
@@ -76,6 +79,7 @@ class ResearchContinueSerializer(serializers.Serializer):
     )
     enable_web_search = serializers.BooleanField(default=True, required=False)
     enable_doc_analysis = serializers.BooleanField(default=False, required=False)
+    enable_sandbox = serializers.BooleanField(default=False, required=False)
     knowledge_base_ids = serializers.ListField(
         child=serializers.CharField(),
         default=list,
@@ -127,6 +131,7 @@ class ResearchTaskSerializer(serializers.ModelSerializer):
             "final_report",
             "enable_web_search",
             "enable_doc_analysis",
+            "enable_sandbox",
             "knowledge_base_ids",
             "research_depth",
             "error_message",

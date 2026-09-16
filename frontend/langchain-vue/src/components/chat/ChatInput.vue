@@ -53,6 +53,16 @@ const props = defineProps({
     type: String,
     default: 'agent',
   },
+  // 聊天深研模式沙箱任务级开关（仅 deep-research 模式显示；全局未启用时置灰）
+  useSandbox: {
+    type: Boolean,
+    default: false,
+  },
+  // 后端 sandbox_enabled 全局标志（false = 后端未启用，开关置灰）
+  sandboxEnabled: {
+    type: Boolean,
+    default: false,
+  },
   useDeepThinking: {
     type: Boolean,
     default: false,
@@ -82,6 +92,7 @@ const emit = defineEmits({
   'update:selectedMcpServers': (val) => Array.isArray(val),
   'update:selectedTools': (val) => Array.isArray(val),
   'update:useDeepThinking': (val) => typeof val === 'boolean',
+  'update:useSandbox': (val) => typeof val === 'boolean',
   'stop-streaming': () => true,
   'command-select': (cmd) => cmd instanceof Object,
   'retry-upload': (index) => typeof index === 'number',
@@ -372,6 +383,16 @@ watch(() => props.modelValue, adjustTextareaHeight)
               @click="emit('update:useDeepThinking', !useDeepThinking)"
             >
               🧠
+            </button>
+            <button
+              v-if="currentMode === 'deep-research'"
+              class="toolbar-btn"
+              :class="{ active: useSandbox }"
+              :disabled="disabled || loading || !sandboxEnabled"
+              :title="sandboxEnabled ? (useSandbox ? '关闭沙箱模式' : '开启沙箱模式') : '沙箱模式不可用（后端未启用）'"
+              @click="emit('update:useSandbox', !useSandbox)"
+            >
+              🛡️
             </button>
             <ToolSelector
               v-if="currentMode === 'agent' || currentMode === 'deep-research'"

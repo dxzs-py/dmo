@@ -24,14 +24,14 @@ class TrackedTask:
     用法:
         @shared_task(bind=True)
         def my_task(self, **kwargs):
-            tracker = TrackedTask(self)
-            tracker.set_task_type('rag_index')
-            tracker.set_created_by(user_id)
-            tracker.set_task_manager_id(task_id)
-            tracker.mark_started()
-            tracker.update_progress(50, "处理中...")
+            tracker = TrackedTask(self)              # 1.创建追踪器
+            tracker.set_task_type('rag_index')       # 2.设置任务类型
+            tracker.set_created_by(user_id)          # 3.设置触发用户
+            tracker.set_task_manager_id(task_id)     # 4.设置任务管理器 ID
+            tracker.mark_started()                   # 5.标记任务开始
+            tracker.update_progress(50, "处理中...")  # 6.更新任务进度
             ...
-            tracker.mark_success(result={"key": "value"})
+            tracker.mark_success(result={"key": "value"})  # 7.标记任务成功
     """
 
     def __init__(self, celery_task):

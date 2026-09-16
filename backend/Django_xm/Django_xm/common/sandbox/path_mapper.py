@@ -3,15 +3,18 @@
 Docker Desktop on Windows 挂载卷时需要 Linux 风格路径。
 本模块将 Windows 绝对路径映射到容器内的标准挂载点 /workspace。
 
-映射规则：
-    项目根目录（PROJECT_ROOT）→ /workspace
-    项目根目录下的子路径 → /workspace/<relative>
+映射规则（沙箱加固后，仅挂载 DATA_DIR，而非整个项目根）：
+    数据根目录（DATA_DIR，即 PROJECT_ROOT/data）→ /workspace
+    DATA_DIR 下的子路径 → /workspace/<relative>
 
-例如（PROJECT_ROOT = D:\\programming\\langchain\\langchain_xm）：
-    D:\\programming\\langchain\\langchain_xm\\backend → /workspace/backend
-    D:\\programming\\langchain\\langchain_xm\\data\\research → /workspace/data/research
+例如（DATA_DIR = D:\\programming\\langchain\\langchain_xm\\backend\\Django_xm\\data）：
+    D:\\programming\\langchain\\langchain_xm\\backend\\Django_xm\\data\\research\\t1
+        → /workspace/research/t1
 
-非项目目录路径不映射（返回 None），调用方应拒绝在沙箱外执行。
+深度研究任务的工作目录为 data/research/{thread_id}，
+容器内对应 /workspace/research/{thread_id}，产物经挂载写回宿主。
+
+非 DATA_DIR 内的路径不映射（返回 None），调用方应拒绝在沙箱外执行。
 """
 
 import logging
@@ -22,13 +25,16 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-# 容器内项目根目录挂载点
+# 容器内数据根目录挂载点
 CONTAINER_WORKSPACE = "/workspace"
 
 
-def _get_project_root() -> str:
-    """获取项目根目录的字符串形式（用于路径匹配）。"""
-    return str(settings.PROJECT_ROOT).rstrip("\\/")
+def _get_data_root() -> str:
+    """获取数据根目录的字符串形式（用于路径匹配）。
+
+    沙箱仅挂载 DATA_DIR（= PROJECT_ROOT/data），容器 /workspace 即宿主 DATA_DIR。
+    """
+    return str(settings.DATA_DIR).rstrip("\\/")
 
 
 def map_to_container_path(windows_path: str) -> str | None:
@@ -38,29 +44,29 @@ def map_to_container_path(windows_path: str) -> str | None:
         windows_path: 宿主路径（Windows 绝对路径或相对路径）
 
     Returns:
-        容器内绝对路径（如 /workspace/backend），或 None（不在项目目录内）
+        容器内绝对路径（如 /workspace/research/t1），或 None（不在 DATA_DIR 内）
     """
     if not windows_path:
         return CONTAINER_WORKSPACE
 
-    project_root = _get_project_root()
+    data_root = _get_data_root()
 
     # 相对路径：直接拼接
     if not PurePath(windows_path).is_absolute():
         return str(PurePosixPath(CONTAINER_WORKSPACE) / windows_path.replace("\\", "/"))
 
-    # 绝对路径：检查是否在项目目录内
+    # 绝对路径：检查是否在数据目录内
     try:
         host_path = PureWindowsPath(windows_path) if platform.system() == "Windows" else PurePath(windows_path)
-        root_path = PureWindowsPath(project_root) if platform.system() == "Windows" else PurePath(project_root)
+        root_path = PureWindowsPath(data_root) if platform.system() == "Windows" else PurePath(data_root)
 
-        # 检查是否是项目根目录或其子路径
+        # 检查是否是数据根目录或其子路径
         try:
             relative = host_path.relative_to(root_path)
         except ValueError:
-            # 不在项目目录内，无法安全映射
+            # 不在数据目录内，无法安全映射
             logger.warning(
-                f"[SandboxPathMapper] 路径不在项目目录内，无法映射: path={windows_path}, project_root={project_root}"
+                f"[SandboxPathMapper] 路径不在数据目录内，无法映射: path={windows_path}, data_root={data_root}"
             )
             return None
 
@@ -78,7 +84,7 @@ def map_to_host_path(container_path: str) -> str | None:
     """将容器内路径映射回宿主路径（供结果路径回显）。
 
     Args:
-        container_path: 容器内绝对路径（如 /workspace/backend/results）
+        container_path: 容器内绝对路径（如 /workspace/research/t1/reports/x.md）
 
     Returns:
         宿主路径字符串，或 None（不在挂载点内）
@@ -86,7 +92,7 @@ def map_to_host_path(container_path: str) -> str | None:
     if not container_path:
         return None
 
-    project_root = _get_project_root()
+    data_root = _get_data_root()
 
     # 检查是否以挂载点开头
     if not container_path.startswith(CONTAINER_WORKSPACE):
@@ -95,7 +101,7 @@ def map_to_host_path(container_path: str) -> str | None:
     # 提取相对路径
     relative = container_path[len(CONTAINER_WORKSPACE) :].lstrip("/")
     if not relative:
-        return project_root
+        return data_root
 
     # 拼接宿主路径
-    return str(PurePath(project_root) / relative)
+    return str(PurePath(data_root) / relative)

@@ -73,6 +73,7 @@ class TaskManager:
                 "updated_at": task.updated_at.isoformat() if task.updated_at else None,
                 "enable_web_search": task.enable_web_search,
                 "enable_doc_analysis": task.enable_doc_analysis,
+                "enable_sandbox": task.enable_sandbox,
                 "final_report": task.final_report if task.status == "completed" else "",
                 # 主代理累计正文（过程信息权威源，对齐 ChatMessage.content）：
                 # 详情页打开时快照校对（useSnapshotSync task 分支）据此补全
@@ -141,6 +142,7 @@ class TaskManager:
         query: str,
         enable_web_search: bool = True,
         enable_doc_analysis: bool = False,
+        enable_sandbox: bool = False,
         created_by=None,
         session_id: str | None = None,
     ) -> dict[str, Any]:
@@ -152,6 +154,7 @@ class TaskManager:
             "created_at": timezone.now().isoformat(),
             "enable_web_search": enable_web_search,
             "enable_doc_analysis": enable_doc_analysis,
+            "enable_sandbox": enable_sandbox,
             "session_id": session_id,
         }
 
@@ -163,6 +166,7 @@ class TaskManager:
             status="pending",
             enable_web_search=enable_web_search,
             enable_doc_analysis=enable_doc_analysis,
+            enable_sandbox=enable_sandbox,
             created_by=created_by,
             session_id=session_id,
         )

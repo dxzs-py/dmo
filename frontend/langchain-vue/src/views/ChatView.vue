@@ -14,9 +14,11 @@ import { useChatCommands } from '../composables/useChatCommands'
 import { useChatKeyboard } from '../composables/useChatKeyboard'
 import { useRealtimeSync } from '../composables/useRealtimeSync'
 import { useResearchApprovalListener } from '../composables/useResearchApprovalListener'
+import { useSandboxAvailability } from '../composables/useSandboxAvailability'
 import { getSessionSnapshot } from '../api/realtime'
 import { chatAPI } from '../api/chat'
 import { getQueryParam } from '../utils/format'
+import { logger } from '../utils/logger'
 import { Loading } from '@element-plus/icons-vue'
 import ChatHeader from '../components/chat/ChatHeader.vue'
 import ChatMessages from '../components/chat/ChatMessages.vue'
@@ -95,6 +97,12 @@ const connectionStatus = computed(() => realtime.connectionStatus.value)
 // --- 深度研究 SSE 重连（刷新/新浏览器恢复审批监听） ---
 const { connectResearchSSE, disconnectResearchSSE } = useResearchApprovalListener()
 
+// --- 沙箱全局可用性（后端 AI 设置接口 sandbox_enabled；false 时深研模式沙箱开关置灰） ---
+const {
+  sandboxEnabled,
+  loadSandboxStatus,
+} = useSandboxAvailability()
+
 // --- WebSocket 实时同步 ---
 /** 当前通过 WebSocket 订阅的 sessionId */
 let subscribedSessionId = null
@@ -106,14 +114,14 @@ const subscribeToSessionEvents = (sessionId) => {
   unsubscribeFromSessionEvents()
   subscribedSessionId = sessionId
   _sessionUnsubscribeFn = realtime.subscribeSession(sessionId, syncStore.handleRealtimeEvent)
-  console.log('[ChatView] WebSocket 订阅会话事件:', sessionId)
+  logger.log('[ChatView] WebSocket 订阅会话事件:', sessionId)
 }
 
 const unsubscribeFromSessionEvents = () => {
   if (_sessionUnsubscribeFn) {
     _sessionUnsubscribeFn()
     _sessionUnsubscribeFn = null
-    console.log('[ChatView] WebSocket 取消订阅会话事件:', subscribedSessionId)
+    logger.log('[ChatView] WebSocket 取消订阅会话事件:', subscribedSessionId)
   }
   subscribedSessionId = null
 }
@@ -199,6 +207,8 @@ const checkBackendStreamStatus = async () => {
 
 const initChatView = async () => {
   chatStore.fetchModes()
+  // 沙箱全局可用性（后端 sandbox_enabled；失败/未启用均回落 false，深研模式开关置灰）
+  loadSandboxStatus()
 
   // 等待 sessionStore 初始化完成（main.js 中异步调用，可能晚于本组件挂载）：
   // 会话定位（新打开→最新 / 刷新→恢复）在 initialize 内完成，若此处先执行，
@@ -212,7 +222,7 @@ const initChatView = async () => {
   const researchTaskId = getQueryParam(route, 'research_task_id')
   const queryMessage = getQueryParam(route, 'q')
   if (targetSessionId || researchTaskId) {
-    console.log('[ChatView] 深度研究跳转参数:', {
+    logger.log('[ChatView] 深度研究跳转参数:', {
       sessionId: targetSessionId || '(未传递)',
       researchTaskId: researchTaskId || '(未传递)',
       q: queryMessage || '(未传递)',
@@ -225,17 +235,17 @@ const initChatView = async () => {
   if (targetSessionId && targetSessionId !== sessionStore.currentSessionId) {
     const sessionExists = sessionStore.sessions.some(s => s.id === targetSessionId)
     if (sessionExists) {
-      console.log('[ChatView] 切换会话:', sessionStore.currentSessionId, '→', targetSessionId)
+      logger.log('[ChatView] 切换会话:', sessionStore.currentSessionId, '→', targetSessionId)
       sessionStore.currentSessionId = targetSessionId
     } else {
       // 会话已被删除，降级使用当前会话或新建会话
-      console.log('[ChatView] 目标会话已不存在，降级到当前会话:', sessionStore.currentSessionId || '(新建)')
+      logger.log('[ChatView] 目标会话已不存在，降级到当前会话:', sessionStore.currentSessionId || '(新建)')
       if (!sessionStore.currentSessionId) {
         await sessionStore.createNewSession()
       }
     }
   } else if (targetSessionId && targetSessionId === sessionStore.currentSessionId) {
-    console.log('[ChatView] session_id 已匹配当前会话，无需切换')
+    logger.log('[ChatView] session_id 已匹配当前会话，无需切换')
   }
 
   // loadKnowledgeBases 已在 main.js sessionStore.initialize() 中调用，此处不再重复
@@ -425,6 +435,8 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
           :current-mode="chatStore.currentMode"
           :use-deep-thinking="useDeepThinking"
           :model-supports-deep-thinking="modelStore.currentModelCapabilities.includes('deep_thinking')"
+          :use-sandbox="chatStore.deepResearchSandboxEnabled"
+          :sandbox-enabled="sandboxEnabled"
           :is-uploading="isUploading"
           :research-context-info="chatDeepResearchStore.researchContextInfo"
           @send="sendMessage"
@@ -434,6 +446,7 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
           @update:selected-mcp-servers="(val) => selectedMcpServers = val"
           @update:selected-tools="(val) => selectedTools = val"
           @update:use-deep-thinking="(val) => useDeepThinking = val"
+          @update:use-sandbox="chatStore.setDeepResearchSandboxEnabled"
           @stop-streaming="handleStopStreaming"
           @command-select="handleCommandSelect"
           @retry-upload="retryUpload"

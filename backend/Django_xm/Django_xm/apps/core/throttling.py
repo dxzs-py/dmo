@@ -30,6 +30,7 @@ __all__ = [
     "AnonymousRateThrottle",
     "ChatStreamRateThrottle",
     "KnowledgeRateThrottle",
+    "LearningRateThrottle",
     "LoginRateThrottle",
     "MetaRateThrottle",
     "ResearchRateThrottle",
@@ -110,6 +111,14 @@ class ResearchRateThrottle(ScopedRateThrottle):
 
 class KnowledgeRateThrottle(ScopedRateThrottle):
     scope: str = "knowledge"  # type: ignore[assignment]  # django-stubs types scope as None
+
+
+class LearningRateThrottle(ScopedRateThrottle):
+    """工作流学习 LLM 消耗型端点（start/stream/submit/restart/改答案重评分）。
+
+    learning 是长流程低频交互，速率介于 research（更重）与 chat_stream（高频）之间。
+    """
+    scope: str = "learning"  # type: ignore[assignment]  # django-stubs types scope as None
 
 
 class SensitiveOperationRateThrottle(ScopedRateThrottle):

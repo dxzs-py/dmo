@@ -85,11 +85,13 @@ class RAGEvaluator:
             doc_id = doc.metadata.get("source") or doc.metadata.get("id") or doc.metadata.get("filename", "")
             retrieved_ids.append(doc_id)
 
-        hits = [doc_id for doc_id in retrieved_ids if doc_id in relevant_set]
+        # 注意：同一文档可能被切分为多个 chunk 并同时命中，必须按 doc id 去重后再统计，
+        # 否则 hits 数量会超过 relevant_set 大小，导致 recall > 1（违反 [0,1] 约束）。
+        hit_ids = {doc_id for doc_id in retrieved_ids if doc_id in relevant_set}
 
-        precision = len(hits) / len(retrieved_ids) if retrieved_ids else 0.0
-        recall = len(hits) / len(relevant_set) if relevant_set else 0.0
-        hit_rate = 1.0 if hits else 0.0
+        precision = len(hit_ids) / len(retrieved_ids) if retrieved_ids else 0.0
+        recall = len(hit_ids) / len(relevant_set) if relevant_set else 0.0
+        hit_rate = 1.0 if hit_ids else 0.0
         mrr = _compute_mrr(retrieved_ids, relevant_set)
 
         return RetrievalMetrics(

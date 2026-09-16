@@ -18,6 +18,7 @@ import logging
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
@@ -34,8 +35,9 @@ from Django_xm.apps.approvals.services import approval_service
 from Django_xm.apps.approvals.services.approval_gateway import CircuitBreakerError, gateway
 from Django_xm.apps.core.throttling import SensitiveOperationRateThrottle
 from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.pagination import ProjectPagination
-from Django_xm.common.responses import error_response, success_response
+from Django_xm.common.responses import success_response
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +232,7 @@ def _check_batch_and_route(
             state=Approval.State.REJECTED,
             extra={"route_error": str(ve)},
         )
-        return error_response(code=ErrorCode.VALIDATION_FAILED, message=str(ve))
+        raise BaseAppError(str(ve), business_code=ErrorCode.VALIDATION_FAILED) from ve
 
     # chat / deep_research 均已发布 Redis 信令，返回 JSON 响应
     return _json_response(
@@ -279,7 +281,7 @@ class ApprovalDetailView(BaseApprovalAccessMixin, APIView):
         try:
             approval = Approval.objects.get(interrupt_id=interrupt_id)
         except Approval.DoesNotExist:
-            return error_response(code=ErrorCode.NOT_FOUND, message="审批不存在")
+            raise NotFound("审批不存在") from None
         self._assert_ownership(approval, request.user)
         serializer = ApprovalReadSerializer(approval)
         return success_response(data=serializer.data)
@@ -303,9 +305,9 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
     def post(self, request, interrupt_id):
         write_serializer = ApprovalWriteSerializer(data=request.data)
         if not write_serializer.is_valid():
-            return error_response(
-                code=ErrorCode.VALIDATION_FAILED,
-                message="请求参数校验失败",
+            raise BaseAppError(
+                "请求参数校验失败",
+                business_code=ErrorCode.VALIDATION_FAILED,
                 data={"details": write_serializer.errors},
             )
         validated = write_serializer.validated_data
@@ -331,7 +333,7 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
             # resume_approval 的 ValueError 均为内部契约错误（payload scope 非法 / 缺 session_id 等），
             # 细节只进日志，不向客户端回显
             logger.exception(f"[ApprovalResumeView] resume_approval 内部契约错误: interrupt_id={interrupt_id}")
-            return error_response(code=ErrorCode.VALIDATION_FAILED, message="请求处理失败，请稍后重试")
+            raise BaseAppError("请求处理失败，请稍后重试", business_code=ErrorCode.VALIDATION_FAILED) from None
 
         approval = result["approval"]
 
@@ -346,7 +348,7 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
         not_found = result.get("not_found", False)
 
         if not_found or approval is None:
-            return error_response(code=ErrorCode.NOT_FOUND, message="审批不存在")
+            raise NotFound("审批不存在")
 
         # 幂等响应
         if is_idempotent:
@@ -393,9 +395,9 @@ class ApprovalRejectView(BaseApprovalAccessMixin, APIView):
     def post(self, request, interrupt_id):
         write_serializer = ApprovalWriteSerializer(data=request.data)
         if not write_serializer.is_valid():
-            return error_response(
-                code=ErrorCode.VALIDATION_FAILED,
-                message="请求参数校验失败",
+            raise BaseAppError(
+                "请求参数校验失败",
+                business_code=ErrorCode.VALIDATION_FAILED,
                 data={"details": write_serializer.errors},
             )
 
@@ -414,7 +416,7 @@ class ApprovalRejectView(BaseApprovalAccessMixin, APIView):
             )
         except ValueError:
             logger.exception(f"[ApprovalRejectView] resume_approval 内部契约错误: interrupt_id={interrupt_id}")
-            return error_response(code=ErrorCode.VALIDATION_FAILED, message="请求处理失败，请稍后重试")
+            raise BaseAppError("请求处理失败，请稍后重试", business_code=ErrorCode.VALIDATION_FAILED) from None
 
         approval = result["approval"]
         resume_value = result["resume_value"]
@@ -422,7 +424,7 @@ class ApprovalRejectView(BaseApprovalAccessMixin, APIView):
         not_found = result.get("not_found", False)
 
         if not_found or approval is None:
-            return error_response(code=ErrorCode.NOT_FOUND, message="审批不存在")
+            raise NotFound("审批不存在")
 
         # 幂等响应
         if is_idempotent:
@@ -473,10 +475,10 @@ class ApprovalStateView(BaseApprovalAccessMixin, APIView):
         try:
             approval = Approval.objects.select_related("approved_by").get(interrupt_id=interrupt_id)
         except Approval.DoesNotExist:
-            return error_response(code=ErrorCode.NOT_FOUND, message="审批不存在")
+            raise NotFound("审批不存在") from None
 
         if not self._user_owns_approval(request.user, approval):
-            return error_response(code=ErrorCode.PERMISSION_DENIED, message="无权查看该审批")
+            raise BaseAppError("无权查看该审批", business_code=ErrorCode.PERMISSION_DENIED)
 
         extra_data = approval.extra or {}
         resume_value = extra_data.get("_resume_value") if isinstance(extra_data, dict) else None

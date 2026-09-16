@@ -52,12 +52,13 @@ class ChatJSONFieldNonNullTests(TestCase):
         msg = ChatMessage.objects.create(session=self.session, role="assistant", content="hello")
         columns = ", ".join(ALL_JSON_FIELDS)
         with connection.cursor() as cursor:
+            # columns 来自模块级常量 ALL_JSON_FIELDS、表名来自 Django 模型元数据，均为受信常量，非用户输入
             cursor.execute(
-                f'SELECT {columns} FROM "{ChatMessage._meta.db_table}" WHERE id = %s',
+                f'SELECT {columns} FROM "{ChatMessage._meta.db_table}" WHERE id = %s',  # noqa: S608
                 [msg.pk],
             )
             row = cursor.fetchone()
-        values = dict(zip(ALL_JSON_FIELDS, row))
+        values = dict(zip(ALL_JSON_FIELDS, row, strict=True))
         for field in LIST_FIELDS:
             self.assertEqual(json.loads(values[field]), [])
         for field in DICT_FIELDS:
@@ -67,8 +68,9 @@ class ChatJSONFieldNonNullTests(TestCase):
         """ChatSession.selected_knowledge_bases 默认 []（模型层 + 存储层）。"""
         self.assertEqual(self.session.selected_knowledge_bases, [])
         with connection.cursor() as cursor:
+            # 表名来自 Django 模型元数据，为受信常量，非用户输入
             cursor.execute(
-                f'SELECT selected_knowledge_bases FROM "{ChatSession._meta.db_table}" WHERE id = %s',
+                f'SELECT selected_knowledge_bases FROM "{ChatSession._meta.db_table}" WHERE id = %s',  # noqa: S608
                 [self.session.pk],
             )
             (value,) = cursor.fetchone()

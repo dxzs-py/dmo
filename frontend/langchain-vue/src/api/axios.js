@@ -3,6 +3,7 @@ import settings from '../config/settings'
 import { useUserStore } from '@/stores/user'
 import { useLoadingStore } from '@/stores/loading'
 import { toCamelCase, toSnakeCase } from '@/utils/sessionTransformers'
+import { logger } from '@/utils/logger'
 
 const apiClient = axios.create({
   baseURL: settings.apiBaseUrl,
@@ -35,7 +36,7 @@ apiClient.interceptors.request.use(
       try {
         config.data = toSnakeCase(config.data)
       } catch (e) {
-        console.warn('[Axios] toSnakeCase 转换请求 body 失败:', e)
+        logger.warn('[Axios] toSnakeCase 转换请求 body 失败:', e)
       }
     }
     // URL query params 统一转换 camelCase → snake_case
@@ -43,7 +44,7 @@ apiClient.interceptors.request.use(
       try {
         config.params = toSnakeCase(config.params)
       } catch (e) {
-        console.warn('[Axios] toSnakeCase 转换 query params 失败:', e)
+        logger.warn('[Axios] toSnakeCase 转换 query params 失败:', e)
       }
     }
     return config
@@ -72,13 +73,13 @@ apiClient.interceptors.response.use(
           response.data = toCamelCase(response.data)
           const after = JSON.stringify(response.data).slice(0, 200)
           if (before !== after) {
-            console.debug('[Axios] 响应转换:', response.config?.url, '\n  前:', before, '\n  后:', after)
+            logger.debug('[Axios] 响应转换:', response.config?.url, '\n  前:', before, '\n  后:', after)
           }
         } else {
           response.data = toCamelCase(response.data)
         }
       } catch (e) {
-        console.warn('[Axios] toCamelCase 转换响应数据失败:', e)
+        logger.warn('[Axios] toCamelCase 转换响应数据失败:', e)
       }
     }
     return response

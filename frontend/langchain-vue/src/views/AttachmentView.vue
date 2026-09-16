@@ -13,6 +13,7 @@ import {
   Histogram,
 } from '@element-plus/icons-vue'
 import { attachmentAPI } from '@/api/attachment'
+import { logger } from '@/utils/logger'
 
 const activeTab = ref('files')
 
@@ -106,7 +107,7 @@ const loadStats = async () => {
       stats.value = res.data.data
     }
   } catch (e) {
-    console.error('加载统计失败', e)
+    logger.error('加载统计失败', e)
   } finally {
     statsLoading.value = false
   }
@@ -128,7 +129,7 @@ const loadAttachments = async () => {
       pagination.total = data.total || 0
     }
   } catch (e) {
-    console.error('加载附件列表失败', e)
+    logger.error('加载附件列表失败', e)
   } finally {
     loading.value = false
   }
@@ -149,7 +150,7 @@ const loadTrashedAttachments = async () => {
       trashPagination.total = data.total || 0
     }
   } catch (e) {
-    console.error('加载回收站列表失败', e)
+    logger.error('加载回收站列表失败', e)
   } finally {
     trashLoading.value = false
   }
@@ -162,7 +163,7 @@ const loadAlerts = async () => {
       alerts.value = res.data.data?.items || res.data.data || []
     }
   } catch (e) {
-    console.error('加载告警失败', e)
+    logger.error('加载告警失败', e)
   }
 }
 

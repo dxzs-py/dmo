@@ -23,7 +23,6 @@ ContextCircuitBreaker / CircuitBreakerState 真实行为。
 
 import os
 import unittest
-from typing import Any
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.test")
 import django

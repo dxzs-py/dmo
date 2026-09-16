@@ -15,6 +15,7 @@ import { ChatRequestSchema, validateSchema } from '../utils/validation'
 import { logger } from '../utils/logger'
 import { transformFrontendMessageToBackend } from '../utils/sessionTransformers'
 import { getInterruptId } from '../utils/messageOperations'
+import { resolveChatEnableSandbox } from '../utils/sandbox'
 import { StreamState } from '../types'
 
 /**
@@ -44,6 +45,8 @@ export const useChatStore = defineStore('chat', () => {
     'agent': '代理',
     'deep-research': '深度研究',
   })
+  // 聊天深度研究模式沙箱任务级开关（默认关闭；仅 deep-research 模式随请求透传 enableSandbox）
+  const deepResearchSandboxEnabled = ref(false)
   const lastStreamError = ref(null)
   const messageCount = ref(0)
   const attachmentProcessing = ref(null)
@@ -278,6 +281,8 @@ export const useChatStore = defineStore('chat', () => {
             ? currentResearchTaskId
             : null,
           continueTaskId: continueTaskId,
+          // 深研模式沙箱任务级开关（Spec 任务级开关；仅 deep-research 模式透传 enable_sandbox）
+          enableSandbox: resolveChatEnableSandbox(currentMode.value, deepResearchSandboxEnabled.value),
         })
 
       if (!result.success && !result.aborted) {
@@ -584,12 +589,19 @@ export const useChatStore = defineStore('chat', () => {
   const approveCommand = (approval, userInput) => _executeApproval(approval, true, userInput)
   const rejectCommand = (approval) => _executeApproval(approval, false)
 
+  /** 设置聊天深研模式沙箱任务级开关（仅 deep-research 模式随请求透传 enableSandbox） */
+  const setDeepResearchSandboxEnabled = (val) => {
+    deepResearchSandboxEnabled.value = val === true
+  }
+
   return {
     isLoading,
     isDeleting,
     isStreaming,
     currentMode,
     availableModes,
+    deepResearchSandboxEnabled,
+    setDeepResearchSandboxEnabled,
     abortController,
     lastStreamError,
     messageCount,

@@ -12,7 +12,8 @@
   * 候选模型也失败 → 重抛原始 402 异常，降级标记被重置
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
-    python manage.py test Django_xm.apps.ai_engine.services.tests.test_llm_fallback_single_chain --settings=Django_xm.settings.test
+    python manage.py test Django_xm.apps.ai_engine.services.tests.test_llm_fallback_single_chain \
+        --settings=Django_xm.settings.test
 """
 
 from __future__ import annotations

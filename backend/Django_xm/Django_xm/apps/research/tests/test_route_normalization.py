@@ -58,6 +58,5 @@ class ResearchRouteNormalizationTests(TestCase):
             ("research:result", {"task_id": "t1"}),
         ]
         for name, kwargs in cases:
-            with self.subTest(name=name):
-                with self.assertRaises(NoReverseMatch):
-                    reverse(name, kwargs=kwargs)
+            with self.subTest(name=name), self.assertRaises(NoReverseMatch):
+                reverse(name, kwargs=kwargs)

@@ -31,6 +31,7 @@ class ResearchTask(AuditModel):
     final_report = models.TextField(blank=True, verbose_name="最终报告")
     enable_web_search = models.BooleanField(default=True, verbose_name="启用网络搜索")
     enable_doc_analysis = models.BooleanField(default=False, verbose_name="启用文档分析")
+    enable_sandbox = models.BooleanField(default=False, verbose_name="启用沙箱执行")
     knowledge_base_ids = models.JSONField(default=list, blank=True, verbose_name="关联知识库ID列表")
     session_id = models.CharField(
         max_length=100,

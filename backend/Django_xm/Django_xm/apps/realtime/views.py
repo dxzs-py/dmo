@@ -13,6 +13,7 @@ import logging
 
 from django.apps import apps
 from drf_spectacular.utils import extend_schema
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -21,8 +22,7 @@ from Django_xm.apps.approvals.services.approval_helpers import (
     enrich_tool_calls_with_approvals,
 )
 from Django_xm.apps.core.throttling import SnapshotRateThrottle
-from Django_xm.common.error_codes import ErrorCode
-from Django_xm.common.responses import error_response, success_response
+from Django_xm.common.responses import success_response
 from Django_xm.common.serializers import EmptySerializer
 
 logger = logging.getLogger(__name__)
@@ -92,11 +92,7 @@ class SnapshotView(APIView):
         try:
             session = ChatSession.objects.get(session_id=session_id, user=request.user)
         except ChatSession.DoesNotExist:
-            return error_response(
-                code=ErrorCode.NOT_FOUND,
-                message="会话不存在或无权访问",
-                http_status=404,
-            )
+            raise NotFound("会话不存在或无权访问") from None
 
         # 2. 聚合消息列表（含 tool_calls JSON）
         # ChatMessage.objects 默认使用 SoftDeleteManager，已排除 is_deleted=True。

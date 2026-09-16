@@ -741,7 +741,7 @@ class ChatService:
            - 将消息 streamState 转为 INTERRUPTED
         3. 更新 ChatMessage 双向关联（research_task_id + message_id）
         4. 发布执行启动信令（start_execution → Redis SIGNAL_START，不等待结果）
-        5. 发送 interrupted 事件（触发 sse_generator 广播 stream_interrupted WebSocket 事件）
+        5. 发送 interrupted 事件（触发 stream_broadcast 广播 stream_interrupted WebSocket 事件）
         6. chat SSE 立即结束（return），不持续等待研究完成
 
         研究结果回写链路（完全独立于 chat SSE）：
@@ -762,6 +762,7 @@ class ChatService:
             selected_tools=data.get("selected_tools"),
             use_mcp=data.get("use_mcp", False),
             selected_mcp_servers=data.get("selected_mcp_servers"),
+            enable_sandbox=data.get("enable_sandbox", False),
         )
         # 立即发送 deep_research 事件，让用户可以跳转到深度研究模块查看实时进度
         yield {
@@ -781,7 +782,7 @@ class ChatService:
 
         await self._start_deep_research_execution(data, task_id, enable_deep_thinking, assistant_msg_id)
 
-        # 通知前端 stream_interrupted（触发 sse_generator 广播 WebSocket 事件）
+        # 通知前端 stream_interrupted（触发 stream_broadcast 广播 WebSocket 事件）
         # 非触发浏览器通过此事件感知深度研究模式切换
         yield {
             "type": "interrupted",
@@ -861,6 +862,7 @@ class ChatService:
             special_params=data.get("special_params"),
             continue_task_id=data.get("continue_task_id"),
             message_id=str(assistant_msg_id) if assistant_msg_id else None,
+            enable_sandbox=data.get("enable_sandbox", False),
         )
 
     async def _get_deep_research_tools(self, data: dict) -> list:

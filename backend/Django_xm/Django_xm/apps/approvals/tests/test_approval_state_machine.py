@@ -37,7 +37,7 @@ django.setup()
 from django.test import TestCase
 
 from Django_xm.apps.approvals.models import Approval
-from Django_xm.apps.approvals.services import approval_service
+from Django_xm.apps.approvals.services import approval_gateway, approval_service
 from Django_xm.apps.approvals.services.approval_service import (
     build_approval_extra,
     complete_approval,
@@ -46,7 +46,6 @@ from Django_xm.apps.approvals.services.approval_service import (
     resume_approval,
     timeout_approval,
 )
-from Django_xm.apps.approvals.services import approval_gateway
 from Django_xm.common.constants import TIMEOUT_DECISION
 
 
@@ -151,7 +150,7 @@ class ResumeApprovalStateMachineTests(TestCase):
         self.assertEqual(approval.extra["_resume_value"], "目标目录=/data")
 
         # 缺省 user_input → 空串
-        approval2 = _make_approval("call_input_empty", action=Approval.ACTION_CONFIRM_WITH_INPUT)
+        _make_approval("call_input_empty", action=Approval.ACTION_CONFIRM_WITH_INPUT)
         result2 = resume_approval("call_input_empty", approved=True)
         self.assertEqual(result2["resume_value"], "")
 

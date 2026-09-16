@@ -69,8 +69,10 @@ ignore = [
 "__init__.py" = ["N999"]
 "*/apps/*/__init__.py" = ["N999"]
 "manage.py" = ["N999"]
-# Tests may use broad except for simplicity; migrations are auto-generated
-"*/tests/*" = ["S101", "BLE001", "PLR2004", "S106"]
+# Tests may use broad except for simplicity; migrations are auto-generated.
+# S105/S106: hardcoded test passwords are intentional fixtures.
+# S108: test fixtures reference temp paths (e.g. /tmp) as fake tool args / file locations.
+"*/tests/*" = ["S101", "BLE001", "PLR2004", "S105", "S106", "S108"]
 "*/migrations/*" = ["E501", "N999"]
 # Settings files legitimately expose unused names for Django config
 # F401: names imported in base.py may be used in dev/prod.py via `from .base import *`

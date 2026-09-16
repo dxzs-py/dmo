@@ -48,7 +48,7 @@ _persist_to_db_sync = MODULE._persist_to_db_sync
 
 
 class MergeContentOverlapTests(unittest.TestCase):
-    """sse_generator._merge_content_with_overlap 尾部重叠去重测试。
+    """stream_broadcast._merge_content_with_overlap 尾部重叠去重测试。
 
     恢复轮 checkpoint 重生成场景：挂起前 content 尾部与恢复轮首个 chunk 前缀
     重叠时，直接 ``+=`` 会产生「三个三个」类重复，需去重拼接。
@@ -56,8 +56,8 @@ class MergeContentOverlapTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        sse_path = Path(__file__).resolve().parents[1] / "services" / "sse_generator.py"
-        spec = importlib.util.spec_from_file_location("sse_generator_under_test", sse_path)
+        sse_path = Path(__file__).resolve().parents[1] / "services" / "stream_broadcast.py"
+        spec = importlib.util.spec_from_file_location("stream_broadcast_under_test", sse_path)
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module
         assert spec.loader is not None

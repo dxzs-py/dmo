@@ -10,4 +10,4 @@ class ApprovalFilter(django_filters.FilterSet):
 
     class Meta:
         model = Approval
-        fields = ["source_id", "source", "chat_session_id", "state"]
+        fields = ("source_id", "source", "chat_session_id", "state")

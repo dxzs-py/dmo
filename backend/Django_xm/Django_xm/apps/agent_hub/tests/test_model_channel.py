@@ -125,14 +125,16 @@ class FactoryModelFillTests(unittest.IsolatedAsyncioTestCase):
         fake_builder, fake_agent = self._make_fake_builder()
         config = _make_base_config()
 
-        with self._patch_io_side_effects():
-            with mock.patch(_RESOLVE_MODEL_PATH, return_value=sentinel) as resolve_model_mock:
-                with mock.patch.object(
-                    AgentFactory,
-                    "_get_builders",
-                    return_value={AgentType.BASE: fake_builder},
-                ):
-                    agent = await AgentFactory.create(config)
+        with (
+            self._patch_io_side_effects(),
+            mock.patch(_RESOLVE_MODEL_PATH, return_value=sentinel) as resolve_model_mock,
+            mock.patch.object(
+                AgentFactory,
+                "_get_builders",
+                return_value={AgentType.BASE: fake_builder},
+            ),
+        ):
+            agent = await AgentFactory.create(config)
 
         # factory 输出通道：resolve_model 的返回值被写回 config.model（供 builder/调用方复用）
         self.assertIs(config.model, sentinel)
@@ -148,15 +150,17 @@ class FactoryModelFillTests(unittest.IsolatedAsyncioTestCase):
         fake_builder, _ = self._make_fake_builder()
         config = _make_base_config(model="gpt-4o")
 
-        with self._patch_io_side_effects():
-            with mock.patch(_RESOLVE_MODEL_PATH) as resolve_model_mock:
-                with mock.patch.object(
-                    AgentFactory,
-                    "_get_builders",
-                    return_value={AgentType.BASE: fake_builder},
-                ):
-                    with self.assertRaises(ConfigValidationError):
-                        await AgentFactory.create(config)
+        with (
+            self._patch_io_side_effects(),
+            mock.patch(_RESOLVE_MODEL_PATH) as resolve_model_mock,
+            mock.patch.object(
+                AgentFactory,
+                "_get_builders",
+                return_value={AgentType.BASE: fake_builder},
+            ),
+            self.assertRaises(ConfigValidationError),
+        ):
+            await AgentFactory.create(config)
 
         # validate() 首位检查生效：resolve_model 与 builder 均未被触达
         resolve_model_mock.assert_not_called()
@@ -168,16 +172,18 @@ class ResolveModelParamsTests(unittest.TestCase):
 
     def test_resolve_model_passes_full_params(self):
         """完整参数原样透传：provider/name/temperature/max_tokens/special_params + enable_fallback=True。"""
-        with mock.patch(_GET_CHAT_MODEL_PATH) as get_chat_model_mock:
-            with mock.patch(_GET_PROVIDER_CONFIG_PATH, return_value={}):
-                config = AgentConfig(
-                    provider_id="test-provider",
-                    model_name="test-model",
-                    temperature=0.5,
-                    max_tokens=1024,
-                    special_params={"foo": "bar"},
-                )
-                result = resolve_model(config)
+        with (
+            mock.patch(_GET_CHAT_MODEL_PATH) as get_chat_model_mock,
+            mock.patch(_GET_PROVIDER_CONFIG_PATH, return_value={}),
+        ):
+            config = AgentConfig(
+                provider_id="test-provider",
+                model_name="test-model",
+                temperature=0.5,
+                max_tokens=1024,
+                special_params={"foo": "bar"},
+            )
+            result = resolve_model(config)
 
         # 返回值即 get_chat_model 的产物（factory 写回 config.model 的对象）
         self.assertIs(result, get_chat_model_mock.return_value)
@@ -193,20 +199,24 @@ class ResolveModelParamsTests(unittest.TestCase):
 
     def test_resolve_model_none_special_params_passes_none(self):
         """special_params=None 时经 `special_params or None` 归一化后透传 None。"""
-        with mock.patch(_GET_CHAT_MODEL_PATH) as get_chat_model_mock:
-            with mock.patch(_GET_PROVIDER_CONFIG_PATH, return_value={}):
-                config = AgentConfig(provider_id="test-provider", model_name="test-model")
-                resolve_model(config)
+        with (
+            mock.patch(_GET_CHAT_MODEL_PATH) as get_chat_model_mock,
+            mock.patch(_GET_PROVIDER_CONFIG_PATH, return_value={}),
+        ):
+            config = AgentConfig(provider_id="test-provider", model_name="test-model")
+            resolve_model(config)
 
         kwargs = get_chat_model_mock.call_args.kwargs
         self.assertIsNone(kwargs["special_params"])
 
     def test_resolve_model_none_provider_and_name_pass_none(self):
         """provider_id / model_name 为 None 时透传 None（由 get_chat_model 走默认配置）。"""
-        with mock.patch(_GET_CHAT_MODEL_PATH) as get_chat_model_mock:
-            with mock.patch(_GET_PROVIDER_CONFIG_PATH, return_value={}):
-                config = AgentConfig(temperature=0.7)
-                resolve_model(config)
+        with (
+            mock.patch(_GET_CHAT_MODEL_PATH) as get_chat_model_mock,
+            mock.patch(_GET_PROVIDER_CONFIG_PATH, return_value={}),
+        ):
+            config = AgentConfig(temperature=0.7)
+            resolve_model(config)
 
         kwargs = get_chat_model_mock.call_args.kwargs
         self.assertIsNone(kwargs["model_provider"])

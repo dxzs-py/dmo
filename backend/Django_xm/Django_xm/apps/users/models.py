@@ -55,8 +55,15 @@ class User(AbstractUser):
         return self.username
 
     def soft_delete(self, using=None):
+        """软删除用户，同时释放 mobile 唯一索引。
+
+        mobile 置 None 后该手机号可重新注册；restore() 无法找回原手机号
+        （软删语义下的固有权衡，恢复后需重新绑定）。
+        注意：User 继承 AbstractUser 而非 BaseModel，经显式调用复用其软删实现。
+        """
         from Django_xm.apps.core.base_models import BaseModel
 
+        self.mobile = None
         BaseModel.soft_delete(self, using=using)
 
     def restore(self, using=None):

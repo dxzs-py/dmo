@@ -4,11 +4,12 @@
 - CacheClearView 权限矩阵：普通用户 scope=all/model/pattern → 403；
   普通用户 scope=query → 200 且仅删除自身 rag_query 前缀；管理员 scope=all → 200
 - scope 非法值 → 400（VALIDATION_FAILED）
-- 异常路径返回通用文案「清除缓存失败」，不泄漏 str(e) 细节
+- 异常路径经全局 handler 返回统一通用文案，不泄漏 str(e) 细节
 - 旧参数键 type 已彻底移除：传 type 不再触发全量清除（等价于 scope 缺省 all 的权限判定）
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
-    python manage.py test Django_xm.apps.cache_manager.tests.test_views_clear --noinput --settings=Django_xm.settings.test
+    python manage.py test Django_xm.apps.cache_manager.tests.test_views_clear \
+        --noinput --settings=Django_xm.settings.test
 """
 
 import os
@@ -124,5 +125,5 @@ class CacheClearErrorMessageTests(TestCase):
             resp = self.client.post(CLEAR_URL, {"scope": "pattern", "pattern": "x*"}, format="json")
         self.assertEqual(resp.status_code, 500)
         body = resp.json()
-        self.assertEqual(body["message"], "清除缓存失败")
+        self.assertEqual(body["message"], "服务器内部错误，请稍后重试")
         self.assertNotIn("internal detail", body["message"])

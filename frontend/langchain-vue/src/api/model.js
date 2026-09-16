@@ -38,6 +38,11 @@ export const modelAPI = {
     return apiClient.get('/ai-engine/settings/')
   },
 
+  // 沙箱全局可用性（普通用户可读；供"沙箱模式"开关置灰）
+  getSandboxAvailability() {
+    return apiClient.get('/ai-engine/sandbox-availability/')
+  },
+
   updateAISettings(data) {
     return apiClient.put('/ai-engine/settings/', data)
   },

@@ -19,6 +19,15 @@
           <el-form-item label="启用网络搜索">
             <el-switch v-model="researchForm.enableWebSearch" />
           </el-form-item>
+          <el-form-item label="沙箱模式">
+            <el-switch
+              v-model="researchForm.enableSandbox"
+              :disabled="!sandboxEnabled"
+            />
+            <span v-if="!sandboxEnabled" class="sandbox-hint">
+              沙箱模式不可用（后端未启用）
+            </span>
+          </el-form-item>
           <el-form-item label="选择知识库">
             <div class="kb-selector">
               <div class="kb-selector-header">
@@ -210,6 +219,8 @@ import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
 import { useTaskListRealtimeSync } from '@/composables/useTaskListRealtimeSync'
 import { useDeepResearchPolling } from '@/composables/useDeepResearchPolling'
 import { useDeepResearchKnowledge } from '@/composables/useDeepResearchKnowledge'
+import { useSandboxAvailability } from '@/composables/useSandboxAvailability'
+import { buildResearchStartPayload } from '@/utils/researchPayload'
 import { ResearchTaskStatus } from '@/types'
 
 // 根因 C 解耦：深度研究模块使用独立设置 store，
@@ -357,6 +368,8 @@ const progressPercentage = computed(() => {
 const researchForm = reactive({
   query: '',
   enableWebSearch: true,
+  // 沙箱任务级开关（默认关闭；仅后端启用 sandbox_enabled 时可开启）
+  enableSandbox: false,
   knowledgeBaseIds: [],
   providerId: null,
   modelName: null,
@@ -364,6 +377,12 @@ const researchForm = reactive({
   selectedMcpServers: [],
   selectedTools: [],
 })
+
+// 沙箱全局可用性（后端 AI 设置接口 sandbox_enabled，false 时开关置灰）
+const {
+  sandboxEnabled,
+  loadSandboxStatus,
+} = useSandboxAvailability()
 
 const useDeepThinking = computed({
   get: () => researchSettings.thinkingEnabled,
@@ -474,21 +493,11 @@ const {
 } = useApiTask(
   async () => {
     const modelConfig = researchSettings.getModelConfig()
-    const response = await deepResearchAPI.start({
-      query: researchForm.query,
-      enableWebSearch: researchForm.enableWebSearch,
-      enableDocAnalysis: researchForm.knowledgeBaseIds.length > 0,
-      knowledgeBaseIds: researchForm.knowledgeBaseIds,
-      useMcp: researchForm.useMcp,
-      selectedMcpServers: researchForm.selectedMcpServers,
-      selectedTools: researchForm.selectedTools,
-      providerId: researchForm.providerId || modelConfig.providerId,
-      modelName: researchForm.modelName || modelConfig.modelName,
+    const response = await deepResearchAPI.start(buildResearchStartPayload({
+      form: researchForm,
+      modelConfig,
       enableDeepThinking: researchSettings.thinkingEnabled,
-      temperature: modelConfig.temperature,
-      maxTokens: modelConfig.maxTokens,
-      specialParams: modelConfig.specialParams,
-    })
+    }))
     return response.data.data || response.data
   },
   {
@@ -810,7 +819,7 @@ const openInChat = () => {
     session_id: sessionId || undefined,
     research_query: researchQuery,
   }
-  console.log('[DeepResearch] 跳转聊天:', {
+  logger.log('[DeepResearch] 跳转聊天:', {
     taskId: taskId,
     sessionId: sessionId || '(未关联)',
     hasSessionId: !!sessionId,
@@ -904,6 +913,8 @@ onActivated(() => {
     // （ModelSelector 挂载后 loadProviders 完成即同步；此处兜底一次）
     researchSettings.syncFromModelStore()
     refreshKnowledgeBases()
+    // 沙箱全局可用性（后端 sandbox_enabled 只读字段；失败/未启用均回落 false 置灰）
+    loadSandboxStatus()
   }
   const taskId = getQueryParam(route, 'task_id')
   // 如果 URL 带有 task_id 且当前没有查看任务，自动加载（支持从聊天模块跳转）
@@ -1080,6 +1091,12 @@ onUnmounted(() => {
 }
 
 .deep-thinking-hint {
+  margin-left: 12px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.sandbox-hint {
   margin-left: 12px;
   font-size: 12px;
   color: var(--el-text-color-secondary);

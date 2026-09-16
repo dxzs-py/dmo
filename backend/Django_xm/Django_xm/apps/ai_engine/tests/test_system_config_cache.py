@@ -74,9 +74,8 @@ class SystemConfigCacheTests(TestCase):
         async def read_in_async():
             return SystemConfig.get_value("default_chat_model", default={"async_default": 1})
 
-        with self.assertNumQueries(0):
-            with self.assertLogs(LOGGER_NAME, level="WARNING") as logs:
-                value = asyncio.run(read_in_async())
+        with self.assertNumQueries(0), self.assertLogs(LOGGER_NAME, level="WARNING") as logs:
+            value = asyncio.run(read_in_async())
         self.assertEqual(value, {"async_default": 1})
         self.assertTrue(any("default_chat_model" in message for message in logs.output))
 

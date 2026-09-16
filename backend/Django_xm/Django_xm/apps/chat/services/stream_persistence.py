@@ -56,7 +56,7 @@ def _build_persisted_tool_calls(
     seq（register 分配的全局递增序号）必须保留：前端跨浏览器统一排序的唯一权威
     依据。若持久化丢弃 seq，API 快照与 WebSocket 事件（透传 seq）的排序依据
     不一致，刷新后工具调用乱序（fs_write_file 等后发工具因缺 seq 被排到最前）。
-    seq 由 ``sse_generator`` 构建 tool_calls_map 时从 ToolCallContext 补齐。
+    seq 由 ``stream_broadcast`` 构建 tool_calls_map 时从 ToolCallContext 补齐。
 
     Args:
         tool_calls_map: 流式累积的 tool_calls_map（key=dedup_key，value=tool_info）
@@ -94,7 +94,7 @@ def _build_persisted_tool_calls(
         # ctx 权威源补全（仅当条目参数为空时，不覆盖 extractor 已解析参数）。
         tool_call_service.enrich_entry_parameters(persisted_entry, tool_call_id)
         # 保留 seq（register 全局递增序号，前端排序权威依据）：
-        # 1) 快照优先——tool_calls_map 已补过 seq（sse_generator）则直接透传；
+        # 1) 快照优先——tool_calls_map 已补过 seq（stream_broadcast）则直接透传；
         # 2) 统一兜底——map 未补过的场景（context 过期或非 SSE 构建路径）经
         #    enrich_entry_seq 从 ToolCallContext 权威源补全，所有持久化出口收敛
         #    到同一函数，杜绝漏补。
@@ -368,9 +368,9 @@ def _merge_message_content(assistant_msg: Any, content: str) -> bool:
 
     # 尾部重叠检测：content 前缀与 existing 后缀重叠（恢复轮 LLM 从
     # checkpoint 重生成，重叠于挂起前流式中途的尾部字符）。
-    # 重叠判定与拼接复用 sse_generator 唯一权威实现
+    # 重叠判定与拼接复用 stream_broadcast 唯一权威实现
     # （find_content_overlap / _merge_content_with_overlap），禁止本地复制。
-    from Django_xm.apps.chat.services.sse_generator import (
+    from Django_xm.apps.chat.services.stream_broadcast import (
         _merge_content_with_overlap,
         find_content_overlap,
     )
@@ -497,8 +497,9 @@ def _save_message_and_touch_session(
         subagent_contents_changed: subagent_contents 是否变更
     """
     # 延迟导入避免循环依赖
-    from Django_xm.apps.chat.models import ChatSession
     from django.utils import timezone
+
+    from Django_xm.apps.chat.models import ChatSession
 
     if content_changed or tool_calls_changed or reasoning_changed or subagent_contents_changed:
         assistant_msg.tool_calls = merged_tool_calls

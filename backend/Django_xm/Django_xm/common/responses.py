@@ -2,6 +2,8 @@
 统一 API 响应构建器
 
 所有响应格式统一为 {code, message, data}。
+仅承载成功响应构建；错误响应统一由全局 custom_exception_handler
+（common/exceptions.py）在异常路径生成，视图层禁止手动构造。
 """
 
 from rest_framework.response import Response
@@ -54,29 +56,4 @@ def success_response(data=None, message="操作成功", http_status=None, header
         data=data,
         http_status=http_status or 200,
         headers=headers,
-    )
-
-
-def error_response(
-    code=ErrorCode.SERVER_ERROR, message=None, data=None, http_status=None, headers: dict[str, str] | None = None
-):
-    """错误响应"""
-    return api_response(code=code, message=message, data=data, http_status=http_status, headers=headers)
-
-
-def validation_error_response(errors, message="数据验证失败"):
-    """验证错误响应 (400)"""
-    return api_response(
-        code=ErrorCode.VALIDATION_FAILED,
-        message=message,
-        data=errors,
-    )
-
-
-def not_found_response(message="资源不存在", data=None):
-    """资源不存在响应 (404)"""
-    return api_response(
-        code=ErrorCode.NOT_FOUND,
-        message=message,
-        data=data,
     )

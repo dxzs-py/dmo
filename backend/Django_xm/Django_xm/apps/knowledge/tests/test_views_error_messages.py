@@ -1,12 +1,13 @@
 """knowledge 视图异常文案回归测试（dj-03 防回归样板）。
 
 覆盖：
-- 知识库列表接口异常路径返回通用文案「获取知识库列表失败」，
+- 知识库列表接口异常路径经全局 handler 返回统一通用文案「服务器内部错误，请稍后重试」，
   不携带 str(e) 异常细节（内部细节仅进 logger.exception）
 - 业务语义异常（FileNotFoundError「知识库不存在: xxx」）原样透传，不受影响
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
-    python manage.py test Django_xm.apps.knowledge.tests.test_views_error_messages --noinput --settings=Django_xm.settings.test
+    python manage.py test Django_xm.apps.knowledge.tests.test_views_error_messages \
+        --noinput --settings=Django_xm.settings.test
 """
 
 import os
@@ -39,12 +40,16 @@ class KnowledgeListErrorMessageTests(TestCase):
             resp = self.client.get(KNOWLEDGE_BASES_URL)
         self.assertEqual(resp.status_code, 500)
         body = resp.json()
-        self.assertEqual(body["message"], "获取知识库列表失败")
+        self.assertEqual(body["message"], "服务器内部错误，请稍后重试")
         self.assertNotIn("internal detail", body["message"])
 
     def test_detail_not_found_passes_business_message(self):
         """业务异常（FileNotFoundError）→ 404 + 语义化中文消息原样透传。"""
-        with mock.patch.object(views_kb, "get_knowledge_base_detail", side_effect=FileNotFoundError("知识库不存在: kb-x")):
+        with mock.patch.object(
+            views_kb,
+            "get_knowledge_base_detail",
+            side_effect=FileNotFoundError("知识库不存在: kb-x"),
+        ):
             resp = self.client.get(f"{KNOWLEDGE_BASES_URL}kb-x/")
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.json()["message"], "知识库不存在: kb-x")

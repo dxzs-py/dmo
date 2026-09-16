@@ -25,31 +25,33 @@ cp .env.example .env
 
 `.env.example` 内置变量大类（完整清单与默认值直接参见该文件，此处不重复）：
 
-| 大类 | 关键变量 | 说明 |
-| --- | --- | --- |
-| Django 核心 | `SECRET_KEY`、`DEBUG`、`ALLOWED_HOSTS` | 基础安全配置 |
-| 数据库 | `DB_HOST`、`DB_PORT`、`DB_USER`、`DB_PASSWORD`、`DB_NAME` | PostgreSQL 连接 |
-| OpenAI API | `OPENAI_API_KEY`、`OPENAI_API_BASE`、`OPENAI_MODEL` 等 | 默认 LLM 提供方 |
-| Tavily 搜索 | `TAVILY_API_KEY`、`TAVILY_MAX_RESULTS` | 联网搜索工具 |
-| 高德地图 | `AMAP_KEY` | 地图工具 |
-| 服务器 | `SERVER_HOST`、`SERVER_PORT`、`SERVER_RELOAD` | 服务监听配置 |
-| 日志 | `LOG_LEVEL`、`LOG_FILE`、`LOG_ROTATION`、`LOG_RETENTION` | 日志级别与轮转 |
-| CORS | `CORS_ALLOWED_ORIGINS` | 允许的前端来源（逗号分隔） |
-| 向量存储 | `VECTOR_STORE_PATH`、`VECTOR_STORE_TYPE`、`EMBEDDING_MODEL`、`EMBEDDING_BATCH_SIZE` | 向量库后端与嵌入模型 |
-| 文本分块 | `CHUNK_SIZE`、`CHUNK_OVERLAP` | 文档切分参数 |
-| 检索器 | `RETRIEVER_SEARCH_TYPE`、`RETRIEVER_K`、`RETRIEVER_SCORE_THRESHOLD`、`RETRIEVER_FETCH_K` | RAG 检索参数 |
-| Agent | `AGENT_MAX_ITERATIONS`、`AGENT_MAX_EXECUTION_TIME` | 智能体迭代限制 |
-| RAG Agent | `RAG_AGENT_MAX_ITERATIONS`、`RAG_AGENT_RETURN_SOURCE_DOCUMENTS` | RAG 智能体行为 |
+
+| 大类        | 关键变量                                                                                 | 说明                       |
+| ----------- | ---------------------------------------------------------------------------------------- | -------------------------- |
+| Django 核心 | `SECRET_KEY`、`DEBUG`、`ALLOWED_HOSTS`                                                   | 基础安全配置               |
+| 数据库      | `DB_HOST`、`DB_PORT`、`DB_USER`、`DB_PASSWORD`、`DB_NAME`                                | PostgreSQL 连接            |
+| OpenAI API  | `OPENAI_API_KEY`、`OPENAI_API_BASE`、`OPENAI_MODEL` 等                                   | 默认 LLM 提供方            |
+| Tavily 搜索 | `TAVILY_API_KEY`、`TAVILY_MAX_RESULTS`                                                   | 联网搜索工具               |
+| 高德地图    | `AMAP_KEY`                                                                               | 地图工具                   |
+| 服务器      | `SERVER_HOST`、`SERVER_PORT`、`SERVER_RELOAD`                                            | 服务监听配置               |
+| 日志        | `LOG_LEVEL`、`LOG_FILE`、`LOG_ROTATION`、`LOG_RETENTION`                                 | 日志级别与轮转             |
+| CORS        | `CORS_ALLOWED_ORIGINS`                                                                   | 允许的前端来源（逗号分隔） |
+| 向量存储    | `VECTOR_STORE_PATH`、`VECTOR_STORE_TYPE`、`EMBEDDING_MODEL`、`EMBEDDING_BATCH_SIZE`      | 向量库后端与嵌入模型       |
+| 文本分块    | `CHUNK_SIZE`、`CHUNK_OVERLAP`                                                            | 文档切分参数               |
+| 检索器      | `RETRIEVER_SEARCH_TYPE`、`RETRIEVER_K`、`RETRIEVER_SCORE_THRESHOLD`、`RETRIEVER_FETCH_K` | RAG 检索参数               |
+| Agent       | `AGENT_MAX_ITERATIONS`、`AGENT_MAX_EXECUTION_TIME`                                       | 智能体迭代限制             |
+| RAG Agent   | `RAG_AGENT_MAX_ITERATIONS`、`RAG_AGENT_RETURN_SOURCE_DOCUMENTS`                          | RAG 智能体行为             |
 
 ## settings 环境说明
 
 配置按环境拆分在 `Django_xm/settings/`，由环境变量 `DJANGO_ENV` 决定加载哪个模块：
 
-| `DJANGO_ENV` 取值 | 加载模块 | 用途 |
-| --- | --- | --- |
-| 缺省 / `development` / 其他 | `dev.py` | 开发环境（默认，无需设置） |
-| `production` / `prod` | `prod.py` | 生产环境 |
-| 显式指定 `--settings=Django_xm.settings.test` | `test.py` | 测试专用（见下文） |
+
+| `DJANGO_ENV` 取值                            | 加载模块  | 用途                       |
+| -------------------------------------------- | --------- | -------------------------- |
+| 缺省 /`development` / 其他                   | `dev.py`  | 开发环境（默认，无需设置） |
+| `production` / `prod`                        | `prod.py` | 生产环境                   |
+| 显式指定`--settings=Django_xm.settings.test` | `test.py` | 测试专用（见下文）         |
 
 ## 依赖安装
 

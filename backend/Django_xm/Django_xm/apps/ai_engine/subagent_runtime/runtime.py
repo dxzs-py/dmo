@@ -196,6 +196,9 @@ class SubAgentRuntime:
             # 关联消息：spawn 工具的父 configurable 携带 assistant_message_id，
             # 前端据此将子代理卡片挂到对应 AI 消息下方（spec D10 前端路由）。
             "assistant_message_id": (configurable or {}).get("assistant_message_id") or "",
+            # 子代理审批/事件路由必需字段（configurable 内存 registry 重启即失，
+            # metadata 为重启恢复后的唯一持久化来源）。
+            "chat_session_id": (configurable or {}).get("chat_session_id") or "",
             # 关联工具调用：spawn 工具自身的 tool_call_id（框架执行时注入），
             # 前端据此将子代理卡片精确关联到触发派生的 tool_call。
             "spawn_tool_call_id": spawn_tool_call_id or "",

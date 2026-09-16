@@ -71,7 +71,7 @@ class SystemConfig(models.Model):
             return cached
         # 内联检测异步上下文（事件循环内禁止同步 ORM）
         try:
-            asyncio.get_running_loop()
+            asyncio.get_running_loop()  # 返回当前线程**正在运行**的 `asyncio.AbstractEventLoop` 实例
             in_async_context = True
         except RuntimeError:
             in_async_context = False

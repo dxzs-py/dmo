@@ -53,7 +53,7 @@ class ProjectSettings(BaseSettings):
     # ==================== 调试 / 环境 ====================
     debug: bool = Field(default=False, description=("调试模式，默认关闭。开发环境需在 .env 中显式设置 DEBUG=True"))
 
-    app_name: str = Field(default="LC-StudyLab", description="应用名称")
+    app_name: str = Field(default="DX-Study-Agent", description="应用名称")
 
     app_version: str = Field(default="1.0.0", description="应用版本")
 

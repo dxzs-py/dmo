@@ -1,0 +1,1672 @@
+{
+  "kb": "eval_redis",
+  "top_k": 4,
+  "corpus": null,
+  "results": [
+    {
+      "strategy": "dense",
+      "k": 4,
+      "case_count": 30,
+      "recall": 1.0,
+      "precision": 0.25,
+      "precision_doc": 0.5167,
+      "hit_rate": 1.0,
+      "mrr": 0.8333,
+      "latency_p50_ms": 14.6,
+      "latency_p95_ms": 17.1,
+      "latency_mean_ms": 15.2,
+      "rows": [
+        {
+          "query": "Redis 为什么选择单线程模型？它为什么还能这么快？",
+          "expected": [
+            "01_Redis架构与核心概念.md"
+          ],
+          "retrieved": [
+            "01_Redis架构与核心概念.md",
+            "99_附录.md",
+            "01_Redis架构与核心概念.md",
+            "01_Redis架构与核心概念.md"
+          ],
+          "top1": "01_Redis架构与核心概念.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 29.6
+        },
+        {
+          "query": "Redis 的 IO 多路复用是怎么实现的？",
+          "expected": [
+            "01_Redis架构与核心概念.md"
+          ],
+          "retrieved": [
+            "01_Redis架构与核心概念.md",
+            "01_Redis架构与核心概念.md",
+            "01_Redis架构与核心概念.md",
+            "01_Redis架构与核心概念.md"
+          ],
+          "top1": "01_Redis架构与核心概念.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 17.1
+        },
+        {
+          "query": "Redis 有序集合为什么用跳表而不是平衡树？",
+          "expected": [
+            "02_数据类型与底层实现.md"
+          ],
+          "retrieved": [
+            "02_数据类型与底层实现.md",
+            "02_数据类型与底层实现.md",
+            "16_Redis向量存储与RAG应用.md",
+            "01_Redis架构与核心概念.md"
+          ],
+          "top1": "02_数据类型与底层实现.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 15.0
+        },
+        {
+          "query": "Redis 哈希类型的底层编码什么时候会从紧凑编码转成 hashtable？",
+          "expected": [
+            "02_数据类型与底层实现.md"
+          ],
+          "retrieved": [
+            "02_数据类型与底层实现.md",
+            "02_数据类型与底层实现.md",
+            "02_数据类型与底层实现.md",
+            "01_Redis架构与核心概念.md"
+          ],
+          "top1": "02_数据类型与底层实现.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 15.2
+        },
+        {
+          "query": "Redis 的渐进式 rehash 过程是怎样的？",
+          "expected": [
+            "02_数据类型与底层实现.md"
+          ],
+          "retrieved": [
+            "02_数据类型与底层实现.md",
+            "12_安全与运维.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "16_Redis向量存储与RAG应用.md"
+          ],
+          "top1": "02_数据类型与底层实现.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.9
+        },
+        {
+          "query": "RDB 和 AOF 持久化各自的优缺点和适用场景是什么？",
+          "expected": [
+            "03_持久化机制.md"
+          ],
+          "retrieved": [
+            "跨平台差异_Windows与Linux.md",
+            "03_持久化机制.md",
+            "03_持久化机制.md",
+            "19_Redis与Memcached_MySQL_PG对比.md"
+          ],
+          "top1": "跨平台差异_Windows与Linux.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 14.6
+        },
+        {
+          "query": "RDB 触发 fork 时写时复制是怎么工作的？",
+          "expected": [
+            "03_持久化机制.md"
+          ],
+          "retrieved": [
+            "03_持久化机制.md",
+            "03_持久化机制.md",
+            "跨平台差异_Windows与Linux.md",
+            "跨平台差异_Windows与Linux.md"
+          ],
+          "top1": "03_持久化机制.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 15.1
+        },
+        {
+          "query": "AOF 重写是怎么实现的？为什么能减小文件体积？",
+          "expected": [
+            "03_持久化机制.md"
+          ],
+          "retrieved": [
+            "03_持久化机制.md",
+            "03_持久化机制.md",
+            "03_持久化机制.md",
+            "03_持久化机制.md"
+          ],
+          "top1": "03_持久化机制.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.9
+        },
+        {
+          "query": "Redis 内存达到上限后有哪些淘汰策略？实际该怎么选？",
+          "expected": [
+            "04_内存管理与淘汰策略.md"
+          ],
+          "retrieved": [
+            "04_内存管理与淘汰策略.md",
+            "11_性能调优与监控.md",
+            "04_内存管理与淘汰策略.md",
+            "04_内存管理与淘汰策略.md"
+          ],
+          "top1": "04_内存管理与淘汰策略.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.8
+        },
+        {
+          "query": "Redis 的过期键删除策略是什么？",
+          "expected": [
+            "04_内存管理与淘汰策略.md"
+          ],
+          "retrieved": [
+            "18_Redis_MCP_Server与工具集成.md",
+            "04_内存管理与淘汰策略.md",
+            "09_缓存模式与实战.md",
+            "11_性能调优与监控.md"
+          ],
+          "top1": "18_Redis_MCP_Server与工具集成.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 14.9
+        },
+        {
+          "query": "主从复制的全量同步和增量同步流程是怎样的？",
+          "expected": [
+            "05_复制与高可用.md"
+          ],
+          "retrieved": [
+            "05_复制与高可用.md",
+            "99_附录.md",
+            "05_复制与高可用.md",
+            "05_复制与高可用.md"
+          ],
+          "top1": "05_复制与高可用.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 14.3
+        },
+        {
+          "query": "哨兵模式是怎么做故障转移的？",
+          "expected": [
+            "05_复制与高可用.md"
+          ],
+          "retrieved": [
+            "12_安全与运维.md",
+            "05_复制与高可用.md",
+            "12_安全与运维.md",
+            "12_安全与运维.md"
+          ],
+          "top1": "12_安全与运维.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 14.4
+        },
+        {
+          "query": "Redis Cluster 的哈希槽一共多少个？分片是怎么设计的？",
+          "expected": [
+            "06_集群与分片.md"
+          ],
+          "retrieved": [
+            "06_集群与分片.md",
+            "06_集群与分片.md",
+            "14_Redis与Docker容器化部署.md",
+            "06_集群与分片.md"
+          ],
+          "top1": "06_集群与分片.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 15.0
+        },
+        {
+          "query": "集群模式下为什么会出现 MOVED 和 ASK 重定向？",
+          "expected": [
+            "06_集群与分片.md"
+          ],
+          "retrieved": [
+            "06_集群与分片.md",
+            "08_发布订阅与消息队列.md",
+            "06_集群与分片.md",
+            "06_集群与分片.md"
+          ],
+          "top1": "06_集群与分片.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 14.2
+        },
+        {
+          "query": "Redis 事务支持回滚吗？为什么？",
+          "expected": [
+            "07_事务与Lua脚本.md"
+          ],
+          "retrieved": [
+            "07_事务与Lua脚本.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "19_Redis与Memcached_MySQL_PG对比.md"
+          ],
+          "top1": "07_事务与Lua脚本.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.8
+        },
+        {
+          "query": "怎么用 Lua 脚本保证多条命令的原子性？",
+          "expected": [
+            "07_事务与Lua脚本.md"
+          ],
+          "retrieved": [
+            "07_事务与Lua脚本.md",
+            "07_事务与Lua脚本.md",
+            "07_事务与Lua脚本.md",
+            "07_事务与Lua脚本.md"
+          ],
+          "top1": "07_事务与Lua脚本.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 15.8
+        },
+        {
+          "query": "用 Redis 做消息队列有哪些方案？Stream 和 List 有什么区别？",
+          "expected": [
+            "08_发布订阅与消息队列.md"
+          ],
+          "retrieved": [
+            "17_LangChain_v1.4与Redis.md",
+            "15_全栈项目实战.md",
+            "08_发布订阅与消息队列.md",
+            "08_发布订阅与消息队列.md"
+          ],
+          "top1": "17_LangChain_v1.4与Redis.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.3333333333333333,
+          "latency_ms": 13.4
+        },
+        {
+          "query": "Redis 发布订阅模式有什么缺点？",
+          "expected": [
+            "08_发布订阅与消息队列.md"
+          ],
+          "retrieved": [
+            "11_性能调优与监控.md",
+            "08_发布订阅与消息队列.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "08_发布订阅与消息队列.md"
+          ],
+          "top1": "11_性能调优与监控.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 15.0
+        },
+        {
+          "query": "缓存穿透、缓存击穿、缓存雪崩分别怎么解决？",
+          "expected": [
+            "09_缓存模式与实战.md"
+          ],
+          "retrieved": [
+            "09_缓存模式与实战.md",
+            "09_缓存模式与实战.md",
+            "16_Redis向量存储与RAG应用.md",
+            "09_缓存模式与实战.md"
+          ],
+          "top1": "09_缓存模式与实战.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 15.9
+        },
+        {
+          "query": "Cache Aside 模式和 Write Through 模式有什么区别？",
+          "expected": [
+            "09_缓存模式与实战.md"
+          ],
+          "retrieved": [
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "09_缓存模式与实战.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "09_缓存模式与实战.md"
+          ],
+          "top1": "19_Redis与Memcached_MySQL_PG对比.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 14.8
+        },
+        {
+          "query": "用 Redis 实现分布式锁要注意哪些问题？",
+          "expected": [
+            "10_分布式锁与限流.md"
+          ],
+          "retrieved": [
+            "99_附录.md",
+            "99_附录.md",
+            "10_分布式锁与限流.md",
+            "15_全栈项目实战.md"
+          ],
+          "top1": "99_附录.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.3333333333333333,
+          "latency_ms": 15.0
+        },
+        {
+          "query": "Redlock 算法存在什么争议？",
+          "expected": [
+            "10_分布式锁与限流.md"
+          ],
+          "retrieved": [
+            "10_分布式锁与限流.md",
+            "10_分布式锁与限流.md",
+            "10_分布式锁与限流.md",
+            "10_分布式锁与限流.md"
+          ],
+          "top1": "10_分布式锁与限流.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.8
+        },
+        {
+          "query": "怎么排查 Redis 的慢查询和内存碎片问题？",
+          "expected": [
+            "11_性能调优与监控.md"
+          ],
+          "retrieved": [
+            "11_性能调优与监控.md",
+            "15_全栈项目实战.md",
+            "04_内存管理与淘汰策略.md",
+            "11_性能调优与监控.md"
+          ],
+          "top1": "11_性能调优与监控.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.3
+        },
+        {
+          "query": "Redis 的安全加固需要做哪些事情？",
+          "expected": [
+            "12_安全与运维.md"
+          ],
+          "retrieved": [
+            "12_安全与运维.md",
+            "12_安全与运维.md",
+            "11_性能调优与监控.md",
+            "12_安全与运维.md"
+          ],
+          "top1": "12_安全与运维.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.7
+        },
+        {
+          "query": "Django 项目里怎么集成 Redis 做缓存？",
+          "expected": [
+            "13_Node.js与Django集成Redis.md"
+          ],
+          "retrieved": [
+            "09_缓存模式与实战.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "13_Node.js与Django集成Redis.md",
+            "19_Redis与Memcached_MySQL_PG对比.md"
+          ],
+          "top1": "09_缓存模式与实战.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.3333333333333333,
+          "latency_ms": 14.3
+        },
+        {
+          "query": "Redis 用 Docker 部署时持久化和数据卷怎么做？",
+          "expected": [
+            "14_Redis与Docker容器化部署.md"
+          ],
+          "retrieved": [
+            "14_Redis与Docker容器化部署.md",
+            "03_持久化机制.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "14_Redis与Docker容器化部署.md"
+          ],
+          "top1": "14_Redis与Docker容器化部署.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 14.0
+        },
+        {
+          "query": "Redis 怎么作为向量存储来做 RAG 检索？",
+          "expected": [
+            "16_Redis向量存储与RAG应用.md"
+          ],
+          "retrieved": [
+            "16_Redis向量存储与RAG应用.md",
+            "16_Redis向量存储与RAG应用.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "16_Redis向量存储与RAG应用.md"
+          ],
+          "top1": "16_Redis向量存储与RAG应用.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 16.2
+        },
+        {
+          "query": "LangChain 怎么用 Redis 做语义缓存？",
+          "expected": [
+            "17_LangChain_v1.4与Redis.md"
+          ],
+          "retrieved": [
+            "16_Redis向量存储与RAG应用.md",
+            "17_LangChain_v1.4与Redis.md",
+            "17_LangChain_v1.4与Redis.md",
+            "99_附录.md"
+          ],
+          "top1": "16_Redis向量存储与RAG应用.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 16.2
+        },
+        {
+          "query": "怎么把 Redis 操作封装成 MCP Server 的工具？",
+          "expected": [
+            "18_Redis_MCP_Server与工具集成.md"
+          ],
+          "retrieved": [
+            "18_Redis_MCP_Server与工具集成.md",
+            "18_Redis_MCP_Server与工具集成.md",
+            "18_Redis_MCP_Server与工具集成.md",
+            "18_Redis_MCP_Server与工具集成.md"
+          ],
+          "top1": "18_Redis_MCP_Server与工具集成.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 14.5
+        },
+        {
+          "query": "Redis 和 Memcached、MySQL、PostgreSQL 该怎么选型？",
+          "expected": [
+            "19_Redis与Memcached_MySQL_PG对比.md"
+          ],
+          "retrieved": [
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "01_Redis架构与核心概念.md",
+            "19_Redis与Memcached_MySQL_PG对比.md"
+          ],
+          "top1": "19_Redis与Memcached_MySQL_PG对比.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 14.5
+        }
+      ]
+    },
+    {
+      "strategy": "dense+rerank",
+      "k": 4,
+      "case_count": 30,
+      "recall": 1.0,
+      "precision": 0.25,
+      "precision_doc": 0.5167,
+      "hit_rate": 1.0,
+      "mrr": 0.8333,
+      "latency_p50_ms": 14.5,
+      "latency_p95_ms": 17.2,
+      "latency_mean_ms": 14.6,
+      "rows": [
+        {
+          "query": "Redis 为什么选择单线程模型？它为什么还能这么快？",
+          "expected": [
+            "01_Redis架构与核心概念.md"
+          ],
+          "retrieved": [
+            "01_Redis架构与核心概念.md",
+            "99_附录.md",
+            "01_Redis架构与核心概念.md",
+            "01_Redis架构与核心概念.md"
+          ],
+          "top1": "01_Redis架构与核心概念.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 15.4
+        },
+        {
+          "query": "Redis 的 IO 多路复用是怎么实现的？",
+          "expected": [
+            "01_Redis架构与核心概念.md"
+          ],
+          "retrieved": [
+            "01_Redis架构与核心概念.md",
+            "01_Redis架构与核心概念.md",
+            "01_Redis架构与核心概念.md",
+            "01_Redis架构与核心概念.md"
+          ],
+          "top1": "01_Redis架构与核心概念.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 18.5
+        },
+        {
+          "query": "Redis 有序集合为什么用跳表而不是平衡树？",
+          "expected": [
+            "02_数据类型与底层实现.md"
+          ],
+          "retrieved": [
+            "02_数据类型与底层实现.md",
+            "02_数据类型与底层实现.md",
+            "16_Redis向量存储与RAG应用.md",
+            "01_Redis架构与核心概念.md"
+          ],
+          "top1": "02_数据类型与底层实现.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 15.5
+        },
+        {
+          "query": "Redis 哈希类型的底层编码什么时候会从紧凑编码转成 hashtable？",
+          "expected": [
+            "02_数据类型与底层实现.md"
+          ],
+          "retrieved": [
+            "02_数据类型与底层实现.md",
+            "02_数据类型与底层实现.md",
+            "02_数据类型与底层实现.md",
+            "01_Redis架构与核心概念.md"
+          ],
+          "top1": "02_数据类型与底层实现.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 15.5
+        },
+        {
+          "query": "Redis 的渐进式 rehash 过程是怎样的？",
+          "expected": [
+            "02_数据类型与底层实现.md"
+          ],
+          "retrieved": [
+            "02_数据类型与底层实现.md",
+            "12_安全与运维.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "16_Redis向量存储与RAG应用.md"
+          ],
+          "top1": "02_数据类型与底层实现.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 16.1
+        },
+        {
+          "query": "RDB 和 AOF 持久化各自的优缺点和适用场景是什么？",
+          "expected": [
+            "03_持久化机制.md"
+          ],
+          "retrieved": [
+            "跨平台差异_Windows与Linux.md",
+            "03_持久化机制.md",
+            "03_持久化机制.md",
+            "19_Redis与Memcached_MySQL_PG对比.md"
+          ],
+          "top1": "跨平台差异_Windows与Linux.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 14.5
+        },
+        {
+          "query": "RDB 触发 fork 时写时复制是怎么工作的？",
+          "expected": [
+            "03_持久化机制.md"
+          ],
+          "retrieved": [
+            "03_持久化机制.md",
+            "03_持久化机制.md",
+            "跨平台差异_Windows与Linux.md",
+            "跨平台差异_Windows与Linux.md"
+          ],
+          "top1": "03_持久化机制.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 14.6
+        },
+        {
+          "query": "AOF 重写是怎么实现的？为什么能减小文件体积？",
+          "expected": [
+            "03_持久化机制.md"
+          ],
+          "retrieved": [
+            "03_持久化机制.md",
+            "03_持久化机制.md",
+            "03_持久化机制.md",
+            "03_持久化机制.md"
+          ],
+          "top1": "03_持久化机制.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 14.5
+        },
+        {
+          "query": "Redis 内存达到上限后有哪些淘汰策略？实际该怎么选？",
+          "expected": [
+            "04_内存管理与淘汰策略.md"
+          ],
+          "retrieved": [
+            "04_内存管理与淘汰策略.md",
+            "11_性能调优与监控.md",
+            "04_内存管理与淘汰策略.md",
+            "04_内存管理与淘汰策略.md"
+          ],
+          "top1": "04_内存管理与淘汰策略.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.2
+        },
+        {
+          "query": "Redis 的过期键删除策略是什么？",
+          "expected": [
+            "04_内存管理与淘汰策略.md"
+          ],
+          "retrieved": [
+            "18_Redis_MCP_Server与工具集成.md",
+            "04_内存管理与淘汰策略.md",
+            "09_缓存模式与实战.md",
+            "11_性能调优与监控.md"
+          ],
+          "top1": "18_Redis_MCP_Server与工具集成.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 14.8
+        },
+        {
+          "query": "主从复制的全量同步和增量同步流程是怎样的？",
+          "expected": [
+            "05_复制与高可用.md"
+          ],
+          "retrieved": [
+            "05_复制与高可用.md",
+            "99_附录.md",
+            "05_复制与高可用.md",
+            "05_复制与高可用.md"
+          ],
+          "top1": "05_复制与高可用.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.9
+        },
+        {
+          "query": "哨兵模式是怎么做故障转移的？",
+          "expected": [
+            "05_复制与高可用.md"
+          ],
+          "retrieved": [
+            "12_安全与运维.md",
+            "05_复制与高可用.md",
+            "12_安全与运维.md",
+            "12_安全与运维.md"
+          ],
+          "top1": "12_安全与运维.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 13.7
+        },
+        {
+          "query": "Redis Cluster 的哈希槽一共多少个？分片是怎么设计的？",
+          "expected": [
+            "06_集群与分片.md"
+          ],
+          "retrieved": [
+            "06_集群与分片.md",
+            "06_集群与分片.md",
+            "14_Redis与Docker容器化部署.md",
+            "06_集群与分片.md"
+          ],
+          "top1": "06_集群与分片.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.1
+        },
+        {
+          "query": "集群模式下为什么会出现 MOVED 和 ASK 重定向？",
+          "expected": [
+            "06_集群与分片.md"
+          ],
+          "retrieved": [
+            "06_集群与分片.md",
+            "08_发布订阅与消息队列.md",
+            "06_集群与分片.md",
+            "06_集群与分片.md"
+          ],
+          "top1": "06_集群与分片.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 14.0
+        },
+        {
+          "query": "Redis 事务支持回滚吗？为什么？",
+          "expected": [
+            "07_事务与Lua脚本.md"
+          ],
+          "retrieved": [
+            "07_事务与Lua脚本.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "19_Redis与Memcached_MySQL_PG对比.md"
+          ],
+          "top1": "07_事务与Lua脚本.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.1
+        },
+        {
+          "query": "怎么用 Lua 脚本保证多条命令的原子性？",
+          "expected": [
+            "07_事务与Lua脚本.md"
+          ],
+          "retrieved": [
+            "07_事务与Lua脚本.md",
+            "07_事务与Lua脚本.md",
+            "07_事务与Lua脚本.md",
+            "07_事务与Lua脚本.md"
+          ],
+          "top1": "07_事务与Lua脚本.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.9
+        },
+        {
+          "query": "用 Redis 做消息队列有哪些方案？Stream 和 List 有什么区别？",
+          "expected": [
+            "08_发布订阅与消息队列.md"
+          ],
+          "retrieved": [
+            "17_LangChain_v1.4与Redis.md",
+            "15_全栈项目实战.md",
+            "08_发布订阅与消息队列.md",
+            "08_发布订阅与消息队列.md"
+          ],
+          "top1": "17_LangChain_v1.4与Redis.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.3333333333333333,
+          "latency_ms": 14.2
+        },
+        {
+          "query": "Redis 发布订阅模式有什么缺点？",
+          "expected": [
+            "08_发布订阅与消息队列.md"
+          ],
+          "retrieved": [
+            "11_性能调优与监控.md",
+            "08_发布订阅与消息队列.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "08_发布订阅与消息队列.md"
+          ],
+          "top1": "11_性能调优与监控.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 13.3
+        },
+        {
+          "query": "缓存穿透、缓存击穿、缓存雪崩分别怎么解决？",
+          "expected": [
+            "09_缓存模式与实战.md"
+          ],
+          "retrieved": [
+            "09_缓存模式与实战.md",
+            "09_缓存模式与实战.md",
+            "16_Redis向量存储与RAG应用.md",
+            "09_缓存模式与实战.md"
+          ],
+          "top1": "09_缓存模式与实战.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.6
+        },
+        {
+          "query": "Cache Aside 模式和 Write Through 模式有什么区别？",
+          "expected": [
+            "09_缓存模式与实战.md"
+          ],
+          "retrieved": [
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "09_缓存模式与实战.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "09_缓存模式与实战.md"
+          ],
+          "top1": "19_Redis与Memcached_MySQL_PG对比.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 12.9
+        },
+        {
+          "query": "用 Redis 实现分布式锁要注意哪些问题？",
+          "expected": [
+            "10_分布式锁与限流.md"
+          ],
+          "retrieved": [
+            "99_附录.md",
+            "99_附录.md",
+            "10_分布式锁与限流.md",
+            "15_全栈项目实战.md"
+          ],
+          "top1": "99_附录.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.3333333333333333,
+          "latency_ms": 14.5
+        },
+        {
+          "query": "Redlock 算法存在什么争议？",
+          "expected": [
+            "10_分布式锁与限流.md"
+          ],
+          "retrieved": [
+            "10_分布式锁与限流.md",
+            "10_分布式锁与限流.md",
+            "10_分布式锁与限流.md",
+            "10_分布式锁与限流.md"
+          ],
+          "top1": "10_分布式锁与限流.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.8
+        },
+        {
+          "query": "怎么排查 Redis 的慢查询和内存碎片问题？",
+          "expected": [
+            "11_性能调优与监控.md"
+          ],
+          "retrieved": [
+            "11_性能调优与监控.md",
+            "15_全栈项目实战.md",
+            "04_内存管理与淘汰策略.md",
+            "11_性能调优与监控.md"
+          ],
+          "top1": "11_性能调优与监控.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 13.4
+        },
+        {
+          "query": "Redis 的安全加固需要做哪些事情？",
+          "expected": [
+            "12_安全与运维.md"
+          ],
+          "retrieved": [
+            "12_安全与运维.md",
+            "12_安全与运维.md",
+            "11_性能调优与监控.md",
+            "12_安全与运维.md"
+          ],
+          "top1": "12_安全与运维.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 14.1
+        },
+        {
+          "query": "Django 项目里怎么集成 Redis 做缓存？",
+          "expected": [
+            "13_Node.js与Django集成Redis.md"
+          ],
+          "retrieved": [
+            "09_缓存模式与实战.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "13_Node.js与Django集成Redis.md",
+            "19_Redis与Memcached_MySQL_PG对比.md"
+          ],
+          "top1": "09_缓存模式与实战.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.3333333333333333,
+          "latency_ms": 15.4
+        },
+        {
+          "query": "Redis 用 Docker 部署时持久化和数据卷怎么做？",
+          "expected": [
+            "14_Redis与Docker容器化部署.md"
+          ],
+          "retrieved": [
+            "14_Redis与Docker容器化部署.md",
+            "03_持久化机制.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "14_Redis与Docker容器化部署.md"
+          ],
+          "top1": "14_Redis与Docker容器化部署.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 16.3
+        },
+        {
+          "query": "Redis 怎么作为向量存储来做 RAG 检索？",
+          "expected": [
+            "16_Redis向量存储与RAG应用.md"
+          ],
+          "retrieved": [
+            "16_Redis向量存储与RAG应用.md",
+            "16_Redis向量存储与RAG应用.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "16_Redis向量存储与RAG应用.md"
+          ],
+          "top1": "16_Redis向量存储与RAG应用.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 15.3
+        },
+        {
+          "query": "LangChain 怎么用 Redis 做语义缓存？",
+          "expected": [
+            "17_LangChain_v1.4与Redis.md"
+          ],
+          "retrieved": [
+            "16_Redis向量存储与RAG应用.md",
+            "17_LangChain_v1.4与Redis.md",
+            "17_LangChain_v1.4与Redis.md",
+            "99_附录.md"
+          ],
+          "top1": "16_Redis向量存储与RAG应用.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 14.5
+        },
+        {
+          "query": "怎么把 Redis 操作封装成 MCP Server 的工具？",
+          "expected": [
+            "18_Redis_MCP_Server与工具集成.md"
+          ],
+          "retrieved": [
+            "18_Redis_MCP_Server与工具集成.md",
+            "18_Redis_MCP_Server与工具集成.md",
+            "18_Redis_MCP_Server与工具集成.md",
+            "18_Redis_MCP_Server与工具集成.md"
+          ],
+          "top1": "18_Redis_MCP_Server与工具集成.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 17.2
+        },
+        {
+          "query": "Redis 和 Memcached、MySQL、PostgreSQL 该怎么选型？",
+          "expected": [
+            "19_Redis与Memcached_MySQL_PG对比.md"
+          ],
+          "retrieved": [
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "01_Redis架构与核心概念.md",
+            "19_Redis与Memcached_MySQL_PG对比.md"
+          ],
+          "top1": "19_Redis与Memcached_MySQL_PG对比.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 16.0
+        }
+      ]
+    },
+    {
+      "strategy": "keyword",
+      "k": 4,
+      "case_count": 30,
+      "recall": 0.9333,
+      "precision": 0.2333,
+      "precision_doc": 0.5083,
+      "hit_rate": 0.9333,
+      "mrr": 0.8028,
+      "latency_p50_ms": 61.3,
+      "latency_p95_ms": 74.2,
+      "latency_mean_ms": 60.2,
+      "rows": [
+        {
+          "query": "Redis 为什么选择单线程模型？它为什么还能这么快？",
+          "expected": [
+            "01_Redis架构与核心概念.md"
+          ],
+          "retrieved": [
+            "99_附录.md",
+            "01_Redis架构与核心概念.md",
+            "16_Redis向量存储与RAG应用.md",
+            "19_Redis与Memcached_MySQL_PG对比.md"
+          ],
+          "top1": "99_附录.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 74.2
+        },
+        {
+          "query": "Redis 的 IO 多路复用是怎么实现的？",
+          "expected": [
+            "01_Redis架构与核心概念.md"
+          ],
+          "retrieved": [
+            "01_Redis架构与核心概念.md",
+            "01_Redis架构与核心概念.md",
+            "01_Redis架构与核心概念.md",
+            "01_Redis架构与核心概念.md"
+          ],
+          "top1": "01_Redis架构与核心概念.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 58.5
+        },
+        {
+          "query": "Redis 有序集合为什么用跳表而不是平衡树？",
+          "expected": [
+            "02_数据类型与底层实现.md"
+          ],
+          "retrieved": [
+            "99_附录.md",
+            "02_数据类型与底层实现.md",
+            "13_Node.js与Django集成Redis.md",
+            "14_Redis与Docker容器化部署.md"
+          ],
+          "top1": "99_附录.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 75.5
+        },
+        {
+          "query": "Redis 哈希类型的底层编码什么时候会从紧凑编码转成 hashtable？",
+          "expected": [
+            "02_数据类型与底层实现.md"
+          ],
+          "retrieved": [
+            "02_数据类型与底层实现.md",
+            "02_数据类型与底层实现.md",
+            "02_数据类型与底层实现.md",
+            "02_数据类型与底层实现.md"
+          ],
+          "top1": "02_数据类型与底层实现.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 70.7
+        },
+        {
+          "query": "Redis 的渐进式 rehash 过程是怎样的？",
+          "expected": [
+            "02_数据类型与底层实现.md"
+          ],
+          "retrieved": [
+            "02_数据类型与底层实现.md",
+            "02_数据类型与底层实现.md",
+            "04_内存管理与淘汰策略.md",
+            "01_Redis架构与核心概念.md"
+          ],
+          "top1": "02_数据类型与底层实现.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 48.1
+        },
+        {
+          "query": "RDB 和 AOF 持久化各自的优缺点和适用场景是什么？",
+          "expected": [
+            "03_持久化机制.md"
+          ],
+          "retrieved": [
+            "07_事务与Lua脚本.md",
+            "03_持久化机制.md",
+            "01_Redis架构与核心概念.md",
+            "17_LangChain_v1.4与Redis.md"
+          ],
+          "top1": "07_事务与Lua脚本.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 73.7
+        },
+        {
+          "query": "RDB 触发 fork 时写时复制是怎么工作的？",
+          "expected": [
+            "03_持久化机制.md"
+          ],
+          "retrieved": [
+            "01_Redis架构与核心概念.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "03_持久化机制.md",
+            "03_持久化机制.md"
+          ],
+          "top1": "01_Redis架构与核心概念.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.3333333333333333,
+          "latency_ms": 60.9
+        },
+        {
+          "query": "AOF 重写是怎么实现的？为什么能减小文件体积？",
+          "expected": [
+            "03_持久化机制.md"
+          ],
+          "retrieved": [
+            "03_持久化机制.md",
+            "03_持久化机制.md",
+            "03_持久化机制.md",
+            "03_持久化机制.md"
+          ],
+          "top1": "03_持久化机制.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 69.9
+        },
+        {
+          "query": "Redis 内存达到上限后有哪些淘汰策略？实际该怎么选？",
+          "expected": [
+            "04_内存管理与淘汰策略.md"
+          ],
+          "retrieved": [
+            "04_内存管理与淘汰策略.md",
+            "04_内存管理与淘汰策略.md",
+            "04_内存管理与淘汰策略.md",
+            "11_性能调优与监控.md"
+          ],
+          "top1": "04_内存管理与淘汰策略.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 71.7
+        },
+        {
+          "query": "Redis 的过期键删除策略是什么？",
+          "expected": [
+            "04_内存管理与淘汰策略.md"
+          ],
+          "retrieved": [
+            "01_Redis架构与核心概念.md",
+            "09_缓存模式与实战.md",
+            "10_分布式锁与限流.md",
+            "16_Redis向量存储与RAG应用.md"
+          ],
+          "top1": "01_Redis架构与核心概念.md",
+          "recall": 0.0,
+          "precision": 0.0,
+          "hit_rate": 0.0,
+          "mrr": 0.0,
+          "latency_ms": 52.2
+        },
+        {
+          "query": "主从复制的全量同步和增量同步流程是怎样的？",
+          "expected": [
+            "05_复制与高可用.md"
+          ],
+          "retrieved": [
+            "05_复制与高可用.md",
+            "99_附录.md",
+            "05_复制与高可用.md",
+            "05_复制与高可用.md"
+          ],
+          "top1": "05_复制与高可用.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 70.1
+        },
+        {
+          "query": "哨兵模式是怎么做故障转移的？",
+          "expected": [
+            "05_复制与高可用.md"
+          ],
+          "retrieved": [
+            "05_复制与高可用.md",
+            "05_复制与高可用.md",
+            "00_总览与导读.md",
+            "05_复制与高可用.md"
+          ],
+          "top1": "05_复制与高可用.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 56.3
+        },
+        {
+          "query": "Redis Cluster 的哈希槽一共多少个？分片是怎么设计的？",
+          "expected": [
+            "06_集群与分片.md"
+          ],
+          "retrieved": [
+            "06_集群与分片.md",
+            "07_事务与Lua脚本.md",
+            "99_附录.md",
+            "14_Redis与Docker容器化部署.md"
+          ],
+          "top1": "06_集群与分片.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 70.4
+        },
+        {
+          "query": "集群模式下为什么会出现 MOVED 和 ASK 重定向？",
+          "expected": [
+            "06_集群与分片.md"
+          ],
+          "retrieved": [
+            "06_集群与分片.md",
+            "06_集群与分片.md",
+            "06_集群与分片.md",
+            "06_集群与分片.md"
+          ],
+          "top1": "06_集群与分片.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 68.2
+        },
+        {
+          "query": "Redis 事务支持回滚吗？为什么？",
+          "expected": [
+            "07_事务与Lua脚本.md"
+          ],
+          "retrieved": [
+            "07_事务与Lua脚本.md",
+            "07_事务与Lua脚本.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "07_事务与Lua脚本.md"
+          ],
+          "top1": "07_事务与Lua脚本.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 45.6
+        },
+        {
+          "query": "怎么用 Lua 脚本保证多条命令的原子性？",
+          "expected": [
+            "07_事务与Lua脚本.md"
+          ],
+          "retrieved": [
+            "07_事务与Lua脚本.md",
+            "07_事务与Lua脚本.md",
+            "07_事务与Lua脚本.md",
+            "07_事务与Lua脚本.md"
+          ],
+          "top1": "07_事务与Lua脚本.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 64.8
+        },
+        {
+          "query": "用 Redis 做消息队列有哪些方案？Stream 和 List 有什么区别？",
+          "expected": [
+            "08_发布订阅与消息队列.md"
+          ],
+          "retrieved": [
+            "08_发布订阅与消息队列.md",
+            "02_数据类型与底层实现.md",
+            "01_Redis架构与核心概念.md",
+            "08_发布订阅与消息队列.md"
+          ],
+          "top1": "08_发布订阅与消息队列.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 70.3
+        },
+        {
+          "query": "Redis 发布订阅模式有什么缺点？",
+          "expected": [
+            "08_发布订阅与消息队列.md"
+          ],
+          "retrieved": [
+            "08_发布订阅与消息队列.md",
+            "00_总览与导读.md",
+            "02_数据类型与底层实现.md",
+            "00_总览与导读.md"
+          ],
+          "top1": "08_发布订阅与消息队列.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 52.8
+        },
+        {
+          "query": "缓存穿透、缓存击穿、缓存雪崩分别怎么解决？",
+          "expected": [
+            "09_缓存模式与实战.md"
+          ],
+          "retrieved": [
+            "09_缓存模式与实战.md",
+            "18_Redis_MCP_Server与工具集成.md",
+            "00_总览与导读.md",
+            "09_缓存模式与实战.md"
+          ],
+          "top1": "09_缓存模式与实战.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 66.0
+        },
+        {
+          "query": "Cache Aside 模式和 Write Through 模式有什么区别？",
+          "expected": [
+            "09_缓存模式与实战.md"
+          ],
+          "retrieved": [
+            "09_缓存模式与实战.md",
+            "09_缓存模式与实战.md",
+            "09_缓存模式与实战.md",
+            "09_缓存模式与实战.md"
+          ],
+          "top1": "09_缓存模式与实战.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 53.5
+        },
+        {
+          "query": "用 Redis 实现分布式锁要注意哪些问题？",
+          "expected": [
+            "10_分布式锁与限流.md"
+          ],
+          "retrieved": [
+            "99_附录.md",
+            "10_分布式锁与限流.md",
+            "00_总览与导读.md",
+            "07_事务与Lua脚本.md"
+          ],
+          "top1": "99_附录.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 64.0
+        },
+        {
+          "query": "Redlock 算法存在什么争议？",
+          "expected": [
+            "10_分布式锁与限流.md"
+          ],
+          "retrieved": [
+            "10_分布式锁与限流.md",
+            "10_分布式锁与限流.md",
+            "10_分布式锁与限流.md",
+            "10_分布式锁与限流.md"
+          ],
+          "top1": "10_分布式锁与限流.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 40.5
+        },
+        {
+          "query": "怎么排查 Redis 的慢查询和内存碎片问题？",
+          "expected": [
+            "11_性能调优与监控.md"
+          ],
+          "retrieved": [
+            "11_性能调优与监控.md",
+            "18_Redis_MCP_Server与工具集成.md",
+            "11_性能调优与监控.md",
+            "11_性能调优与监控.md"
+          ],
+          "top1": "11_性能调优与监控.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 61.3
+        },
+        {
+          "query": "Redis 的安全加固需要做哪些事情？",
+          "expected": [
+            "12_安全与运维.md"
+          ],
+          "retrieved": [
+            "12_安全与运维.md",
+            "12_安全与运维.md",
+            "12_安全与运维.md",
+            "18_Redis_MCP_Server与工具集成.md"
+          ],
+          "top1": "12_安全与运维.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 56.7
+        },
+        {
+          "query": "Django 项目里怎么集成 Redis 做缓存？",
+          "expected": [
+            "13_Node.js与Django集成Redis.md"
+          ],
+          "retrieved": [
+            "09_缓存模式与实战.md",
+            "00_总览与导读.md",
+            "10_分布式锁与限流.md",
+            "09_缓存模式与实战.md"
+          ],
+          "top1": "09_缓存模式与实战.md",
+          "recall": 0.0,
+          "precision": 0.0,
+          "hit_rate": 0.0,
+          "mrr": 0.0,
+          "latency_ms": 49.1
+        },
+        {
+          "query": "Redis 用 Docker 部署时持久化和数据卷怎么做？",
+          "expected": [
+            "14_Redis与Docker容器化部署.md"
+          ],
+          "retrieved": [
+            "00_总览与导读.md",
+            "14_Redis与Docker容器化部署.md",
+            "00_总览与导读.md",
+            "99_附录.md"
+          ],
+          "top1": "00_总览与导读.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.5,
+          "latency_ms": 66.9
+        },
+        {
+          "query": "Redis 怎么作为向量存储来做 RAG 检索？",
+          "expected": [
+            "16_Redis向量存储与RAG应用.md"
+          ],
+          "retrieved": [
+            "18_Redis_MCP_Server与工具集成.md",
+            "18_Redis_MCP_Server与工具集成.md",
+            "01_Redis架构与核心概念.md",
+            "16_Redis向量存储与RAG应用.md"
+          ],
+          "top1": "18_Redis_MCP_Server与工具集成.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 0.25,
+          "latency_ms": 55.9
+        },
+        {
+          "query": "LangChain 怎么用 Redis 做语义缓存？",
+          "expected": [
+            "17_LangChain_v1.4与Redis.md"
+          ],
+          "retrieved": [
+            "17_LangChain_v1.4与Redis.md",
+            "00_总览与导读.md",
+            "00_总览与导读.md",
+            "09_缓存模式与实战.md"
+          ],
+          "top1": "17_LangChain_v1.4与Redis.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 42.6
+        },
+        {
+          "query": "怎么把 Redis 操作封装成 MCP Server 的工具？",
+          "expected": [
+            "18_Redis_MCP_Server与工具集成.md"
+          ],
+          "retrieved": [
+            "18_Redis_MCP_Server与工具集成.md",
+            "18_Redis_MCP_Server与工具集成.md",
+            "18_Redis_MCP_Server与工具集成.md",
+            "18_Redis_MCP_Server与工具集成.md"
+          ],
+          "top1": "18_Redis_MCP_Server与工具集成.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 52.7
+        },
+        {
+          "query": "Redis 和 Memcached、MySQL、PostgreSQL 该怎么选型？",
+          "expected": [
+            "19_Redis与Memcached_MySQL_PG对比.md"
+          ],
+          "retrieved": [
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "19_Redis与Memcached_MySQL_PG对比.md",
+            "00_总览与导读.md",
+            "15_全栈项目实战.md"
+          ],
+          "top1": "19_Redis与Memcached_MySQL_PG对比.md",
+          "recall": 1.0,
+          "precision": 0.25,
+          "hit_rate": 1.0,
+          "mrr": 1.0,
+          "latency_ms": 44.0
+        }
+      ]
+    }
+  ]
+}

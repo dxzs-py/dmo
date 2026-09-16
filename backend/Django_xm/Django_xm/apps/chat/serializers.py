@@ -59,6 +59,10 @@ class ChatRequestSerializer(serializers.Serializer):
     use_web_search = serializers.BooleanField(default=False, help_text="是否启用联网搜索")
     use_knowledge_base = serializers.BooleanField(default=False, help_text="是否启用知识库检索")
     use_deep_thinking = serializers.BooleanField(default=False, help_text="是否启用深度思考")
+    enable_sandbox = serializers.BooleanField(
+        default=False,
+        help_text="是否启用沙箱执行（深度研究模式的 HIGH 级命令在容器内隔离）",
+    )
     use_mcp = serializers.BooleanField(default=False, help_text="是否启用 MCP 工具")
     selected_mcp_servers = serializers.ListField(
         child=serializers.CharField(max_length=50),

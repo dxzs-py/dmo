@@ -15,6 +15,7 @@
 """
 
 import os
+from typing import ClassVar
 from unittest import mock
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.test")
@@ -111,7 +112,7 @@ class OldVerbRoutesRemovedTests(ToolsRestTestBase):
 class McpServerResourceTests(ToolsRestTestBase):
     """McpServer 资源：POST /mcp/servers/、PUT|DELETE /mcp/servers/{name}/、PATCH .../status/。"""
 
-    ADD_RESULT = {
+    ADD_RESULT: ClassVar[dict] = {
         "success": True,
         "message": "MCP Server 'demo' 添加成功",
         "data": {"name": "demo", "transport": "sse", "url": "https://example.com/sse"},
@@ -260,7 +261,7 @@ class McpServerResourceTests(ToolsRestTestBase):
         with mock.patch.object(views_mcp, "_get_merged_mcp_servers", return_value=[]):
             resp = self.client.post(f"{TOOLS_URL}mcp/servers/ghost/test/")
 
-        self.assertEqual(resp.status_code, 500, resp.content)
+        self.assertEqual(resp.status_code, 404, resp.content)
         self.assertIn("未找到 MCP Server", resp.json()["message"])
 
 
@@ -318,7 +319,7 @@ class CustomToolResourceTests(ToolsRestTestBase):
 
     def test_update_tool_not_found(self):
         resp = self.client.put(f"{TOOLS_URL}custom/ghost/", {"description": "x"}, format="json")
-        self.assertEqual(resp.status_code, 500, resp.content)
+        self.assertEqual(resp.status_code, 404, resp.content)
         self.assertIn("未找到自定义工具", resp.json()["message"])
 
     def test_delete_tool(self):
@@ -345,7 +346,7 @@ class CustomToolResourceTests(ToolsRestTestBase):
 class SkillResourceTests(ToolsRestTestBase):
     """Skill 资源：POST /skills/、PUT|DELETE /skills/{name}/、PATCH .../status/。"""
 
-    CREATE_RESULT = {
+    CREATE_RESULT: ClassVar[dict] = {
         "success": True,
         "message": "Skill 'demo' 创建成功",
         "data": {"id": 1, "name": "demo", "mode": "pipeline", "steps": [], "version": "1.0.0", "status": "active"},
@@ -510,7 +511,7 @@ class SkillPackageResourceTests(ToolsRestTestBase):
 
     def test_toggle_package_not_found(self):
         resp = self.client.patch(f"{TOOLS_URL}skills/packages/ghost/status/", {}, format="json")
-        self.assertEqual(resp.status_code, 500, resp.content)
+        self.assertEqual(resp.status_code, 404, resp.content)
         self.assertIn("未找到 Skill 包", resp.json()["message"])
 
     def test_package_detail(self):

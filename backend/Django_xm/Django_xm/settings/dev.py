@@ -55,6 +55,7 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "chat_stream": "30/min",
     "research": "5/min",
     "knowledge": "60/min",
+    "learning": "10/min",
     "sensitive": "10/min",
     "snapshot": "120/min",
     # 页面加载即请求的只读元数据接口（多浏览器并发时单页约 13 个请求），

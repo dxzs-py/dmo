@@ -22,7 +22,7 @@
 - 整模块导入（chat.models / event_schema / realtime_events / asgiref.sync）
   经 ``sys.modules`` 注入替身隔离；``django.utils.timezone`` 因
   ``from django.utils import timezone`` 经父包属性取值，采用
-  ``mock.patch`` 属性补丁；正文非前缀分支复用真实 ``sse_generator``
+  ``mock.patch`` 属性补丁；正文非前缀分支复用真实 ``stream_broadcast``
   权威实现（与现有测试同模式）。
 
 运行命令（backend/Django_xm 目录）：
@@ -165,7 +165,7 @@ class LocateSessionAndMessageTests(unittest.TestCase):
 
 
 class MergeMessageContentTests(unittest.TestCase):
-    """_merge_message_content 正文合并段测试（非前缀分支复用真实 sse_generator）。"""
+    """_merge_message_content 正文合并段测试（非前缀分支复用真实 stream_broadcast）。"""
 
     def _run(self, existing_content, content):
         message_fake = _build_message_fake(existing_content=existing_content)
@@ -652,7 +652,7 @@ class PersistStreamResultOrchestrationTests(unittest.TestCase):
         self.assertEqual(len(message_fake.tool_calls), 1)
         self.assertEqual(message_fake.tool_calls[0]["subagent_thread_id"], "thread_1")
         message_fake.save.assert_called_once()
-        args, kwargs = publish_mock.call_args
+        args, _kwargs = publish_mock.call_args
         self.assertEqual(args[1]["tool_calls_count"], 1)
 
 

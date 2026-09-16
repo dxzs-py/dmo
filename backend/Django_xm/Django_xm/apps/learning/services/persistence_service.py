@@ -156,17 +156,6 @@ class WorkflowPersistenceService:
             except User.DoesNotExist:
                 pass
 
-        current_step = state.get("current_step", "start")
-
-        if current_step in ["completed", "failed", "end", "feedback_completed"]:
-            status = "completed" if current_step in ["completed", "end", "feedback_completed"] else "failed"
-        elif current_step == "waiting_for_answers":
-            status = "waiting_for_answers"
-        elif current_step == "retry":
-            status = "retry"
-        else:
-            status = "running"
-
         _session, created = WorkflowSession.objects.update_or_create(
             thread_id=thread_id,
             defaults=self._build_session_defaults(state, user),

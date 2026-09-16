@@ -1,0 +1,30 @@
+{"query": "Redis 为什么选择单线程模型？它为什么还能这么快？", "relevant": ["01_Redis架构与核心概念.md"]}
+{"query": "Redis 的 IO 多路复用是怎么实现的？", "relevant": ["01_Redis架构与核心概念.md"]}
+{"query": "Redis 有序集合为什么用跳表而不是平衡树？", "relevant": ["02_数据类型与底层实现.md"]}
+{"query": "Redis 哈希类型的底层编码什么时候会从紧凑编码转成 hashtable？", "relevant": ["02_数据类型与底层实现.md"]}
+{"query": "Redis 的渐进式 rehash 过程是怎样的？", "relevant": ["02_数据类型与底层实现.md"]}
+{"query": "RDB 和 AOF 持久化各自的优缺点和适用场景是什么？", "relevant": ["03_持久化机制.md"]}
+{"query": "RDB 触发 fork 时写时复制是怎么工作的？", "relevant": ["03_持久化机制.md"]}
+{"query": "AOF 重写是怎么实现的？为什么能减小文件体积？", "relevant": ["03_持久化机制.md"]}
+{"query": "Redis 内存达到上限后有哪些淘汰策略？实际该怎么选？", "relevant": ["04_内存管理与淘汰策略.md"]}
+{"query": "Redis 的过期键删除策略是什么？", "relevant": ["04_内存管理与淘汰策略.md"]}
+{"query": "主从复制的全量同步和增量同步流程是怎样的？", "relevant": ["05_复制与高可用.md"]}
+{"query": "哨兵模式是怎么做故障转移的？", "relevant": ["05_复制与高可用.md"]}
+{"query": "Redis Cluster 的哈希槽一共多少个？分片是怎么设计的？", "relevant": ["06_集群与分片.md"]}
+{"query": "集群模式下为什么会出现 MOVED 和 ASK 重定向？", "relevant": ["06_集群与分片.md"]}
+{"query": "Redis 事务支持回滚吗？为什么？", "relevant": ["07_事务与Lua脚本.md"]}
+{"query": "怎么用 Lua 脚本保证多条命令的原子性？", "relevant": ["07_事务与Lua脚本.md"]}
+{"query": "用 Redis 做消息队列有哪些方案？Stream 和 List 有什么区别？", "relevant": ["08_发布订阅与消息队列.md"]}
+{"query": "Redis 发布订阅模式有什么缺点？", "relevant": ["08_发布订阅与消息队列.md"]}
+{"query": "缓存穿透、缓存击穿、缓存雪崩分别怎么解决？", "relevant": ["09_缓存模式与实战.md"]}
+{"query": "Cache Aside 模式和 Write Through 模式有什么区别？", "relevant": ["09_缓存模式与实战.md"]}
+{"query": "用 Redis 实现分布式锁要注意哪些问题？", "relevant": ["10_分布式锁与限流.md"]}
+{"query": "Redlock 算法存在什么争议？", "relevant": ["10_分布式锁与限流.md"]}
+{"query": "怎么排查 Redis 的慢查询和内存碎片问题？", "relevant": ["11_性能调优与监控.md"]}
+{"query": "Redis 的安全加固需要做哪些事情？", "relevant": ["12_安全与运维.md"]}
+{"query": "Django 项目里怎么集成 Redis 做缓存？", "relevant": ["13_Node.js与Django集成Redis.md"]}
+{"query": "Redis 用 Docker 部署时持久化和数据卷怎么做？", "relevant": ["14_Redis与Docker容器化部署.md"]}
+{"query": "Redis 怎么作为向量存储来做 RAG 检索？", "relevant": ["16_Redis向量存储与RAG应用.md"]}
+{"query": "LangChain 怎么用 Redis 做语义缓存？", "relevant": ["17_LangChain_v1.4与Redis.md"]}
+{"query": "怎么把 Redis 操作封装成 MCP Server 的工具？", "relevant": ["18_Redis_MCP_Server与工具集成.md"]}
+{"query": "Redis 和 Memcached、MySQL、PostgreSQL 该怎么选型？", "relevant": ["19_Redis与Memcached_MySQL_PG对比.md"]}

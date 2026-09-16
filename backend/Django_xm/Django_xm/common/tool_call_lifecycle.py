@@ -754,7 +754,7 @@ class ToolCallLifecycleService:
 
         从 ToolCallContext 读取 register 分配的全局递增序号（与 WebSocket
         tool_call_* 事件透传同一来源），写入 ``entry["seq"]``。所有构建 tool_call
-        条目的出口（sse_generator tool_calls_map、stream_persistence 持久化、
+        条目的出口（stream_broadcast tool_calls_map、stream_persistence 持久化、
         approval_service 审批重建与 Approval.extra）统一调用本方法，杜绝各消费点
         重复内联逻辑导致漏补。context 缺失或 seq 非正整数时保持 entry 不变
         （由调用方数组顺序兜底）。

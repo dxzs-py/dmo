@@ -9,24 +9,26 @@ import threading
 import uuid
 from urllib.parse import quote
 
+from asgiref.sync import sync_to_async
 from django.db.models import Q
 from django.http import FileResponse, HttpResponse, StreamingHttpResponse
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
-from asgiref.sync import sync_to_async
-from rest_framework import status
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer
 from rest_framework.views import APIView
 
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.apps.core.permissions import IsAuthenticatedOrQueryParam
 from Django_xm.apps.core.services.file_manager import get_file_manager
+from Django_xm.apps.core.throttling import LearningRateThrottle
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventSource, EventType
-from Django_xm.apps.core.permissions import IsAuthenticatedOrQueryParam
+from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.realtime_events import publish_event_sync
-from Django_xm.common.responses import error_response, not_found_response, success_response, validation_error_response
+from Django_xm.common.responses import success_response
 from Django_xm.common.serializers import EmptySerializer
 from Django_xm.common.sse_utils import sse_error_event, sse_response
 
@@ -40,6 +42,7 @@ from .serializers import (
     WorkflowSubmitSerializer,
 )
 from .services import WorkflowService
+from .services.learning_stream import iter_workflow_events, pump_sync_events, safe_publish_workflow_event
 from .services.study_flow import (
     WorkflowAlreadyFinishedError,
     _ensure_session_created,
@@ -48,7 +51,6 @@ from .services.study_flow import (
     get_workflow_state,
     prepare_restart,
 )
-from .services.learning_stream import iter_workflow_events, pump_sync_events, safe_publish_workflow_event
 
 
 class SSERenderer(BaseRenderer):
@@ -110,6 +112,7 @@ class WorkflowStartView(APIView):
     """启动学习工作流视图"""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [LearningRateThrottle]
 
     @extend_schema(request=WorkflowStartSerializer, responses={200: WorkflowResponseSerializer})
     def post(self, request):
@@ -124,48 +127,42 @@ class WorkflowStartView(APIView):
         """
         serializer = WorkflowStartSerializer(data=request.data)
         if not serializer.is_valid():
-            return validation_error_response(errors=serializer.errors, message="数据验证失败")
+            raise ValidationError(serializer.errors)
+
+        user_question = serializer.validated_data.get("user_question") or serializer.validated_data.get("query")
+        result = WorkflowService.start_workflow(
+            user_question=user_question,
+            thread_id=serializer.validated_data.get("thread_id"),
+            user_id=request.user.id,
+            knowledge_base_ids=serializer.validated_data.get("knowledge_base_ids"),
+            provider_id=serializer.validated_data.get("provider_id"),
+            model_name=serializer.validated_data.get("model_name"),
+            temperature=serializer.validated_data.get("temperature"),
+            max_tokens=serializer.validated_data.get("max_tokens"),
+            special_params=serializer.validated_data.get("special_params"),
+            enable_deep_thinking=serializer.validated_data.get("use_deep_thinking", False),
+            use_web_search=serializer.validated_data.get("use_web_search", False),
+        )
 
         try:
-            user_question = serializer.validated_data.get("user_question") or serializer.validated_data.get("query")
-            result = WorkflowService.start_workflow(
-                user_question=user_question,
-                thread_id=serializer.validated_data.get("thread_id"),
-                user_id=request.user.id,
-                knowledge_base_ids=serializer.validated_data.get("knowledge_base_ids"),
-                provider_id=serializer.validated_data.get("provider_id"),
-                model_name=serializer.validated_data.get("model_name"),
-                temperature=serializer.validated_data.get("temperature"),
-                max_tokens=serializer.validated_data.get("max_tokens"),
-                special_params=serializer.validated_data.get("special_params"),
-                enable_deep_thinking=serializer.validated_data.get("use_deep_thinking", False),
-                use_web_search=serializer.validated_data.get("use_web_search", False),
+            from .services.persistence_service import get_persistence_service
+
+            persistence_service = get_persistence_service()
+            persistence_service.save_workflow_state(
+                thread_id=result["thread_id"], state=result, user_id=request.user.id
             )
+        except Exception as persist_err:
+            logger.warning(f"持久化工作流会话失败: {persist_err}")
 
-            try:
-                from .services.persistence_service import get_persistence_service
-
-                persistence_service = get_persistence_service()
-                persistence_service.save_workflow_state(
-                    thread_id=result["thread_id"], state=result, user_id=request.user.id
-                )
-            except Exception as persist_err:
-                logger.warning(f"持久化工作流会话失败: {persist_err}")
-
-            response_serializer = WorkflowResponseSerializer(result)
-            return success_response(data=response_serializer.data, message="操作成功")
-
-        except Exception:
-            logger.exception("[API] 启动工作流失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="启动工作流失败，请稍后重试", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        response_serializer = WorkflowResponseSerializer(result)
+        return success_response(data=response_serializer.data, message="操作成功")
 
 
 class WorkflowStartStreamView(APIView):
     """启动学习工作流（SSE流式输出）"""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [LearningRateThrottle]
     renderer_classes = [SSERenderer]
 
     def options(self, request):
@@ -192,7 +189,7 @@ class WorkflowStartStreamView(APIView):
         """
         serializer = WorkflowStartSerializer(data=request.data)
         if not serializer.is_valid():
-            return validation_error_response(errors=serializer.errors, message="数据验证失败")
+            raise ValidationError(serializer.errors)
 
         user_question = serializer.validated_data.get("user_question") or serializer.validated_data.get("query")
         thread_id = serializer.validated_data.get("thread_id") or f"study_{uuid.uuid4().hex[:12]}"
@@ -359,6 +356,7 @@ class WorkflowSubmitView(APIView):
     """提交用户答案视图"""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [LearningRateThrottle]
 
     @extend_schema(request=WorkflowSubmitSerializer, responses={200: EmptySerializer})
     def post(self, request):
@@ -367,7 +365,7 @@ class WorkflowSubmitView(APIView):
         """
         serializer = WorkflowSubmitSerializer(data=request.data)
         if not serializer.is_valid():
-            return validation_error_response(errors=serializer.errors, message="数据验证失败")
+            raise ValidationError(serializer.errors)
 
         try:
             thread_id = serializer.validated_data["thread_id"]
@@ -385,11 +383,7 @@ class WorkflowSubmitView(APIView):
                     )
                     logger.info(f"[API] 从持久化恢复工作流会话: {thread_id}")
                 else:
-                    return error_response(
-                        code=ErrorCode.NOT_FOUND,
-                        message="工作流会话不存在或无权访问",
-                        http_status=status.HTTP_404_NOT_FOUND,
-                    )
+                    raise NotFound("工作流会话不存在或无权访问")
 
             result = WorkflowService.submit_user_answers(
                 thread_id=thread_id, answers=serializer.validated_data["answers"], user_id=request.user.id
@@ -407,17 +401,11 @@ class WorkflowSubmitView(APIView):
 
         except WorkflowAlreadyFinishedError as e:
             # 工作流已结束（已完成/失败/错误态）：返回 409 + 当前阶段
-            return error_response(
-                code=ErrorCode.WORKFLOW_ALREADY_FINISHED,
-                message=str(e),
-                http_status=status.HTTP_409_CONFLICT,
+            raise BaseAppError(
+                str(e),
+                business_code=ErrorCode.WORKFLOW_ALREADY_FINISHED,
                 data={"current_phase": getattr(e, "current_phase", "")},
-            )
-        except Exception:
-            logger.exception("[API] 提交答案失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="提交答案失败，请稍后重试", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            ) from e
 
 
 class WorkflowRestartStreamView(APIView):
@@ -428,6 +416,7 @@ class WorkflowRestartStreamView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [LearningRateThrottle]
     renderer_classes = [SSERenderer]
 
     @extend_schema(responses={200: EmptySerializer})
@@ -436,12 +425,12 @@ class WorkflowRestartStreamView(APIView):
             thread_id=thread_id, created_by=request.user, is_deleted=False
         ).first()
         if not session:
-            return not_found_response(message="工作流会话不存在或无权访问")
+            raise NotFound("工作流会话不存在或无权访问")
 
         try:
             prepared = prepare_restart(thread_id=thread_id, user_id=request.user.id)
         except ValueError as e:
-            return validation_error_response(message=str(e), errors={})
+            raise ValidationError(str(e)) from e
 
         new_thread_id = prepared["new_thread_id"]
         user_id = request.user.id
@@ -570,159 +559,133 @@ class WorkflowQuestionListView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request, thread_id):
-        try:
-            session = WorkflowSession.objects.filter(
-                thread_id=thread_id, created_by=request.user, is_deleted=False
-            ).first()
-            if not session:
-                return error_response(
-                    code=ErrorCode.NOT_FOUND,
-                    message="工作流会话不存在或无权访问",
-                    http_status=status.HTTP_404_NOT_FOUND,
-                )
+        session = WorkflowSession.objects.filter(
+            thread_id=thread_id, created_by=request.user, is_deleted=False
+        ).first()
+        if not session:
+            raise NotFound("工作流会话不存在或无权访问")
 
-            # 通过 root_thread_id 聚合所有相关 session（支持跨会话查看旧轮次题目）
-            root_id = session.root_thread_id or session.thread_id
-            related_sessions = WorkflowSession.objects.filter(
-                Q(thread_id=root_id) | Q(root_thread_id=root_id),
-                created_by=request.user,
-                is_deleted=False,
-            )
+        # 通过 root_thread_id 聚合所有相关 session（支持跨会话查看旧轮次题目）
+        root_id = session.root_thread_id or session.thread_id
+        related_sessions = WorkflowSession.objects.filter(
+            Q(thread_id=root_id) | Q(root_thread_id=root_id),
+            created_by=request.user,
+            is_deleted=False,
+        )
 
-            # 支持按 attempt_index 过滤
-            attempt_index = request.query_params.get("attempt_index")
-            queryset = WorkflowQuestion.objects.filter(session__in=related_sessions)
-            if attempt_index is not None:
-                try:
-                    queryset = queryset.filter(attempt_index=int(attempt_index))
-                except ValueError:
-                    pass
+        # 支持按 attempt_index 过滤
+        attempt_index = request.query_params.get("attempt_index")
+        queryset = WorkflowQuestion.objects.filter(session__in=related_sessions)
+        if attempt_index is not None:
+            try:
+                queryset = queryset.filter(attempt_index=int(attempt_index))
+            except ValueError:
+                pass
 
-            questions = queryset.order_by("attempt_index", "question_index")
-            serializer = WorkflowQuestionSerializer(questions, many=True)
+        questions = queryset.order_by("attempt_index", "question_index")
+        serializer = WorkflowQuestionSerializer(questions, many=True)
 
-            return success_response(data=serializer.data, message="操作成功")
-        except Exception:
-            logger.exception("[API] 获取题目列表失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="获取题目列表失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return success_response(data=serializer.data, message="操作成功")
 
 
 class WorkflowQuestionUpdateView(APIView):
     """修改单题答案并重新评分视图"""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [LearningRateThrottle]
 
     @extend_schema(responses={200: EmptySerializer})
     def put(self, request, thread_id, question_id):
-        try:
-            session = WorkflowSession.objects.filter(
-                thread_id=thread_id, created_by=request.user, is_deleted=False
-            ).first()
-            if not session:
-                return error_response(
-                    code=ErrorCode.NOT_FOUND,
-                    message="工作流会话不存在或无权访问",
-                    http_status=status.HTTP_404_NOT_FOUND,
-                )
+        session = WorkflowSession.objects.filter(
+            thread_id=thread_id, created_by=request.user, is_deleted=False
+        ).first()
+        if not session:
+            raise NotFound("工作流会话不存在或无权访问")
 
-            # 通过 root_thread_id 聚合所有相关 session（支持跨会话修改旧轮次题目）
-            root_id = session.root_thread_id or session.thread_id
-            related_sessions = WorkflowSession.objects.filter(
-                Q(thread_id=root_id) | Q(root_thread_id=root_id),
-                created_by=request.user,
-                is_deleted=False,
-            )
+        # 通过 root_thread_id 聚合所有相关 session（支持跨会话修改旧轮次题目）
+        root_id = session.root_thread_id or session.thread_id
+        related_sessions = WorkflowSession.objects.filter(
+            Q(thread_id=root_id) | Q(root_thread_id=root_id),
+            created_by=request.user,
+            is_deleted=False,
+        )
 
-            question = WorkflowQuestion.objects.filter(
-                session__in=related_sessions, question_id=question_id
-            ).first()
-            if not question:
-                return error_response(
-                    code=ErrorCode.NOT_FOUND,
-                    message="题目不存在",
-                    http_status=status.HTTP_404_NOT_FOUND,
-                )
+        question = WorkflowQuestion.objects.filter(
+            session__in=related_sessions, question_id=question_id
+        ).first()
+        if not question:
+            raise NotFound("题目不存在")
 
-            user_answer = request.data.get("user_answer")
-            if user_answer is None:
-                return validation_error_response(
-                    errors={"user_answer": ["该字段为必填项"]},
-                    message="数据验证失败",
-                )
+        user_answer = request.data.get("user_answer")
+        if user_answer is None:
+            raise ValidationError({"user_answer": ["该字段为必填项"]})
 
-            is_correct, points_earned = _regrade_question(question, user_answer)
+        is_correct, points_earned = _regrade_question(question, user_answer)
 
-            # 更新题目
-            question.user_answer = user_answer
-            question.is_correct = is_correct
-            question.points_earned = points_earned
-            question.scored_at = timezone.now()
-            question.status = WorkflowQuestionStatus.SCORED
-            question.save()
+        # 更新题目
+        question.user_answer = user_answer
+        question.is_correct = is_correct
+        question.points_earned = points_earned
+        question.scored_at = timezone.now()
+        question.status = WorkflowQuestionStatus.SCORED
+        question.save()
 
-            # 重新计算所属 WorkflowAttempt 的 total_score（跨会话查询该轮次所有题目）
-            attempt = WorkflowAttempt.objects.filter(
+        # 重新计算所属 WorkflowAttempt 的 total_score（跨会话查询该轮次所有题目）
+        attempt = WorkflowAttempt.objects.filter(
+            session__in=related_sessions, attempt_index=question.attempt_index
+        ).first()
+        if attempt:
+            all_questions = WorkflowQuestion.objects.filter(
                 session__in=related_sessions, attempt_index=question.attempt_index
-            ).first()
-            if attempt:
-                all_questions = WorkflowQuestion.objects.filter(
-                    session__in=related_sessions, attempt_index=question.attempt_index
-                )
-                total_earned = sum(q.points_earned or 0 for q in all_questions)
-                # 与 grading_node 保持同一口径：百分比分母取 quiz.total_points（LLM 生成的满分，
-                # 而非题目 points 之和，避免修改答案后分数口径漂移），缺失时回退求和
-                target_session = attempt.session
-                quiz_total = None
-                if target_session and target_session.quiz:
-                    quiz_total = target_session.quiz.get("total_points")
-                total_points = quiz_total or sum(q.points for q in all_questions)
-                attempt.total_score = int((total_earned / total_points) * 100) if total_points > 0 else 0
-                attempt.save(update_fields=["total_score"])
-
-                # 同步更新所属 session 的 user_answers/score/score_details 与内存 graph state，
-                # 使 status 接口（get_workflow_state 优先读内存 state）返回最新评分，答题详情/测验结果即时一致
-                if target_session:
-                    # 键与 quiz 原 id（q1）对齐（去掉 _r 轮次后缀），与 grading_node 生成的 user_answers 口径一致
-                    new_user_answers = {q.question_id.rsplit("_r", 1)[0]: q.user_answer or "" for q in all_questions}
-                    new_score_details = _build_score_details(all_questions)
-                    target_session.user_answers = new_user_answers
-                    target_session.score = attempt.total_score
-                    target_session.score_details = new_score_details
-                    target_session.save(update_fields=["user_answers", "score", "score_details"])
-
-                    # 同步更新内存 LangGraph state（进程重启后由 DB 恢复，两条路径都必须一致）
-                    try:
-                        study_flow = _get_cached_study_flow(target_session.thread_id)
-                        study_flow.graph.update_state(
-                            config={"configurable": {"thread_id": target_session.thread_id}},
-                            values={
-                                "user_answers": new_user_answers,
-                                "score": attempt.total_score,
-                                "score_details": new_score_details,
-                            },
-                        )
-                        logger.info(
-                            f"[API] 修改答案后已同步内存工作流状态: thread_id={target_session.thread_id}, "
-                            f"score={attempt.total_score}"
-                        )
-                    except Exception as state_err:
-                        logger.warning(f"[API] 更新内存工作流状态失败: {state_err}")
-
-            serializer = WorkflowQuestionSerializer(question)
-            return success_response(
-                data={
-                    "question": serializer.data,
-                    "attempt_total_score": attempt.total_score if attempt else None,
-                },
-                message="重新评分完成",
             )
-        except Exception:
-            logger.exception("[API] 重新评分失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="重新评分失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            total_earned = sum(q.points_earned or 0 for q in all_questions)
+            # 与 grading_node 保持同一口径：百分比分母取 quiz.total_points（LLM 生成的满分，
+            # 而非题目 points 之和，避免修改答案后分数口径漂移），缺失时回退求和
+            target_session = attempt.session
+            quiz_total = None
+            if target_session and target_session.quiz:
+                quiz_total = target_session.quiz.get("total_points")
+            total_points = quiz_total or sum(q.points for q in all_questions)
+            attempt.total_score = int((total_earned / total_points) * 100) if total_points > 0 else 0
+            attempt.save(update_fields=["total_score"])
+
+            # 同步更新所属 session 的 user_answers/score/score_details 与内存 graph state，
+            # 使 status 接口（get_workflow_state 优先读内存 state）返回最新评分，答题详情/测验结果即时一致
+            if target_session:
+                # 键与 quiz 原 id（q1）对齐（去掉 _r 轮次后缀），与 grading_node 生成的 user_answers 口径一致
+                new_user_answers = {q.question_id.rsplit("_r", 1)[0]: q.user_answer or "" for q in all_questions}
+                new_score_details = _build_score_details(all_questions)
+                target_session.user_answers = new_user_answers
+                target_session.score = attempt.total_score
+                target_session.score_details = new_score_details
+                target_session.save(update_fields=["user_answers", "score", "score_details"])
+
+                # 同步更新内存 LangGraph state（进程重启后由 DB 恢复，两条路径都必须一致）
+                try:
+                    study_flow = _get_cached_study_flow(target_session.thread_id)
+                    study_flow.graph.update_state(
+                        config={"configurable": {"thread_id": target_session.thread_id}},
+                        values={
+                            "user_answers": new_user_answers,
+                            "score": attempt.total_score,
+                            "score_details": new_score_details,
+                        },
+                    )
+                    logger.info(
+                        f"[API] 修改答案后已同步内存工作流状态: thread_id={target_session.thread_id}, "
+                        f"score={attempt.total_score}"
+                    )
+                except Exception as state_err:
+                    logger.warning(f"[API] 更新内存工作流状态失败: {state_err}")
+
+        serializer = WorkflowQuestionSerializer(question)
+        return success_response(
+            data={
+                "question": serializer.data,
+                "attempt_total_score": attempt.total_score if attempt else None,
+            },
+            message="重新评分完成",
+        )
 
 
 class WorkflowAttemptListView(APIView):
@@ -732,34 +695,24 @@ class WorkflowAttemptListView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request, thread_id):
-        try:
-            session = WorkflowSession.objects.filter(
-                thread_id=thread_id, created_by=request.user, is_deleted=False
-            ).first()
-            if not session:
-                return error_response(
-                    code=ErrorCode.NOT_FOUND,
-                    message="工作流会话不存在或无权访问",
-                    http_status=status.HTTP_404_NOT_FOUND,
-                )
+        session = WorkflowSession.objects.filter(
+            thread_id=thread_id, created_by=request.user, is_deleted=False
+        ).first()
+        if not session:
+            raise NotFound("工作流会话不存在或无权访问")
 
-            # 通过 root_thread_id 聚合所有相关 session
-            root_id = session.root_thread_id or session.thread_id
-            related_sessions = WorkflowSession.objects.filter(
-                Q(thread_id=root_id) | Q(root_thread_id=root_id),
-                created_by=request.user,
-                is_deleted=False,
-            )
+        # 通过 root_thread_id 聚合所有相关 session
+        root_id = session.root_thread_id or session.thread_id
+        related_sessions = WorkflowSession.objects.filter(
+            Q(thread_id=root_id) | Q(root_thread_id=root_id),
+            created_by=request.user,
+            is_deleted=False,
+        )
 
-            attempts = WorkflowAttempt.objects.filter(session__in=related_sessions).order_by("attempt_index")
-            serializer = WorkflowAttemptSerializer(attempts, many=True)
+        attempts = WorkflowAttempt.objects.filter(session__in=related_sessions).order_by("attempt_index")
+        serializer = WorkflowAttemptSerializer(attempts, many=True)
 
-            return success_response(data=serializer.data, message="操作成功")
-        except Exception:
-            logger.exception("[API] 获取练习轮次历史失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="获取练习轮次历史失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return success_response(data=serializer.data, message="操作成功")
 
 
 def _build_score_details(questions) -> dict:
@@ -889,52 +842,37 @@ class WorkflowStatusView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request, thread_id):
-        try:
-            session = WorkflowSession.objects.filter(
-                thread_id=thread_id, created_by=request.user, is_deleted=False
-            ).first()
+        session = WorkflowSession.objects.filter(
+            thread_id=thread_id, created_by=request.user, is_deleted=False
+        ).first()
 
-            if not session:
-                return error_response(
-                    code=ErrorCode.NOT_FOUND,
-                    message="工作流会话不存在或无权访问",
-                    http_status=status.HTTP_404_NOT_FOUND,
-                )
+        if not session:
+            raise NotFound("工作流会话不存在或无权访问")
 
-            state = WorkflowService.get_workflow_status(thread_id)
+        state = WorkflowService.get_workflow_status(thread_id)
 
-            if not state:
-                return error_response(
-                    code=ErrorCode.NOT_FOUND,
-                    message="工作流会话不存在或无权访问",
-                    http_status=status.HTTP_404_NOT_FOUND,
-                )
+        if not state:
+            raise NotFound("工作流会话不存在或无权访问")
 
-            return success_response(
-                data={
-                    "thread_id": thread_id,
-                    "current_step": state.get("current_step"),
-                    "status": state.get("current_step"),
-                    "user_question": state.get("user_question"),
-                    "learning_plan": state.get("learning_plan"),
-                    "retrieved_docs": state.get("retrieved_docs"),
-                    "quiz": state.get("quiz"),
-                    "user_answers": state.get("user_answers"),
-                    "score": state.get("score"),
-                    "score_details": state.get("score_details"),
-                    "feedback": state.get("feedback"),
-                    "should_retry": state.get("should_retry", False),
-                    "retry_count": state.get("retry_count", 0),
-                    "created_at": state.get("created_at", ""),
-                    "updated_at": state.get("updated_at", ""),
-                }
-            )
-
-        except Exception:
-            logger.exception("[API] 查询状态失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="查询工作流状态失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return success_response(
+            data={
+                "thread_id": thread_id,
+                "current_step": state.get("current_step"),
+                "status": state.get("current_step"),
+                "user_question": state.get("user_question"),
+                "learning_plan": state.get("learning_plan"),
+                "retrieved_docs": state.get("retrieved_docs"),
+                "quiz": state.get("quiz"),
+                "user_answers": state.get("user_answers"),
+                "score": state.get("score"),
+                "score_details": state.get("score_details"),
+                "feedback": state.get("feedback"),
+                "should_retry": state.get("should_retry", False),
+                "retry_count": state.get("retry_count", 0),
+                "created_at": state.get("created_at", ""),
+                "updated_at": state.get("updated_at", ""),
+            }
+        )
 
 
 class WorkflowHistoryView(APIView):
@@ -944,25 +882,14 @@ class WorkflowHistoryView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request, thread_id):
-        try:
-            session = WorkflowSession.objects.filter(
-                thread_id=thread_id, created_by=request.user, is_deleted=False
-            ).first()
-            if not session:
-                return error_response(
-                    code=ErrorCode.NOT_FOUND,
-                    message="工作流会话不存在或无权访问",
-                    http_status=status.HTTP_404_NOT_FOUND,
-                )
+        session = WorkflowSession.objects.filter(
+            thread_id=thread_id, created_by=request.user, is_deleted=False
+        ).first()
+        if not session:
+            raise NotFound("工作流会话不存在或无权访问")
 
-            history = WorkflowService.get_workflow_history(thread_id)
-            return success_response(data={"thread_id": thread_id, "history": history})
-
-        except Exception:
-            logger.exception("[API] 查询历史失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="查询工作流历史失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        history = WorkflowService.get_workflow_history(thread_id)
+        return success_response(data={"thread_id": thread_id, "history": history})
 
 
 class WorkflowTaskDeleteView(APIView):
@@ -972,15 +899,8 @@ class WorkflowTaskDeleteView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def delete(self, request, thread_id):
-        try:
-            result = WorkflowService.delete_workflow(thread_id, request.user.id)
-            return success_response(data=result, message="操作成功")
-
-        except Exception:
-            logger.exception("[API] 删除工作流失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="删除工作流失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        result = WorkflowService.delete_workflow(thread_id, request.user.id)
+        return success_response(data=result, message="操作成功")
 
 
 class WorkflowListView(APIView):
@@ -990,38 +910,31 @@ class WorkflowListView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
-        try:
-            status_filter = request.query_params.get("status")
-            search_query = request.query_params.get("search")
-            page = int(request.query_params.get("page", 1))
-            page_size = min(int(request.query_params.get("page_size", 20)), 100)
+        status_filter = request.query_params.get("status")
+        search_query = request.query_params.get("search")
+        page = int(request.query_params.get("page", 1))
+        page_size = min(int(request.query_params.get("page_size", 20)), 100)
 
-            queryset = WorkflowService.list_user_workflows(
-                user_id=request.user.id, status=status_filter, search=search_query
-            )
+        queryset = WorkflowService.list_user_workflows(
+            user_id=request.user.id, status=status_filter, search=search_query
+        )
 
-            total = queryset.count()
-            start = (page - 1) * page_size
-            end = start + page_size
-            sessions = queryset[start:end]
+        total = queryset.count()
+        start = (page - 1) * page_size
+        end = start + page_size
+        sessions = queryset[start:end]
 
-            serializer = WorkflowSessionSerializer(sessions, many=True)
+        serializer = WorkflowSessionSerializer(sessions, many=True)
 
-            return success_response(
-                data={
-                    "items": serializer.data,
-                    "total": total,
-                    "page": page,
-                    "page_size": page_size,
-                    "total_pages": (total + page_size - 1) // page_size,
-                }
-            )
-
-        except Exception:
-            logger.exception("[API] 获取工作流列表失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="获取工作流列表失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return success_response(
+            data={
+                "items": serializer.data,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": (total + page_size - 1) // page_size,
+            }
+        )
 
 
 class WorkflowFilesListView(APIView):
@@ -1029,38 +942,25 @@ class WorkflowFilesListView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request, thread_id):
-        try:
-            session = WorkflowSession.objects.filter(
-                thread_id=thread_id, created_by=request.user, is_deleted=False
-            ).first()
-            if not session:
-                return error_response(
-                    code=ErrorCode.NOT_FOUND,
-                    message="工作流会话不存在或无权访问",
-                    http_status=status.HTTP_404_NOT_FOUND,
-                )
+        session = WorkflowSession.objects.filter(
+            thread_id=thread_id, created_by=request.user, is_deleted=False
+        ).first()
+        if not session:
+            raise NotFound("工作流会话不存在或无权访问")
 
-            files = file_manager.list_task_files(thread_id, "workflow")
+        files = file_manager.list_task_files(thread_id, "workflow")
 
-            from Django_xm.common.serializers import FileInfoSerializer
+        from Django_xm.common.serializers import FileInfoSerializer
 
-            serializer = FileInfoSerializer([f.to_dict() for f in files], many=True)
+        serializer = FileInfoSerializer([f.to_dict() for f in files], many=True)
 
-            return success_response(
-                data={
-                    "thread_id": thread_id,
-                    "files": serializer.data,
-                    "total": len(files),
-                }
-            )
-
-        except Exception:
-            logger.exception("列出工作流文件失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR,
-                message="获取文件列表失败",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        return success_response(
+            data={
+                "thread_id": thread_id,
+                "files": serializer.data,
+                "total": len(files),
+            }
+        )
 
 
 class WorkflowFileDownloadView(APIView):
@@ -1068,47 +968,34 @@ class WorkflowFileDownloadView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request, thread_id, filename):
-        try:
-            user = request.user if request.user.is_authenticated else None
-            if not user:
-                return error_response(
-                    code=ErrorCode.UNAUTHORIZED, message="未认证", http_status=status.HTTP_401_UNAUTHORIZED
-                )
-            session = WorkflowSession.objects.filter(thread_id=thread_id, created_by=user, is_deleted=False).first()
-            if not session:
-                return error_response(
-                    code=ErrorCode.NOT_FOUND,
-                    message="工作流会话不存在或无权访问",
-                    http_status=status.HTTP_404_NOT_FOUND,
-                )
+        user = request.user if request.user.is_authenticated else None
+        if not user:
+            raise BaseAppError("未认证", business_code=ErrorCode.UNAUTHORIZED)
+        session = WorkflowSession.objects.filter(thread_id=thread_id, created_by=user, is_deleted=False).first()
+        if not session:
+            raise NotFound("工作流会话不存在或无权访问")
 
-            file_info = file_manager.get_file_info(thread_id, filename, "workflow")
-            if not file_info:
-                return not_found_response(message="文件不存在")
+        file_info = file_manager.get_file_info(thread_id, filename, "workflow")
+        if not file_info:
+            raise NotFound("文件不存在")
 
-            file_path = file_info.path
+        file_path = file_info.path
 
-            content_type = "application/octet-stream"
-            if file_path.suffix.lower() in [".md", ".txt"]:
-                content_type = "text/plain; charset=utf-8"
-            elif file_path.suffix.lower() == ".json":
-                content_type = "application/json"
+        content_type = "application/octet-stream"
+        if file_path.suffix.lower() in [".md", ".txt"]:
+            content_type = "text/plain; charset=utf-8"
+        elif file_path.suffix.lower() == ".json":
+            content_type = "application/json"
 
-            # 说明：FileResponse 惰性读取文件，响应关闭时自动关闭句柄，
-            # 若用 with 提前关闭会导致流式读取失败，故保持 Django 官方 open() 模式。
-            response = FileResponse(
-                open(file_path, "rb"),  # noqa: SIM115
-                content_type=content_type,
-                as_attachment=True,
-                filename=quote(file_path.name),
-            )
-            return response
-
-        except Exception:
-            logger.exception("下载文件失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="文件下载失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        # 说明：FileResponse 惰性读取文件，响应关闭时自动关闭句柄，
+        # 若用 with 提前关闭会导致流式读取失败，故保持 Django 官方 open() 模式。
+        response = FileResponse(
+            open(file_path, "rb"),  # noqa: SIM115
+            content_type=content_type,
+            as_attachment=True,
+            filename=quote(file_path.name),
+        )
+        return response
 
 
 class WorkflowFileContentView(APIView):
@@ -1116,40 +1003,27 @@ class WorkflowFileContentView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request, thread_id, filename):
-        try:
-            session = WorkflowSession.objects.filter(
-                thread_id=thread_id, created_by=request.user, is_deleted=False
-            ).first()
-            if not session:
-                return error_response(
-                    code=ErrorCode.NOT_FOUND,
-                    message="工作流会话不存在或无权访问",
-                    http_status=status.HTTP_404_NOT_FOUND,
-                )
+        session = WorkflowSession.objects.filter(
+            thread_id=thread_id, created_by=request.user, is_deleted=False
+        ).first()
+        if not session:
+            raise NotFound("工作流会话不存在或无权访问")
 
-            file_info = file_manager.get_file_info(thread_id, filename, "workflow")
-            if not file_info:
-                return not_found_response(message="文件不存在")
+        file_info = file_manager.get_file_info(thread_id, filename, "workflow")
+        if not file_info:
+            raise NotFound("文件不存在")
 
-            content = file_manager.read_file_content(thread_id, filename, "workflow")
+        content = file_manager.read_file_content(thread_id, filename, "workflow")
 
-            from Django_xm.common.serializers import FileInfoSerializer
+        from Django_xm.common.serializers import FileInfoSerializer
 
-            return success_response(
-                data={
-                    "filename": filename,
-                    "content": content,
-                    "file_info": FileInfoSerializer(file_info.to_dict()).data,
-                }
-            )
-
-        except Exception:
-            logger.exception("读取文件内容失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR,
-                message="读取文件内容失败",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        return success_response(
+            data={
+                "filename": filename,
+                "content": content,
+                "file_info": FileInfoSerializer(file_info.to_dict()).data,
+            }
+        )
 
 
 def workflow_stream(request, thread_id):

@@ -139,3 +139,45 @@ class UserInfoViewTests(TestCase):
         self.assertEqual(data["username"], "infouser")
         self.assertIn("is_staff", data)
         self.assertFalse(data["is_staff"])
+
+
+class SoftDeleteMobileReleaseTests(TestCase):
+    """软删除释放 mobile 唯一索引（质量报告 H2 回归）。
+
+    修复前：soft_delete() 保留 mobile → DB 唯一索引仍占用 →
+    同手机号重新注册时 create_user 触发 IntegrityError（500）。
+    修复后：soft_delete() 将 mobile 置 None，唯一索引释放。
+    """
+
+    MOBILE = "13800001234"
+
+    def test_soft_delete_releases_mobile_unique_index(self):
+        """软删后 mobile 置 None 且不再占用唯一索引。"""
+        user = User.objects.create_user(
+            username="softdel_user",
+            password=VALID_PASSWORD,
+            mobile=self.MOBILE,
+        )
+        user.soft_delete()
+
+        user.refresh_from_db()
+        self.assertTrue(user.is_deleted)
+        self.assertIsNone(user.mobile)
+        self.assertFalse(User.all_objects.filter(mobile=self.MOBILE).exists())
+
+    def test_mobile_reusable_after_soft_delete(self):
+        """软删后同手机号可重新注册（不再 IntegrityError）。"""
+        User.objects.create_user(
+            username="softdel_user2",
+            password=VALID_PASSWORD,
+            mobile=self.MOBILE,
+        ).soft_delete()
+
+        # 同手机号注册新用户：修复前此行抛 IntegrityError
+        reborn = User.objects.create_user(
+            username="reborn_user",
+            password=VALID_PASSWORD,
+            mobile=self.MOBILE,
+        )
+        self.assertEqual(reborn.mobile, self.MOBILE)
+        self.assertTrue(User.objects.filter(mobile=self.MOBILE, is_deleted=False).exists())

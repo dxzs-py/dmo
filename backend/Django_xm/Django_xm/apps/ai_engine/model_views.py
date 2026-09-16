@@ -1,7 +1,6 @@
 import logging
 
 from drf_spectacular.utils import extend_schema
-from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -16,7 +15,8 @@ from Django_xm.apps.ai_engine.services.registry_service import (
     is_provider_valid,
 )
 from Django_xm.common.error_codes import ErrorCode
-from Django_xm.common.responses import error_response, success_response
+from Django_xm.common.exceptions import BaseAppError
+from Django_xm.common.responses import success_response
 
 logger = logging.getLogger(__name__)
 
@@ -44,18 +44,10 @@ class ModelTestView(APIView):
         model_name = request.data.get("model_name")
 
         if not provider_id:
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message="provider_id is required",
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise BaseAppError("provider_id is required", business_code=ErrorCode.INVALID_PARAMS)
 
         if not is_provider_valid(provider_id):
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message=f"Unknown provider: {provider_id}",
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise BaseAppError(f"Unknown provider: {provider_id}", business_code=ErrorCode.INVALID_PARAMS)
 
         result = test_model_connection(provider_id=provider_id, model_name=model_name)
         if result["success"]:
@@ -64,11 +56,10 @@ class ModelTestView(APIView):
                 message=result["message"],
             )
         else:
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message=result["message"],
+            raise BaseAppError(
+                result["message"],
+                business_code=ErrorCode.INVALID_PARAMS,
                 data=result.get("model_info"),
-                http_status=status.HTTP_400_BAD_REQUEST,
             )
 
 
@@ -84,18 +75,10 @@ class ModelSwitchView(APIView):
         special_params = request.data.get("special_params")
 
         if not provider_id:
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message="provider_id is required",
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise BaseAppError("provider_id is required", business_code=ErrorCode.INVALID_PARAMS)
 
         if not is_provider_valid(provider_id):
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message=f"Unknown provider: {provider_id}",
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise BaseAppError(f"Unknown provider: {provider_id}", business_code=ErrorCode.INVALID_PARAMS)
 
         try:
             model = get_chat_model_by_provider(
@@ -115,18 +98,7 @@ class ModelSwitchView(APIView):
                 message=f"模型切换成功: {resolved_name}",
             )
         except ValueError as e:
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message=str(e),
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
-        except Exception:
-            logger.exception("模型切换失败")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR,
-                message="模型切换失败",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            raise BaseAppError(str(e), business_code=ErrorCode.INVALID_PARAMS) from e
 
 
 class HelperModelView(APIView):
@@ -188,11 +160,7 @@ class HelperModelView(APIView):
         model_name = request.data.get("model_name") or ""
 
         if provider_id and not is_provider_valid(provider_id):
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message=f"Unknown provider: {provider_id}",
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise BaseAppError(f"Unknown provider: {provider_id}", business_code=ErrorCode.INVALID_PARAMS)
 
         # 持久化到数据库：空字符串视为重置，存 null
         try:

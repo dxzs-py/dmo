@@ -6,20 +6,16 @@
 """
 
 from drf_spectacular.utils import extend_schema
-from rest_framework import status
+from rest_framework.exceptions import NotFound
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.core.throttling import KnowledgeRateThrottle, MetaRateThrottle
 from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.pagination import paginate_to_dict
-from Django_xm.common.responses import (
-    error_response,
-    not_found_response,
-    success_response,
-)
+from Django_xm.common.responses import success_response
 from Django_xm.common.serializers import EmptySerializer
 
 from .exceptions import KnowledgeBaseAlreadyExistsError
@@ -40,8 +36,6 @@ from .services.kb_service import (
     update_knowledge_base,
 )
 
-logger = get_logger(__name__)
-
 
 class KnowledgeBaseListView(APIView):
     permission_classes = [IsAuthenticated]
@@ -51,26 +45,16 @@ class KnowledgeBaseListView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
-        try:
-            user_indexes = list_knowledge_bases(request.user)
-            paginated = paginate_to_dict(user_indexes, request)
-            return success_response(data=paginated)
-        except Exception:
-            logger.exception("获取知识库列表失败")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="获取知识库列表失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        user_indexes = list_knowledge_bases(request.user)
+        paginated = paginate_to_dict(user_indexes, request)
+        return success_response(data=paginated)
 
     @extend_schema(request=CreateKnowledgeBaseSerializer, responses={200: EmptySerializer})
     def post(self, request):
         serializer = CreateKnowledgeBaseSerializer(data=request.data)
         if not serializer.is_valid():
             field, errors = next(iter(serializer.errors.items()))
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message=f"{field}: {errors[0]}",
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise BaseAppError(f"{field}: {errors[0]}", business_code=ErrorCode.INVALID_PARAMS)
         name = serializer.validated_data["name"]
         description = serializer.validated_data.get("description", "")
 
@@ -80,18 +64,11 @@ class KnowledgeBaseListView(APIView):
                 return success_response(data=result, message="知识库已存在")
             return success_response(data=result, message="知识库创建成功")
         except KnowledgeBaseAlreadyExistsError as e:
-            return error_response(
-                code=ErrorCode.DUPLICATE_RESOURCE, message=str(e), http_status=status.HTTP_409_CONFLICT
-            )
+            # 领域异常翻译：service 抛出的异常未携带 business_code，需在视图边界
+            # 转为统一业务码（DUPLICATE_RESOURCE 40901/409），否则冒泡后按 500 兜底
+            raise BaseAppError(str(e), business_code=ErrorCode.DUPLICATE_RESOURCE) from e
         except ValueError as e:
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS, message=str(e), http_status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception:
-            logger.exception("创建知识库失败")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="创建知识库失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            raise BaseAppError(str(e), business_code=ErrorCode.INVALID_PARAMS) from e
 
 
 class KnowledgeBaseDetailView(APIView):
@@ -103,37 +80,22 @@ class KnowledgeBaseDetailView(APIView):
             data = get_knowledge_base_detail(request.user, kb_id)
             return success_response(data=data)
         except FileNotFoundError as e:
-            return not_found_response(message=str(e))
-        except Exception:
-            logger.exception("获取知识库详情失败")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR,
-                message="获取知识库详情失败",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            # service 层 FileNotFoundError 翻译为 DRF NotFound（40401/404）
+            raise NotFound(str(e)) from e
 
     @extend_schema(request=UpdateKnowledgeBaseSerializer, responses={200: EmptySerializer})
     def patch(self, request, kb_id):
         serializer = UpdateKnowledgeBaseSerializer(data=request.data)
         if not serializer.is_valid():
             field, errors = next(iter(serializer.errors.items()))
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message=f"{field}: {errors[0]}",
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise BaseAppError(f"{field}: {errors[0]}", business_code=ErrorCode.INVALID_PARAMS)
         description = serializer.validated_data.get("description", "")
 
         try:
             data = update_knowledge_base(request.user, kb_id, description)
             return success_response(data=data, message="知识库更新成功")
         except FileNotFoundError as e:
-            return not_found_response(message=str(e))
-        except Exception:
-            logger.exception("更新知识库失败")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="更新知识库失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            raise NotFound(str(e)) from e
 
     @extend_schema(responses={200: EmptySerializer})
     def delete(self, request, kb_id):
@@ -141,12 +103,7 @@ class KnowledgeBaseDetailView(APIView):
             delete_knowledge_base(request.user, kb_id)
             return success_response(message="知识库删除成功")
         except FileNotFoundError as e:
-            return not_found_response(message=str(e))
-        except Exception:
-            logger.exception("删除知识库失败")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="删除知识库失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            raise NotFound(str(e)) from e
 
 
 class KnowledgeBaseDocumentListView(APIView):
@@ -168,31 +125,22 @@ class KnowledgeBaseDocumentListView(APIView):
             }
             return success_response(data=paginated, headers=headers)
         except FileNotFoundError as e:
-            return not_found_response(message=str(e))
-        except Exception:
-            logger.exception("获取文档列表失败")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="获取文档列表失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            raise NotFound(str(e)) from e
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request, kb_id):
         files = request.FILES.getlist("files")
 
         if not files:
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS, message="请选择要上传的文件", http_status=status.HTTP_400_BAD_REQUEST
-            )
+            raise BaseAppError("请选择要上传的文件", business_code=ErrorCode.INVALID_PARAMS)
 
         try:
             # 同步快操作：仅保存文件落盘，返回秒级响应
             saved_files = save_uploaded_files(request.user, kb_id, files)
         except FileNotFoundError as e:
-            return not_found_response(message=str(e))
+            raise NotFound(str(e)) from e
         except ValueError as e:
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS, message=str(e), http_status=status.HTTP_400_BAD_REQUEST
-            )
+            raise BaseAppError(str(e), business_code=ErrorCode.INVALID_PARAMS) from e
 
         # 提交 Celery 异步任务：文档加载/分块/向量化在 worker 中执行，
         # 进度通过 WebSocket task:{task_id} 频道实时推送（前端 subscribeTask 订阅）
@@ -216,13 +164,14 @@ class KnowledgeBaseDocumentListView(APIView):
                 task_id=task_id,
             )
             task_manager.update_task_status(task_id, {"celery_task_id": celery_result.id})
-        except Exception:
-            logger.exception("提交知识库上传任务失败")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR,
-                message="上传任务队列不可用，请确认 Celery worker 已启动",
-                http_status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+        except Exception as e:
+            # Celery 队列不可用属服务级故障：特定业务错误翻译，保留 except 结构
+            # （原 code=50001/http=503 不一致，统一为 SERVICE_UNAVAILABLE 50301/503，
+            # 保留 HTTP 503 语义，code 由 50001 变更为 50301，见改造报告）
+            raise BaseAppError(
+                "上传任务队列不可用，请确认 Celery worker 已启动",
+                business_code=ErrorCode.SERVICE_UNAVAILABLE,
+            ) from e
 
         return success_response(
             data={
@@ -243,12 +192,7 @@ class KnowledgeBaseDocumentDeleteView(APIView):
             result = delete_document(request.user, kb_id, filename)
             return success_response(data=result, message="操作成功")
         except FileNotFoundError as e:
-            return not_found_response(message=str(e))
-        except Exception:
-            logger.exception("删除文档失败")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="删除文档失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            raise NotFound(str(e)) from e
 
 
 class KnowledgeBaseSearchView(APIView):
@@ -259,11 +203,7 @@ class KnowledgeBaseSearchView(APIView):
         serializer = KnowledgeBaseSearchSerializer(data=request.data)
         if not serializer.is_valid():
             field, errors = next(iter(serializer.errors.items()))
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message=f"{field}: {errors[0]}",
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise BaseAppError(f"{field}: {errors[0]}", business_code=ErrorCode.INVALID_PARAMS)
         query = serializer.validated_data["query"]
         top_k = serializer.validated_data.get("top_k", 5)
 
@@ -271,13 +211,6 @@ class KnowledgeBaseSearchView(APIView):
             results = search_knowledge_base(request.user, kb_id, query, top_k)
             return success_response(data={"results": results})
         except FileNotFoundError as e:
-            return not_found_response(message=str(e))
+            raise NotFound(str(e)) from e
         except ValueError as e:
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS, message=str(e), http_status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception:
-            logger.exception("检索测试失败")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message="检索测试失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            raise BaseAppError(str(e), business_code=ErrorCode.INVALID_PARAMS) from e

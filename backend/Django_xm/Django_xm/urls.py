@@ -1,18 +1,21 @@
 """
-URL configuration for Django_xm project.
-
-The `urlpatterns` list routes URLs to views. For more information please see:
+Django_xm 项目的 URL 配置
+    `urlpatterns` 列表用于将路由地址映射到视图。更多信息请参考：
     https://docs.djangoproject.com/en/5.2/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
+
+示例：
+
+     函数视图
+        1. 导入模块：`from my_app import views`
+        2. 在 urlpatterns 中添加路由：`path('', views.home, name='home')`
+
+     类视图
+        1. 导入模块：`from other_app.views import Home`
+        2. 在 urlpatterns 中添加路由：`path('', Home.as_view(), name='home')`
+
+     引入其他 URL 配置文件
+        1. 导入 `include()` 函数：`from django.urls import include, path`
+        2. 在 urlpatterns 中添加路由：`path('blog/', include('blog.urls'))`
 """
 
 from django.conf import settings
@@ -31,7 +34,7 @@ def root_info(request):
         {
             "name": app_cfg.app_name,
             "version": app_cfg.app_version,
-            "description": "LC-StudyLab 智能学习 & 研究助手 API",
+            "description": " 智能学习 & 研究助手 Agent",
             "api_versions": {"v1": "/api/v1/", "current": "/api/v1/"},
             "health": "/api/v1/health/",
             "docs": {

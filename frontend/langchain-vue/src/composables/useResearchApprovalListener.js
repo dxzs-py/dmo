@@ -3,6 +3,7 @@ import { useSessionStore } from '@/stores/session'
 import { useChatDeepResearchStore } from '@/stores/chatDeepResearch'
 import { deepResearchAPI } from '@/api/research'
 import { readSSEStream } from '@/utils/sse'
+import { logger } from '@/utils/logger'
 
 const MAX_SSE_RETRY = 3
 const SSE_RETRY_BASE_DELAY = 2000 // 2s, 4s, 8s
@@ -88,12 +89,12 @@ export function useResearchApprovalListener() {
           }, abortController.signal)
         } catch (e) {
           if (e.name !== 'AbortError') {
-            console.warn('[ResearchApprovalListener] 深度研究 SSE 连接异常:', e)
+            logger.warn('[ResearchApprovalListener] 深度研究 SSE 连接异常:', e)
             // 指数退避重连
             if (retryCount < MAX_SSE_RETRY) {
               retryCount++
               const delay = SSE_RETRY_BASE_DELAY * Math.pow(2, retryCount - 1)
-              console.log(`[ResearchApprovalListener] ${delay}ms 后重连深度研究 SSE (第${retryCount}次)`)
+              logger.log(`[ResearchApprovalListener] ${delay}ms 后重连深度研究 SSE (第${retryCount}次)`)
               setTimeout(() => connectResearchSSE(taskId), delay)
             }
           }
@@ -102,12 +103,12 @@ export function useResearchApprovalListener() {
       processChunk() // 不 await，后台运行
     } catch (e) {
       if (e.name !== 'AbortError') {
-        console.warn('[ResearchApprovalListener] 深度研究 SSE 连接失败:', e)
+        logger.warn('[ResearchApprovalListener] 深度研究 SSE 连接失败:', e)
         // 连接失败也尝试重连
         if (retryCount < MAX_SSE_RETRY) {
           retryCount++
           const delay = SSE_RETRY_BASE_DELAY * Math.pow(2, retryCount - 1)
-          console.log(`[ResearchApprovalListener] ${delay}ms 后重连深度研究 SSE (第${retryCount}次)`)
+          logger.log(`[ResearchApprovalListener] ${delay}ms 后重连深度研究 SSE (第${retryCount}次)`)
           setTimeout(() => connectResearchSSE(taskId), delay)
         }
       }

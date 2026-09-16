@@ -26,6 +26,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from Django_xm.apps.ai_engine.services.thinking import extract_thinking_content
+from Django_xm.apps.approvals.services.approval_batch import assert_non_empty_decision
 
 # 子 agent 机制（deepagents 0.7.5 官方，取代旧 subagent_patch monkey-patch）：
 # - 中断冒泡 + Command(resume) 恢复：0.7.5 原生支持，无需 checkpointer contextvar 注入。
@@ -39,7 +40,6 @@ from Django_xm.apps.research.services.patches import (
     _DeepAgentExecutor,
     _extract_ai_response,
 )
-from Django_xm.apps.approvals.services.approval_batch import assert_non_empty_decision
 
 logger = get_logger(__name__)
 

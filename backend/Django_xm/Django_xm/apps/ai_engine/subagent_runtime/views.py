@@ -1,7 +1,9 @@
 """SubAgentRuntime HTTP 接口。
 
 提供子代理列表查询端点：
-    GET /api/v1/ai-engine/subagents/?parent_thread_id=xxx
+    GET /api/v1/ai-engine/subagents/?parent_thread_id=xxx[&recursive=true]
+    recursive=true：服务端 BFS 一次请求返回全树（含嵌套后代），消除前端
+    逐层递归拉取造成的请求放大（嵌套场景 1+N+M 请求 → 打满限流 429）。
 
 子代理审批恢复已并入统一审批链路（POST /api/v1/approvals/{interrupt_id}/resume/）：
 前端审批 → gateway 信令（extra.subagent_thread_id 路由）→ SessionManager
@@ -14,13 +16,13 @@ from __future__ import annotations
 import logging
 
 from drf_spectacular.utils import extend_schema
-from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from Django_xm.apps.ai_engine.models import SubAgentInstance
 from Django_xm.common.error_codes import ErrorCode
-from Django_xm.common.responses import error_response, success_response
+from Django_xm.common.exceptions import BaseAppError
+from Django_xm.common.responses import success_response
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +32,18 @@ class SubAgentListView(APIView):
 
     参数（query，snake_case）：
         parent_thread_id: str   父线程 thread_id（主 agent = session_id 或 task_id）
+        recursive: str           可选；值为 "true" 时以 parent_thread_id 为根做
+                                 服务端 BFS，一次请求返回全树（含任意深度嵌套
+                                 后代），替代前端逐层递归拉取（请求放大根因，
+                                 嵌套场景单次刷新 1+N+M 个请求 → 打满限流 429）
 
     返回（data.subagents，snake_case）：
-        thread_id / agent_name / status / pending_interrupt_info /
-        result_preview / created_at / assistant_message_id
+        thread_id / parent_thread_id / depth / agent_name / task / status /
+        pending_interrupt_info / result_preview / created_at /
+        assistant_message_id / spawn_tool_call_id
+
+    recursive=true 时结果为以 parent_thread_id 为根的整棵子代理树（按层向下
+    遍历直到无新节点，created_at 升序排列）；权限校验覆盖树中全部实例。
     """
 
     permission_classes = [IsAuthenticated]
@@ -42,25 +52,45 @@ class SubAgentListView(APIView):
     def get(self, request):
         parent_thread_id = request.query_params.get("parent_thread_id")
         if not parent_thread_id or not isinstance(parent_thread_id, str):
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message="parent_thread_id 必填",
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise BaseAppError("parent_thread_id 必填", business_code=ErrorCode.INVALID_PARAMS)
 
-        instances = SubAgentInstance.objects.filter(
-            parent_thread_id=parent_thread_id
-        ).order_by("created_at")
+        recursive = request.query_params.get("recursive") == "true"
+        if recursive:
+            instances = self._collect_subtree(parent_thread_id)
+        else:
+            instances = list(
+                SubAgentInstance.objects.filter(parent_thread_id=parent_thread_id).order_by("created_at")
+            )
 
         if not self._assert_ownership(instances, request.user):
-            return error_response(
-                code=ErrorCode.FORBIDDEN,
-                message="无权查看该父线程下的子代理",
-                http_status=status.HTTP_403_FORBIDDEN,
-            )
+            raise BaseAppError("无权查看该父线程下的子代理", business_code=ErrorCode.FORBIDDEN)
 
+        instances.sort(key=lambda inst: inst.created_at)
         subagents = [self._serialize(inst) for inst in instances]
         return success_response(data={"subagents": subagents})
+
+    @staticmethod
+    def _collect_subtree(root_parent_thread_id: str) -> list[SubAgentInstance]:
+        """以 root_parent_thread_id 为根做 BFS，收集整棵子代理树。
+
+        按层查询 parent_thread_id__in=<当前层父 id 集合>，逐层向下直到无新
+        节点；以 thread_id 集合去重防环（异常数据出现父子环时不会死循环）。
+        """
+        collected: list[SubAgentInstance] = []
+        seen_thread_ids: set[str] = set()
+        current_parent_ids = {root_parent_thread_id}
+        while current_parent_ids:
+            layer = list(
+                SubAgentInstance.objects.filter(parent_thread_id__in=current_parent_ids).order_by("created_at")
+            )
+            current_parent_ids = set()
+            for inst in layer:
+                if inst.thread_id in seen_thread_ids:
+                    continue
+                seen_thread_ids.add(inst.thread_id)
+                collected.append(inst)
+                current_parent_ids.add(inst.thread_id)
+        return collected
 
     @staticmethod
     def _serialize(inst: SubAgentInstance) -> dict:

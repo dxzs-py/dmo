@@ -81,7 +81,9 @@ class UsageTracker:
 
     def get_max_tokens(self) -> int:
         """获取模型的最大 token 限制（模型上限统一查询 TokenEstimator 的单一权威表 _MODEL_LIMITS）"""
-        return TokenEstimator.get_model_limit(self.model_id, default=getattr(django_settings, "AI_DEFAULT_MODEL_TOKEN_LIMIT", 128000))
+        return TokenEstimator.get_model_limit(
+            self.model_id, default=getattr(django_settings, "AI_DEFAULT_MODEL_TOKEN_LIMIT", 128000)
+        )
 
     def get_usage_percentage(self) -> float:
         """获取使用百分比"""

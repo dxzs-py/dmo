@@ -30,9 +30,26 @@ warmup_system_config_cache()
 # 因为 routing 依赖 Django apps 已初始化）
 from Django_xm.routing import websocket_urlpatterns
 
+# ProtocolTypeRouter 就是 ASGI 的分流器：请求来了先判断协议类型，HTTP 走左边，WebSocket 走右边。
 application = ProtocolTypeRouter(
     {
         "http": django_asgi_app,
         "websocket": URLRouter(websocket_urlpatterns),
     }
 )
+
+"""
+客户端请求进入
+    │
+    ▼
+ProtocolTypeRouter（判断协议类型）
+    │
+    ├── HTTP 请求 ──→ django_asgi_app ──→ Django URL路由 ──→ View ──→ 响应
+    │
+    └── WebSocket ──→ URLRouter
+                          │
+                          └── ws/realtime/ ──→ RealtimeSyncConsumer
+                                                  ├── connect()  连接建立
+                                                  ├── receive()  收到消息
+                                                  └── disconnect() 断开
+"""

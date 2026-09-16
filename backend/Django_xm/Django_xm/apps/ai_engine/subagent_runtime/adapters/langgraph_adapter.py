@@ -136,6 +136,10 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             "configurable": self._build_configurable(instance, configurable, agent_config),
             "recursion_limit": MAX_SUBAGENT_ROUNDS,
         }
+        # 本子代理权威路由配置（session_id=根标识、chat_session_id/assistant_message_id
+        # 经 _build_configurable 兜底后齐全）：供审批创建与状态事件消费，
+        # 替代 raw configurable（重启恢复时为内存 registry 兜底值，可能为 None）。
+        routing_config = run_config["configurable"]
 
         # 创建子代理 graph（独立 thread_id + 独立 checkpoint）：
         # 经注入工厂创建（默认由 agent_hub AppConfig.ready() 注册），
@@ -182,7 +186,7 @@ class LangGraphAdapter(BaseRuntimeAdapter):
                 pending_interrupt_info=pending,
             )
             # 子代理状态事件：前端实时刷新子代理卡状态（否则"等待你的确认"滞后）
-            await self._publish_status_event(instance, configurable, SubAgentStatus.INTERRUPTED_PENDING_USER_INPUT)
+            await self._publish_status_event(instance, routing_config, SubAgentStatus.INTERRUPTED_PENDING_USER_INPUT)
             # 审批中断（非业务等待）：创建审批 DB 记录 + 发布 approval_pending 事件，
             # 供前端子代理卡片内工具卡渲染"确认执行/拒绝"控件（spec D9/D10）。
             # 统一审批链路：子代理与主代理审批共用 /approvals/{interrupt_id}/resume/
@@ -190,7 +194,7 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             # 前端审批 → gateway 信令（带 subagent_thread_id）→ SessionManager
             # 子代理分支 → 终态化 + runtime.resume 断点续跑。
             try:
-                await self._create_approvals_from_interrupts(instance, configurable, state)
+                await self._create_approvals_from_interrupts(instance, routing_config, state)
             except Exception:
                 logger.exception(
                     f"子代理审批创建失败（非致命，状态已挂起）: {thread_id}"
@@ -205,7 +209,7 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             )
             # 子代理状态事件：前端实时刷新子代理卡状态为"已完成"（缺此事件会导致
             # 子代理卡实时停留"执行中"，仅刷新页面才正常）
-            await self._publish_status_event(instance, configurable, SubAgentStatus.COMPLETED)
+            await self._publish_status_event(instance, routing_config, SubAgentStatus.COMPLETED)
             logger.info(f"子代理执行完成: {thread_id}, result_len={len(result_preview)}")
             _configurable_registry.pop(thread_id, None)
             await self._notify_finished(instance, "completed")
@@ -440,6 +444,13 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             for _key in ("_on_tool_event", "_on_subagent_content", "chat_session_id", "assistant_message_id"):
                 if _key in configurable and configurable[_key] is not None:
                     cfg[_key] = configurable[_key]
+        # 重启恢复兜底：父 configurable 来自内存 registry（_configurable_registry），
+        # FastAPI 重启后为空 → chat_session_id / assistant_message_id 从持久化
+        # metadata 兜底，保证 graph 内消费者与孙代理 spawn 继承不断链。
+        if not cfg.get("chat_session_id") and meta.get("chat_session_id"):
+            cfg["chat_session_id"] = meta["chat_session_id"]
+        if not cfg.get("assistant_message_id") and meta.get("assistant_message_id"):
+            cfg["assistant_message_id"] = meta["assistant_message_id"]
         if agent_config is not None:
             cfg["tool_names"] = [
                 getattr(t, "name", "") for t in (getattr(agent_config, "tools", None) or [])
@@ -451,6 +462,9 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             cfg["enable_deep_thinking"] = bool(
                 getattr(agent_config, "enable_deep_thinking", False)
             )
+            # 任务级沙箱开关继承：主 agent（research_runner/chat_service 写入
+            # configurable）开启时，子代理 HIGH 级命令同样进容器隔离，避免泄漏本机。
+            cfg["enable_sandbox"] = bool((configurable or {}).get("enable_sandbox", False))
             cfg["use_web_search"] = (configurable or {}).get("use_web_search", True)
             cfg["use_mcp"] = (configurable or {}).get("use_mcp")
         return cfg
@@ -505,7 +519,12 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         # 审批误判为 chat（独立深研无 chat_session_id 时事件发到 subagent 频道，
         # 前端收不到）。configurable.session_id 由各模块源头写入根标识
         # （chat=会话 id，深研=research task id）并随 spawn 逐层继承，是权威归属。
-        root_session_id = (configurable or {}).get("session_id") or instance.parent_thread_id
+        # 兜底链：configurable（内存，重启丢失）→ metadata（持久化根标识）→ 直接父线程。
+        root_session_id = (
+            (configurable or {}).get("session_id")
+            or meta.get("session_id")
+            or instance.parent_thread_id
+        )
         source = (
             Approval.Source.DEEP_RESEARCH
             if str(root_session_id).startswith("research_")
@@ -518,13 +537,18 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         # - 独立深度研究（chat_session_id=None）：source=deep_research，无强制校验
         # 新模块接入子代理时必须遵循此契约写入 chat_session_id，否则 source=chat 场景
         # request_approval_async 会显式报错拒绝创建（防呆，不做静默兜底）。
+        # 重启恢复场景 configurable 丢失时从 metadata 兜底（spawn 时已持久化）。
         await create_approvals_for_interrupts(
             approval_data_list,
             source=source,
             source_id=source_id,  # 根线程标识（会话/研究任务），非直接父线程
             user_id=meta.get("user_id"),
-            chat_session_id=(configurable or {}).get("chat_session_id"),
-            message_id=(configurable or {}).get("assistant_message_id", "") or "",
+            chat_session_id=(configurable or {}).get("chat_session_id") or meta.get("chat_session_id"),
+            message_id=(
+                (configurable or {}).get("assistant_message_id", "")
+                or meta.get("assistant_message_id", "")
+                or ""
+            ),
             data=None,
         )
         # 审批自治（对齐 7.md）：子代理审批只与子代理自身状态相关，与父任务状态

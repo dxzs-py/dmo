@@ -21,6 +21,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, AIMessageChunk, SystemMessage
 
+from Django_xm.apps.approvals.services.approval_batch import assert_non_empty_decision
 from Django_xm.apps.chat.services.stream_helpers import (
     _extract_tool_params,
     _fix_groq_tool_call,
@@ -30,7 +31,6 @@ from Django_xm.apps.chat.services.stream_helpers import (
 )
 from Django_xm.apps.chat.utils import _lcp_len
 from Django_xm.apps.tools.base import is_approval_interrupt, is_subagent_wait_interrupt
-from Django_xm.apps.approvals.services.approval_batch import assert_non_empty_decision
 from Django_xm.common.event_schema import EventSource
 from Django_xm.common.execution_loop import run_astream_loop
 from Django_xm.common.tool_call_lifecycle import ToolCallContext, service

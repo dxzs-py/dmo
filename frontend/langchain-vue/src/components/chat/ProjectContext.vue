@@ -56,6 +56,7 @@
 import { ref, onMounted } from 'vue'
 import { chatAPI } from '../../api/chat'
 import { Loading } from '@element-plus/icons-vue'
+import { logger } from '../../utils/logger'
 
 const props = defineProps({
   projectPath: {
@@ -75,7 +76,7 @@ async function detectContext() {
       context.value = res.data.data || {}
     }
   } catch (e) {
-    console.error('检测项目上下文失败:', e)
+    logger.error('检测项目上下文失败:', e)
   } finally {
     loading.value = false
   }

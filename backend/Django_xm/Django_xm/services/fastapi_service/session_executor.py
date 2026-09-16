@@ -20,16 +20,16 @@ from typing import Any
 from asgiref.sync import sync_to_async
 
 from Django_xm.apps.approvals.models import Approval
+from Django_xm.apps.approvals.services.approval_batch import (
+    collect_batch_decisions,
+    create_approvals_for_interrupts,
+    finalize_batch_approvals,
+)
 from Django_xm.apps.research.services.research_runner import (
     cleanup_research_sandbox,
     execute_research_async,
     finalize_research,
     self_heal_expired_approvals,
-)
-from Django_xm.apps.approvals.services.approval_batch import (
-    collect_batch_decisions,
-    create_approvals_for_interrupts,
-    finalize_batch_approvals,
 )
 
 logger = logging.getLogger(__name__)
@@ -316,6 +316,8 @@ class SessionExecutor:
             "model_name": self.params.get("model_name"),
             "store": self.params.get("store"),
             "enable_deep_thinking": bool(self.params.get("enable_deep_thinking", False)),
+            # 任务级沙箱开关：写入 configurable 供 shell 工具路由（与 thread_id 同源）
+            "enable_sandbox": bool(self.params.get("enable_sandbox", False)),
         }
         result = await execute_research_async(
             agent,
@@ -329,6 +331,7 @@ class SessionExecutor:
             interrupt_handler=self._on_interrupt,
             parent_tool_names=parent_tool_names,
             parent_config=parent_config,
+            enable_sandbox=bool(self.params.get("enable_sandbox", False)),
         )
         if result.suspended:
             await self._handle_suspend(result)

@@ -13,8 +13,6 @@
     现通过 ``status_registry`` 按名查询，由 ``knowledge`` 注册的提供者实现。
 """
 
-import logging
-
 from django.core.cache import cache
 from drf_spectacular.utils import extend_schema
 from rest_framework.decorators import api_view, permission_classes
@@ -23,11 +21,8 @@ from rest_framework.views import APIView
 
 from Django_xm.apps.core.services.db_monitor import DatabaseMonitor
 from Django_xm.apps.core.services.status_registry import get_status_by_name
-from Django_xm.common.error_codes import ErrorCode
-from Django_xm.common.responses import error_response, success_response
+from Django_xm.common.responses import success_response
 from Django_xm.common.serializers import EmptySerializer
-
-logger = logging.getLogger(__name__)
 
 
 @extend_schema(responses={200: EmptySerializer})
@@ -62,18 +57,14 @@ class PostgreSQLStatusView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
-        try:
-            cache_key = "status:postgresql"
-            cached = cache.get(cache_key)
-            if cached is not None:
-                return success_response(data=cached)
+        cache_key = "status:postgresql"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return success_response(data=cached)
 
-            status_info = DatabaseMonitor.get_postgresql_status()
-            cache.set(cache_key, status_info, 30)
-            return success_response(data=status_info)
-        except Exception:
-            logger.exception("获取 PostgreSQL 状态失败")
-            return error_response(code=ErrorCode.SERVER_ERROR, message="获取 PostgreSQL 状态失败")
+        status_info = DatabaseMonitor.get_postgresql_status()
+        cache.set(cache_key, status_info, 30)
+        return success_response(data=status_info)
 
 
 class VectorStoreStatusView(APIView):
@@ -86,19 +77,15 @@ class VectorStoreStatusView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
-        try:
-            cache_key = "status:vector_store"
-            cached = cache.get(cache_key)
-            if cached is not None:
-                return success_response(data=cached)
+        cache_key = "status:vector_store"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return success_response(data=cached)
 
-            # 通过注册表查询向量存储状态（Task 15.3）
-            status_info = get_status_by_name("vector_store")
-            cache.set(cache_key, status_info, 30)
-            return success_response(data=status_info)
-        except Exception:
-            logger.exception("获取向量存储状态失败")
-            return error_response(code=ErrorCode.SERVER_ERROR, message="获取向量存储状态失败")
+        # 通过注册表查询向量存储状态（Task 15.3）
+        status_info = get_status_by_name("vector_store")
+        cache.set(cache_key, status_info, 30)
+        return success_response(data=status_info)
 
 
 class DatabaseOverviewView(APIView):
@@ -111,15 +98,11 @@ class DatabaseOverviewView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
-        try:
-            cache_key = "status:database_overview"
-            cached = cache.get(cache_key)
-            if cached is not None:
-                return success_response(data=cached)
+        cache_key = "status:database_overview"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return success_response(data=cached)
 
-            overview = DatabaseMonitor.get_database_overview()
-            cache.set(cache_key, overview, 30)
-            return success_response(data=overview)
-        except Exception:
-            logger.exception("获取数据库总览失败")
-            return error_response(code=ErrorCode.SERVER_ERROR, message="获取数据库总览失败")
+        overview = DatabaseMonitor.get_database_overview()
+        cache.set(cache_key, overview, 30)
+        return success_response(data=overview)

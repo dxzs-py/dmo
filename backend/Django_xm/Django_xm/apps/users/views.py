@@ -13,6 +13,7 @@ from django.core.cache import cache
 from django.http import HttpResponse
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, serializers, status
+from rest_framework.exceptions import AuthenticationFailed, NotAuthenticated
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
@@ -22,11 +23,8 @@ from rest_framework_simplejwt.views import TokenRefreshView as _TokenRefreshView
 from Django_xm.apps.core.throttling import LoginRateThrottle, MetaRateThrottle, SensitiveOperationRateThrottle
 from Django_xm.common.captcha_mixin import CaptchaMixin
 from Django_xm.common.error_codes import ErrorCode
-from Django_xm.common.responses import (
-    error_response,
-    success_response,
-    validation_error_response,
-)
+from Django_xm.common.exceptions import BaseAppError
+from Django_xm.common.responses import success_response
 from Django_xm.common.serializers import EmptySerializer
 
 from .captcha import CaptchaGenerator
@@ -56,9 +54,8 @@ class MyObtainTokenPairView(CaptchaMixin, TokenObtainPairView):
     throttle_classes = [LoginRateThrottle]
 
     def post(self, request, *args, **kwargs):
-        captcha_result = self.verify_captcha(request.data)
-        if captcha_result is not None:
-            return captcha_result
+        # 校验失败抛 BaseAppError（CAPTCHA_ERROR），冒泡至全局异常处理器
+        self.verify_captcha(request.data)
 
         # 提取 username 用于登录失败锁定（按账号维度，防暴力破解）
         username = (request.data.get("username") or "").strip()
@@ -67,44 +64,27 @@ class MyObtainTokenPairView(CaptchaMixin, TokenObtainPairView):
         if LoginSecurityService.is_locked(username):
             remaining = LoginSecurityService.get_remaining_lock_seconds(username)
             minutes = max(1, remaining // 60)
-            return error_response(
-                code=ErrorCode.ACCOUNT_LOCKED,
-                message=f"账号已锁定，请 {minutes} 分钟后重试",
-                http_status=status.HTTP_429_TOO_MANY_REQUESTS,
+            raise BaseAppError(
+                f"账号已锁定，请 {minutes} 分钟后重试",
+                business_code=ErrorCode.ACCOUNT_LOCKED,
             )
 
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
-        except Exception as e:
-            from rest_framework.exceptions import AuthenticationFailed as DRFAuthFailed
-            from rest_framework.exceptions import NotAuthenticated as DRFNotAuthenticated
-
-            if isinstance(e, (DRFAuthFailed, DRFNotAuthenticated)):
-                # 真正的认证失败（用户名不存在/密码错误）：记录失败次数（可能触发锁定）
-                fail_count = LoginSecurityService.record_failure(username)
-                remaining_attempts = max(0, LoginSecurityService.MAX_FAIL_COUNT - fail_count)
-                message = "用户名或密码错误，请重新输入"
-                if remaining_attempts > 0:
-                    message += f"，剩余尝试次数 {remaining_attempts} 次"
-                else:
-                    message += "，账号已锁定"
-                return error_response(
-                    code=ErrorCode.LOGIN_FAILED, message=message, http_status=status.HTTP_401_UNAUTHORIZED
-                )
-            if isinstance(e, serializers.ValidationError):
-                # 字段校验失败（如字段缺失/格式错误）：不计入失败次数
-                return error_response(
-                    code=ErrorCode.LOGIN_FAILED,
-                    message="用户名或密码错误，请重新输入",
-                    http_status=status.HTTP_401_UNAUTHORIZED,
-                )
-            logger.exception(f"登录异常: {type(e).__name__}")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR,
-                message="服务器错误，请稍后重试",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        except (AuthenticationFailed, NotAuthenticated) as e:
+            # 真正的认证失败（用户名不存在/密码错误）：记录失败次数（可能触发锁定）
+            fail_count = LoginSecurityService.record_failure(username)
+            remaining_attempts = max(0, LoginSecurityService.MAX_FAIL_COUNT - fail_count)
+            message = "用户名或密码错误，请重新输入"
+            if remaining_attempts > 0:
+                message += f"，剩余尝试次数 {remaining_attempts} 次"
+            else:
+                message += "，账号已锁定"
+            raise BaseAppError(message, business_code=ErrorCode.LOGIN_FAILED) from e
+        except serializers.ValidationError as e:
+            # 字段校验失败（如字段缺失/格式错误）：不计入失败次数
+            raise BaseAppError("用户名或密码错误，请重新输入", business_code=ErrorCode.LOGIN_FAILED) from e
 
         user = serializer.user
         # 登录成功：清除失败计数（避免历史失败影响）
@@ -137,16 +117,7 @@ class MyTokenRefreshView(_TokenRefreshView):
         except TokenError as e:
             raise InvalidToken(e.args[0]) from e
         except User.DoesNotExist:
-            return error_response(
-                code=ErrorCode.TOKEN_INVALID, message="用户不存在，请重新登录", http_status=status.HTTP_401_UNAUTHORIZED
-            )
-        except Exception as e:
-            logger.exception(f"Token刷新异常: {type(e).__name__}")
-            return error_response(
-                code=ErrorCode.TOKEN_INVALID,
-                message="Token刷新失败，请重新登录",
-                http_status=status.HTTP_401_UNAUTHORIZED,
-            )
+            raise BaseAppError("用户不存在，请重新登录", business_code=ErrorCode.TOKEN_INVALID) from None
 
         return success_response(data=serializer.validated_data, message="Token刷新成功")
 
@@ -166,21 +137,16 @@ class UserRegisterView(CaptchaMixin, generics.CreateAPIView):
         """用户注册
 
         异常处理策略（与全局 custom_exception_handler 协同）：
-        - CaptchaMixin.verify_captcha 内部已返回结构化错误响应，不抛异常
-        - serializer.is_valid 抛 ValidationError → 本地捕获返回 400 + 字段错误
+        - CaptchaMixin.verify_captcha 校验失败抛 BaseAppError，由全局处理器统一转换
+        - serializer.is_valid(raise_exception=True) 校验失败抛 ValidationError →
+          全局处理器返回 400 + 字段错误
         - 其他未预期异常（IntegrityError / 数据库故障等）不本地吞没，
           冒泡到全局 custom_exception_handler 返回标准 500 响应
         """
-        captcha_result = self.verify_captcha(request.data)
-        if captcha_result is not None:
-            return captcha_result
+        self.verify_captcha(request.data)
 
         serializer = self.get_serializer(data=request.data)
-        try:
-            serializer.is_valid(raise_exception=True)
-        except serializers.ValidationError as e:
-            logger.warning(f"注册验证失败: {e!s}")
-            return validation_error_response(errors=serializer.errors, message="注册失败，请检查输入")
+        serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
         return success_response(
             data=serializer.data,
@@ -200,24 +166,15 @@ class UserInfoView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
-        try:
-            serializer = UserInfoSerializer(request.user)
-            return success_response(data=serializer.data, message="获取成功")
-        except Exception:
-            logger.exception("获取用户信息失败")
-            return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")
+        serializer = UserInfoSerializer(request.user)
+        return success_response(data=serializer.data, message="获取成功")
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def put(self, request):
-        try:
-            serializer = UserInfoSerializer(request.user, data=request.data, partial=True)
-            if serializer.is_valid():
-                serializer.save()
-                return success_response(data=serializer.data, message="更新成功")
-            return validation_error_response(errors=serializer.errors, message="参数错误")
-        except Exception:
-            logger.exception("更新用户信息失败")
-            return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")
+        serializer = UserInfoSerializer(request.user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return success_response(data=serializer.data, message="更新成功")
 
 
 class CaptchaView(APIView):
@@ -229,15 +186,11 @@ class CaptchaView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
-        try:
-            captcha_key = str(uuid.uuid4())
-            generator = CaptchaGenerator()
-            _code, image_buf = generator.generate(captcha_key)
+        captcha_key = str(uuid.uuid4())
+        generator = CaptchaGenerator()
+        _code, image_buf = generator.generate(captcha_key)
 
-            return HttpResponse(image_buf, content_type="image/png", headers={"X-Captcha-Key": captcha_key})
-        except Exception:
-            logger.exception("获取验证码失败")
-            return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")
+        return HttpResponse(image_buf, content_type="image/png", headers={"X-Captcha-Key": captcha_key})
 
 
 class CaptchaVerifyView(APIView):
@@ -249,35 +202,23 @@ class CaptchaVerifyView(APIView):
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request):
-        try:
-            captcha_key = request.data.get("captcha_key")
-            captcha_code = request.data.get("captcha_code", "").lower()
+        captcha_key = request.data.get("captcha_key")
+        captcha_code = request.data.get("captcha_code", "").lower()
 
-            if not captcha_key or not captcha_code:
-                return error_response(
-                    code=ErrorCode.INVALID_PARAMS, message="验证码不能为空", http_status=status.HTTP_400_BAD_REQUEST
-                )
+        if not captcha_key or not captcha_code:
+            raise BaseAppError("验证码不能为空", business_code=ErrorCode.INVALID_PARAMS)
 
-            stored_code = cache.get(f"captcha:{captcha_key}")
+        stored_code = cache.get(f"captcha:{captcha_key}")
 
-            if not stored_code:
-                return error_response(
-                    code=ErrorCode.VALIDATION_FAILED,
-                    message="验证码已过期，请刷新",
-                    http_status=status.HTTP_400_BAD_REQUEST,
-                )
+        if not stored_code:
+            raise BaseAppError("验证码已过期，请刷新", business_code=ErrorCode.VALIDATION_FAILED)
 
-            if not hmac.compare_digest(str(stored_code), str(captcha_code)):
-                return error_response(
-                    code=ErrorCode.VALIDATION_FAILED, message="验证码错误", http_status=status.HTTP_400_BAD_REQUEST
-                )
+        if not hmac.compare_digest(str(stored_code), str(captcha_code)):
+            raise BaseAppError("验证码错误", business_code=ErrorCode.VALIDATION_FAILED)
 
-            cache.delete(f"captcha:{captcha_key}")
+        cache.delete(f"captcha:{captcha_key}")
 
-            return success_response(message="验证成功")
-        except Exception:
-            logger.exception("验证验证码失败")
-            return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")
+        return success_response(message="验证成功")
 
 
 class SecureLogoutView(APIView):
@@ -375,20 +316,15 @@ class UserProfileView(APIView):
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def put(self, request):
-        try:
-            serializer = UserProfileSerializer(data=request.data, context={"request": request})
-            if not serializer.is_valid():
-                return validation_error_response(errors=serializer.errors, message="参数错误")
+        serializer = UserProfileSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
 
-            user = request.user
-            for field, value in serializer.validated_data.items():
-                setattr(user, field, value)
-            user.save()
-            out = UserInfoSerializer(user)
-            return success_response(data=out.data, message="资料更新成功")
-        except Exception:
-            logger.exception("更新用户资料失败")
-            return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")
+        user = request.user
+        for field, value in serializer.validated_data.items():
+            setattr(user, field, value)
+        user.save()
+        out = UserInfoSerializer(user)
+        return success_response(data=out.data, message="资料更新成功")
 
 
 class UserAvatarView(APIView):
@@ -396,43 +332,29 @@ class UserAvatarView(APIView):
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request):
-        try:
-            user = request.user
-            avatar_file = request.FILES.get("avatar")
+        user = request.user
+        avatar_file = request.FILES.get("avatar")
 
-            if not avatar_file:
-                return error_response(
-                    code=ErrorCode.INVALID_PARAMS, message="请选择头像文件", http_status=status.HTTP_400_BAD_REQUEST
-                )
+        if not avatar_file:
+            raise BaseAppError("请选择头像文件", business_code=ErrorCode.INVALID_PARAMS)
 
-            allowed_types = ["image/png", "image/jpeg", "image/gif", "image/webp"]
-            if avatar_file.content_type not in allowed_types:
-                return error_response(
-                    code=ErrorCode.INVALID_PARAMS,
-                    message="仅支持 PNG、JPG、GIF、WebP 格式",
-                    http_status=status.HTTP_400_BAD_REQUEST,
-                )
+        allowed_types = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+        if avatar_file.content_type not in allowed_types:
+            raise BaseAppError("仅支持 PNG、JPG、GIF、WebP 格式", business_code=ErrorCode.INVALID_PARAMS)
 
-            if avatar_file.size > 2 * 1024 * 1024:
-                return error_response(
-                    code=ErrorCode.INVALID_PARAMS,
-                    message="头像文件不能超过 2MB",
-                    http_status=status.HTTP_400_BAD_REQUEST,
-                )
+        if avatar_file.size > 2 * 1024 * 1024:
+            raise BaseAppError("头像文件不能超过 2MB", business_code=ErrorCode.INVALID_PARAMS)
 
-            if user.avatar:
-                try:
-                    user.avatar.delete(save=False)
-                except Exception:  # noqa: S110  # cleanup, 旧头像文件删除失败不影响新头像上传
-                    pass
+        if user.avatar:
+            try:
+                user.avatar.delete(save=False)
+            except Exception:  # noqa: S110  # cleanup, 旧头像文件删除失败不影响新头像上传
+                pass
 
-            user.avatar = avatar_file
-            user.save()
-            serializer = UserInfoSerializer(user)
-            return success_response(data=serializer.data, message="头像更新成功")
-        except Exception:
-            logger.exception("上传头像失败")
-            return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")
+        user.avatar = avatar_file
+        user.save()
+        serializer = UserInfoSerializer(user)
+        return success_response(data=serializer.data, message="头像更新成功")
 
 
 class ChangePasswordView(APIView):
@@ -441,18 +363,13 @@ class ChangePasswordView(APIView):
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request):
-        try:
-            serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
-            if not serializer.is_valid():
-                return validation_error_response(errors=serializer.errors, message="参数错误")
+        serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
 
-            user = request.user
-            user.set_password(serializer.validated_data["new_password"])
-            user.save()
-            return success_response(message="密码修改成功")
-        except Exception:
-            logger.exception("修改密码失败")
-            return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")
+        user = request.user
+        user.set_password(serializer.validated_data["new_password"])
+        user.save()
+        return success_response(message="密码修改成功")
 
 
 class BindPhoneView(APIView):
@@ -460,19 +377,14 @@ class BindPhoneView(APIView):
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request):
-        try:
-            serializer = BindPhoneSerializer(data=request.data, context={"request": request})
-            if not serializer.is_valid():
-                return validation_error_response(errors=serializer.errors, message="参数错误")
+        serializer = BindPhoneSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
 
-            user = request.user
-            user.mobile = serializer.validated_data["mobile"]
-            user.save()
-            serializer_out = UserInfoSerializer(user)
-            return success_response(data=serializer_out.data, message="手机号绑定成功")
-        except Exception:
-            logger.exception("绑定手机号失败")
-            return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")
+        user = request.user
+        user.mobile = serializer.validated_data["mobile"]
+        user.save()
+        serializer_out = UserInfoSerializer(user)
+        return success_response(data=serializer_out.data, message="手机号绑定成功")
 
 
 class UserPreferencesView(APIView):
@@ -480,34 +392,25 @@ class UserPreferencesView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
-        try:
-            user = request.user
-            preferences = {
-                "theme": user.theme,
-                "language": user.language,
-                "notifications_enabled": user.notifications_enabled,
-                "auto_save_sessions": user.auto_save_sessions,
-            }
-            return success_response(data=preferences)
-        except Exception:
-            logger.exception("获取用户偏好设置失败")
-            return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")
+        user = request.user
+        preferences = {
+            "theme": user.theme,
+            "language": user.language,
+            "notifications_enabled": user.notifications_enabled,
+            "auto_save_sessions": user.auto_save_sessions,
+        }
+        return success_response(data=preferences)
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def put(self, request):
-        try:
-            serializer = UserPreferencesSerializer(data=request.data)
-            if not serializer.is_valid():
-                return validation_error_response(errors=serializer.errors, message="参数错误")
+        serializer = UserPreferencesSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-            user = request.user
-            for field, value in serializer.validated_data.items():
-                setattr(user, field, value)
-            user.save()
-            return success_response(message="偏好设置更新成功")
-        except Exception:
-            logger.exception("更新用户偏好设置失败")
-            return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")
+        user = request.user
+        for field, value in serializer.validated_data.items():
+            setattr(user, field, value)
+        user.save()
+        return success_response(message="偏好设置更新成功")
 
 
 class UserUsageStatsView(APIView):
@@ -515,18 +418,14 @@ class UserUsageStatsView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
-        try:
-            user = request.user
-            stats = {
-                "total_messages": getattr(user, "total_messages", 0),
-                "total_sessions": getattr(user, "total_sessions", 0),
-                "total_tokens": getattr(user, "total_tokens", 0),
-                "active_days": getattr(user, "active_days", 0),
-            }
-            return success_response(data=stats)
-        except Exception:
-            logger.exception("获取用户使用统计失败")
-            return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")
+        user = request.user
+        stats = {
+            "total_messages": getattr(user, "total_messages", 0),
+            "total_sessions": getattr(user, "total_sessions", 0),
+            "total_tokens": getattr(user, "total_tokens", 0),
+            "active_days": getattr(user, "active_days", 0),
+        }
+        return success_response(data=stats)
 
 
 class UserAccountDeleteView(APIView):
@@ -535,20 +434,16 @@ class UserAccountDeleteView(APIView):
 
     @extend_schema(responses={200: EmptySerializer})
     def delete(self, request):
-        try:
-            user = request.user
-            user_id = user.id
-            user.soft_delete()
+        user = request.user
+        user_id = user.id
+        user.soft_delete()
 
-            from Django_xm.apps.core.signals import ai_data_cleanup_needed
+        from Django_xm.apps.core.signals import ai_data_cleanup_needed
 
-            ai_data_cleanup_needed.send(
-                sender=self.__class__,
-                user_id=user_id,
-                session_id=None,
-            )
+        ai_data_cleanup_needed.send(
+            sender=self.__class__,
+            user_id=user_id,
+            session_id=None,
+        )
 
-            return success_response(message="账户已成功注销")
-        except Exception:
-            logger.exception("注销账户失败")
-            return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")
+        return success_response(message="账户已成功注销")

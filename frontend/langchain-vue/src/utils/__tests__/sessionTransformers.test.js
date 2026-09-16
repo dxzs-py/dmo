@@ -12,6 +12,7 @@ import {
   toCamelCase,
   toSnakeCase,
   convertSnakeToCamel,
+  transformFrontendMessageToBackend,
 } from '../sessionTransformers.js'
 
 describe('sessionTransformers', () => {
@@ -129,5 +130,60 @@ describe('sessionTransformers', () => {
     expect(convertSnakeToCamel('waiting_for_answers')).toBe('waitingForAnswers')
     expect(convertSnakeToCamel('workflow_step')).toBe('workflowStep')
     expect(convertSnakeToCamel('alreadyCamel')).toBe('alreadyCamel')
+  })
+})
+
+describe('transformFrontendMessageToBackend（出站 null 契约）', () => {
+  it('本地新建消息：plan/approval/reasoning 缺省为空对象、suggestions 缺省为空数组，禁止 null', () => {
+    const out = transformFrontendMessageToBackend({
+      id: 'm1',
+      role: 'user',
+      content: 'hello',
+    })
+    expect(out.plan).toStrictEqual({})
+    expect(out.approval).toStrictEqual({})
+    expect(out.reasoning).toStrictEqual({})
+    expect(out.suggestions).toStrictEqual([])
+  })
+
+  it('顶层负载不含 chainOfThought、context 键（后端 read_only / 不在 serializer fields）', () => {
+    const out = transformFrontendMessageToBackend({
+      id: 'm1',
+      role: 'assistant',
+      content: 'hi',
+      chainOfThought: ['step-1'],
+      context: { foo: 'bar' },
+    })
+    expect(Object.prototype.hasOwnProperty.call(out, 'chainOfThought')).toBe(false)
+    expect(Object.prototype.hasOwnProperty.call(out, 'context')).toBe(false)
+  })
+
+  it('versions 条目缺省字段以空集合兜底，禁止 null', () => {
+    const out = transformFrontendMessageToBackend({
+      id: 'm1',
+      role: 'assistant',
+      content: 'hi',
+      versions: [{ id: 'v1', content: 'hi' }],
+    })
+    expect(out.versions).toHaveLength(1)
+    expect(out.versions[0].plan).toStrictEqual({})
+    expect(out.versions[0].chainOfThought).toStrictEqual([])
+    expect(out.versions[0].reasoning).toStrictEqual({})
+    expect(out.versions[0].suggestions).toStrictEqual([])
+    expect(out.versions[0].context).toStrictEqual({})
+  })
+
+  it('无 versions 时兜底条目同样以空集合兜底，禁止 null', () => {
+    const out = transformFrontendMessageToBackend({
+      id: 'm1',
+      role: 'assistant',
+      content: 'hi',
+    })
+    expect(out.versions).toHaveLength(1)
+    expect(out.versions[0].plan).toStrictEqual({})
+    expect(out.versions[0].chainOfThought).toStrictEqual([])
+    expect(out.versions[0].reasoning).toStrictEqual({})
+    expect(out.versions[0].suggestions).toStrictEqual([])
+    expect(out.versions[0].context).toStrictEqual({})
   })
 })

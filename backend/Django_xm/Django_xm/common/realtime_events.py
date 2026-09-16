@@ -53,9 +53,10 @@ import json
 import logging
 import threading
 import time
+import weakref
 
 from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
+from channels.layers import BaseChannelLayer, channel_layers
 
 from Django_xm.common.event_schema import (
     EventType,
@@ -101,6 +102,41 @@ def group_name(channel_type, channel_id):
         suffix = hashlib.md5(safe.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
         safe = f"{safe[:80]}_{suffix}"
     return safe
+
+
+# channel layer 按事件循环隔离缓存（Task 3）：
+# key 为 asyncio 运行中的 loop，value 为该 loop 独占的 channel layer 实例。
+# 使用 WeakKeyDictionary：loop 关闭并被 GC 后条目自动清除，实例可释放。
+_loop_channel_layers: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def _get_loop_channel_layer() -> BaseChannelLayer:
+    """获取与当前事件循环绑定的 channel layer 实例（按 loop 隔离）。
+
+    根因：channels 官方 ``get_channel_layer()`` 返回进程级单例，
+    channels_redis 连接池绑定首次使用的事件循环；子代理在独立线程
+    ``new_event_loop`` 中运行（langgraph_adapter），跨事件循环复用绑定在
+    其他 loop 的连接池，且子代理线程结束关闭连接 → 后续发布复用死连接 →
+    ``redis.exceptions.ConnectionError: Connection closed by server``。
+
+    隔离策略：以 ``asyncio.get_running_loop()`` 为 key 做 per-loop 缓存；
+    缓存未命中时通过 ``channel_layers.make_backend("default")`` 创建新实例
+    （该方法每次调用重新实例化，不进进程级 backends 缓存），确保每个
+    事件循环独占连接池；loop 关闭并被 GC 后条目自动清除。
+
+    注意：只能在协程内调用（依赖 get_running_loop），三处发布路径
+    （_publish_to_session_async / _publish_to_task_async / _publish_to_user_async）
+    均在 async 函数内调用，天然满足。
+
+    Returns:
+        BaseChannelLayer: 与当前运行 loop 绑定的 channel layer 实例
+    """
+    loop = asyncio.get_running_loop()
+    channel_layer = _loop_channel_layers.get(loop)
+    if channel_layer is None:
+        channel_layer = channel_layers.make_backend("default")
+        _loop_channel_layers[loop] = channel_layer
+    return channel_layer
 
 
 # user 频道历史事件过滤器（依赖反转注册点）：
@@ -225,7 +261,7 @@ async def _publish_to_session_async(session_id, event_type, payload, subagent_th
 
         # group_send 失败不回滚 seq（已持久化），仅记录日志
         try:
-            channel_layer = get_channel_layer()
+            channel_layer = _get_loop_channel_layer()
             await channel_layer.group_send(
                 group_name("session", session_id),
                 {"type": "broadcast_event", "event": event},
@@ -279,7 +315,7 @@ async def _publish_to_task_async(task_id, event_type, payload, subagent_thread_i
 
         # group_send 失败不回滚 seq（已持久化），仅记录日志
         try:
-            channel_layer = get_channel_layer()
+            channel_layer = _get_loop_channel_layer()
             await channel_layer.group_send(
                 group_name("task", task_id),
                 {"type": "broadcast_event", "event": event},
@@ -322,7 +358,7 @@ async def _publish_to_user_async(user_id, event_type, payload):
 
         # group_send 失败不回滚 seq（已持久化），仅记录日志
         try:
-            channel_layer = get_channel_layer()
+            channel_layer = _get_loop_channel_layer()
             await channel_layer.group_send(
                 group_name("user", user_id),
                 {"type": "broadcast_event", "event": event},

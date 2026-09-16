@@ -71,9 +71,15 @@ class ChatMessageSerializerResearchBatchTests(TestCase):
 
         # 5 条消息：活跃任务 / 软删除任务 / 不存在任务 / 无关联（None、空串）
         self.messages = [
-            ChatMessage.objects.create(session=self.session, role="assistant", content="a", research_task_id="task-active"),
-            ChatMessage.objects.create(session=self.session, role="assistant", content="b", research_task_id="task-deleted"),
-            ChatMessage.objects.create(session=self.session, role="assistant", content="c", research_task_id="task-missing"),
+            ChatMessage.objects.create(
+                session=self.session, role="assistant", content="a", research_task_id="task-active"
+            ),
+            ChatMessage.objects.create(
+                session=self.session, role="assistant", content="b", research_task_id="task-deleted"
+            ),
+            ChatMessage.objects.create(
+                session=self.session, role="assistant", content="c", research_task_id="task-missing"
+            ),
             ChatMessage.objects.create(session=self.session, role="user", content="d", research_task_id=None),
             ChatMessage.objects.create(session=self.session, role="user", content="e", research_task_id=""),
         ]
@@ -85,7 +91,7 @@ class ChatMessageSerializerResearchBatchTests(TestCase):
             self.messages, many=True, context={"research_task_map": research_task_map}
         ).data
 
-        for msg, item in zip(self.messages, data):
+        for msg, item in zip(self.messages, data, strict=True):
             self.assertEqual(item["research_task_status"], _legacy_status(msg.research_task_id))
             self.assertEqual(item["research_task_deleted"], _legacy_deleted(msg.research_task_id))
 
@@ -143,14 +149,14 @@ class ChatMessageSerializerResearchBatchTests(TestCase):
 
         self.assertEqual(_research_query_count(ctx.captured_queries), 1)
         self.assertEqual(len(data["messages"]), 5)
-        for msg, item in zip(self.messages, data["messages"]):
+        for msg, item in zip(self.messages, data["messages"], strict=True):
             self.assertEqual(item["research_task_status"], _legacy_status(msg.research_task_id))
             self.assertEqual(item["research_task_deleted"], _legacy_deleted(msg.research_task_id))
 
     def test_missing_context_fails_fast(self):
         """契约：序列化缺 research_task_map 时 KeyError 快速失败（无逐条查询兜底）。"""
         with self.assertRaises(KeyError):
-            ChatMessageSerializer(self.messages[0]).data
+            _ = ChatMessageSerializer(self.messages[0]).data
 
     def test_single_message_map_semantics(self):
         """单条消息场景：单元素映射输出与逐条查询版一致。"""

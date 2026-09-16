@@ -12,6 +12,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import models, transaction
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
@@ -22,12 +23,13 @@ from Django_xm.apps.core.throttling import ChatStreamRateThrottle, MetaRateThrot
 from Django_xm.async_utils import run_async
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventSource, EventType
+from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.pagination import paginate_to_dict
 from Django_xm.common.realtime_events import publish_event_sync
 from Django_xm.common.redis_utils import get_redis_client
-from Django_xm.common.responses import error_response, success_response, validation_error_response
-from Django_xm.common.sse_utils import sse_error_response
+from Django_xm.common.responses import success_response
 from Django_xm.common.signal_bus import SESSION_TYPE_CHAT, SIGNAL_START, SIGNAL_STOP, publish_signal
+from Django_xm.common.sse_utils import sse_error_response
 
 from .models import ChatMessage, ChatSession, MessageRole
 from .serializers import (
@@ -118,6 +120,44 @@ def _archive_current_version(message):
     message.is_streaming = True
     message.save(update_fields=["versions", "current_version", "content", "is_streaming"])
     return len(versions)
+
+
+def _validate_regenerate(session_obj, user_message_id, assistant_message_id):
+    """重新生成前置校验：目标消息对存在且为最后一轮 AI 回复。
+
+    校验失败抛出 NotFound / BaseAppError。模块级函数（不在任何 try 语句体内），
+    调用方在 try 之外调用，异常直接向外传播，无需 except 透传（TRY301）。
+    """
+    user_msg = ChatMessage.objects.filter(
+        session=session_obj,
+        id=user_message_id,
+        role=MessageRole.USER,
+        is_deleted=False,
+    ).first()
+    ai_msg = ChatMessage.objects.filter(
+        session=session_obj,
+        id=assistant_message_id,
+        role=MessageRole.ASSISTANT,
+        is_deleted=False,
+    ).first()
+    if not user_msg or not ai_msg:
+        raise NotFound("重新生成的目标消息不存在")
+    # 仅允许对最后一轮 AI 回复重新生成（规避修改历史导致上下文错乱）
+    last_assistant = (
+        ChatMessage.objects.filter(
+            session=session_obj,
+            role=MessageRole.ASSISTANT,
+            is_deleted=False,
+        )
+        .order_by("-id")
+        .first()
+    )
+    if not last_assistant or last_assistant.id != ai_msg.id:
+        raise BaseAppError(
+            "仅支持对最后一轮 AI 回复重新生成",
+            business_code=ErrorCode.PERMISSION_DENIED,
+        )
+    return user_msg, ai_msg
 
 
 def _safe_publish_session_created(
@@ -366,11 +406,7 @@ class ChatView(BaseChatAPIView):
                 f"[Chat] 重复消息请求已拦截: user={request.user.id}, "
                 f"client_message_id={data.get('client_message_id')}"
             )
-            return error_response(
-                code=ErrorCode.DUPLICATE_RESOURCE,
-                message="该消息已在处理中，请勿重复发送",
-                http_status=status.HTTP_409_CONFLICT,
-            )
+            raise BaseAppError("该消息已在处理中，请勿重复发送", business_code=ErrorCode.DUPLICATE_RESOURCE)
 
         session = None
         session_id = data.get("session_id")
@@ -397,48 +433,28 @@ class ChatView(BaseChatAPIView):
                 session.selected_knowledge_bases = data["selected_knowledge_bases"]
                 session.save()
 
-        try:
-            chat_service = ChatService(user_id=request.user.id if request.user.is_authenticated else None)
-            result = run_async(chat_service.process_chat_request(data))
+        chat_service = ChatService(user_id=request.user.id if request.user.is_authenticated else None)
+        result = run_async(chat_service.process_chat_request(data))
 
-            logger.info(f"聊天请求处理完成，响应长度: {len(result.get('message', ''))} 字符")
+        logger.info(f"聊天请求处理完成，响应长度: {len(result.get('message', ''))} 字符")
 
-            with transaction.atomic():
-                from .services.message_service import MessagePersistenceService
+        with transaction.atomic():
+            from .services.message_service import MessagePersistenceService
 
-                persistence = MessagePersistenceService()
-                user_message, ai_message = persistence.save_message_pair(
-                    session=session,
-                    user_content=data["message"],
-                    ai_content=result.get("message", ""),
-                    attachment_ids=data.get("attachment_ids"),
-                )
-
-            result_data = ChatResponseSerializer(result).data
-            result_data["session_id"] = session.session_id
-            result_data["user_message_id"] = user_message.id
-            result_data["ai_message_id"] = ai_message.id
-
-            return success_response(data=result_data, message="操作成功")
-
-        except Exception:
-            logger.exception("处理聊天请求时出错")
-
-            return error_response(
-                code=ErrorCode.SERVER_ERROR,
-                message="抱歉，处理您的请求时出现错误",
-                data=ChatResponseSerializer(
-                    {
-                        "message": "抱歉，处理您的请求时出现错误。",
-                        "mode": data.get("mode", "agent"),
-                        "tools_used": [],
-                        "success": False,
-                        "error": "处理请求失败，请稍后重试",
-                        "session_id": session.session_id if session else None,
-                    }
-                ).data,
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            persistence = MessagePersistenceService()
+            user_message, ai_message = persistence.save_message_pair(
+                session=session,
+                user_content=data["message"],
+                ai_content=result.get("message", ""),
+                attachment_ids=data.get("attachment_ids"),
             )
+
+        result_data = ChatResponseSerializer(result).data
+        result_data["session_id"] = session.session_id
+        result_data["user_message_id"] = user_message.id
+        result_data["ai_message_id"] = ai_message.id
+
+        return success_response(data=result_data, message="操作成功")
 
 
 class ChatStreamView(BaseChatAPIView):
@@ -448,8 +464,7 @@ class ChatStreamView(BaseChatAPIView):
     @extend_schema(exclude=True)
     def post(self, request):
         serializer = ChatRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return validation_error_response(errors=serializer.errors, message="数据验证失败")
+        serializer.is_valid(raise_exception=True)
 
         data = serializer.validated_data
         logger.info(f"收到流式聊天请求: {data['message'][:50]}..., attachment_ids={data.get('attachment_ids')}")
@@ -461,11 +476,7 @@ class ChatStreamView(BaseChatAPIView):
                 f"[ChatStream] 重复消息请求已拦截: user={request.user.id}, "
                 f"client_message_id={data.get('client_message_id')}"
             )
-            return error_response(
-                code=ErrorCode.DUPLICATE_RESOURCE,
-                message="该消息已在处理中，请勿重复发送",
-                http_status=status.HTTP_409_CONFLICT,
-            )
+            raise BaseAppError("该消息已在处理中，请勿重复发送", business_code=ErrorCode.DUPLICATE_RESOURCE)
 
         # 持久化知识库选择到会话
         session_id = data.get("session_id")
@@ -537,68 +548,50 @@ class ChatStreamView(BaseChatAPIView):
         assistant_message_id = None
         user_message_id = None
         if session_id:
+            # 会话获取失败仅告警（沿用原实现：message_id 保持 None，不阻断主流程）
             try:
                 session_obj = ChatSession.objects.get(session_id=session_id)
                 _user = request.user if request.user.is_authenticated else None
+            except Exception as e:
+                logger.warning(f"[ChatStream] 获取会话失败: {e}")
+                session_obj = None
+                _user = None
 
-                if data.get("regenerate"):
-                    # ── 重新生成分支：复用已有消息对，不新建 user/assistant ──
-                    user_msg = ChatMessage.objects.filter(
-                        session=session_obj,
-                        id=data.get("user_message_id"),
-                        role=MessageRole.USER,
-                        is_deleted=False,
-                    ).first()
-                    ai_msg = ChatMessage.objects.filter(
-                        session=session_obj,
-                        id=data.get("assistant_message_id"),
-                        role=MessageRole.ASSISTANT,
-                        is_deleted=False,
-                    ).first()
-                    if not user_msg or not ai_msg:
-                        return error_response(
-                            code=ErrorCode.NOT_FOUND,
-                            message="重新生成的目标消息不存在",
-                            http_status=status.HTTP_404_NOT_FOUND,
-                        )
-                    # 仅允许对最后一轮 AI 回复重新生成（规避修改历史导致上下文错乱）
-                    last_assistant = (
-                        ChatMessage.objects.filter(
-                            session=session_obj,
-                            role=MessageRole.ASSISTANT,
-                            is_deleted=False,
-                        )
-                        .order_by("-id")
-                        .first()
-                    )
-                    if not last_assistant or last_assistant.id != ai_msg.id:
-                        return error_response(
-                            code=ErrorCode.PERMISSION_DENIED,
-                            message="仅支持对最后一轮 AI 回复重新生成",
-                            http_status=status.HTTP_400_BAD_REQUEST,
-                        )
-                    user_message_id = user_msg.id
-                    assistant_message_id = ai_msg.id
+            if session_obj is not None and data.get("regenerate"):
+                # ── 重新生成分支：复用已有消息对，不新建 user/assistant ──
+                # 校验（_validate_regenerate）不在 try 内调用：NotFound / BaseAppError 直接
+                # 向外传播（原 except (NotFound, BaseAppError): raise 透传语义，TRY301）
+                user_msg, ai_msg = _validate_regenerate(
+                    session_obj,
+                    data.get("user_message_id"),
+                    data.get("assistant_message_id"),
+                )
+                user_message_id = user_msg.id
+                assistant_message_id = ai_msg.id
+                try:
                     # 归档当前版本并追加空版本（与前端 handleMessageRegenerated 镜像幂等）
                     _archive_current_version(ai_msg)
                     data["_assistant_message_id"] = str(assistant_message_id)
-                    # 广播 MESSAGE_REGENERATED（前端镜像归档 + 后续流式 chunks 填充新版本）
-                    try:
-                        from asgiref.sync import async_to_sync
+                except Exception as e:
+                    logger.warning(f"[ChatStream] 重新生成消息归档失败: {e}")
+                # 广播 MESSAGE_REGENERATED（前端镜像归档 + 后续流式 chunks 填充新版本）
+                try:
+                    from asgiref.sync import async_to_sync
 
-                        from Django_xm.common.realtime_events import EventType, publish_event
+                    from Django_xm.common.realtime_events import EventType, publish_event
 
-                        async_to_sync(publish_event)(
-                            EventType.MESSAGE_REGENERATED,
-                            {
-                                "session_id": session_id,
-                                "message_id": str(assistant_message_id),
-                            },
-                            session_id=session_id,
-                        )
-                    except Exception as broadcast_err:
-                        logger.warning(f"[ChatStream] 广播 MESSAGE_REGENERATED 失败: {broadcast_err}")
-                else:
+                    async_to_sync(publish_event)(
+                        EventType.MESSAGE_REGENERATED,
+                        {
+                            "session_id": session_id,
+                            "message_id": str(assistant_message_id),
+                        },
+                        session_id=session_id,
+                    )
+                except Exception as broadcast_err:
+                    logger.warning(f"[ChatStream] 广播 MESSAGE_REGENERATED 失败: {broadcast_err}")
+            elif session_obj is not None:
+                try:
                     # 1. 创建用户消息
                     user_msg = ChatMessage(
                         session=session_obj,
@@ -668,18 +661,14 @@ class ChatStreamView(BaseChatAPIView):
                             )
                     except Exception as broadcast_err:
                         logger.warning(f"[ChatStream] 广播 MESSAGE_ADDED 失败: {broadcast_err}")
-            except Exception as e:
-                logger.warning(f"[ChatStream] 创建流式消息失败: {e}")
+                except Exception as e:
+                    logger.warning(f"[ChatStream] 创建流式消息失败: {e}")
 
         # 执行与连接解耦：chat agent 交由 FastAPI 执行服务单协程运行，
         # Django 仅发布 SIGNAL_START 信令后立即返回 JSON（不再返回 SSE）。
         # 执行事件经 WebSocket 统一广播到触发/非触发浏览器，前端刷新不影响执行。
         if not session_id:
-            return error_response(
-                code=ErrorCode.VALIDATION_FAILED,
-                message="缺少会话 ID，无法启动聊天执行",
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise BaseAppError("缺少会话 ID，无法启动聊天执行", business_code=ErrorCode.VALIDATION_FAILED)
 
         thread_id = session_id
         publish_signal(
@@ -718,25 +707,13 @@ class ChatStreamStopView(BaseChatAPIView):
     def post(self, request):
         session_id = request.data.get("session_id")
         if not session_id:
-            return error_response(
-                code=ErrorCode.VALIDATION_FAILED,
-                message="缺少 session_id",
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise BaseAppError("缺少 session_id", business_code=ErrorCode.VALIDATION_FAILED)
 
         session = self.get_session_or_404(session_id, request.user)
         if not session:
-            return error_response(code=ErrorCode.NOT_FOUND, message="会话不存在", http_status=status.HTTP_404_NOT_FOUND)
+            raise NotFound("会话不存在")
 
-        try:
-            publish_signal(SIGNAL_STOP, session_id, {"session_type": SESSION_TYPE_CHAT})
-        except Exception as exc:
-            logger.warning(f"[ChatStreamStop] 发布 SIGNAL_STOP 失败: {exc}")
-            return error_response(
-                code=ErrorCode.INTERNAL_ERROR,
-                message="停止请求发送失败",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        publish_signal(SIGNAL_STOP, session_id, {"session_type": SESSION_TYPE_CHAT})
 
         return success_response(data={"stopped": True}, message="停止请求已发送")
 
@@ -792,18 +769,14 @@ class ChatFinalizeView(BaseChatAPIView):
         message_id = request.data.get("message_id")
 
         if not session_id:
-            return validation_error_response(message="session_id 不能为空")
+            raise ValidationError("session_id 不能为空")
         if not message_id:
-            return validation_error_response(message="message_id 不能为空")
+            raise ValidationError("message_id 不能为空")
 
         # 校验会话归属权
         session = self.get_session_or_404(session_id, request.user)
         if session is None:
-            return error_response(
-                message="会话不存在或无权访问",
-                code=ErrorCode.NOT_FOUND,
-                status_code=status.HTTP_404_NOT_FOUND,
-            )
+            raise NotFound("会话不存在或无权访问")
 
         # 发布 STREAM_FINALIZED 事件到 session 频道
         from Django_xm.common.event_schema import EventType, PayloadValidationError
@@ -824,18 +797,7 @@ class ChatFinalizeView(BaseChatAPIView):
             logger.exception(
                 f"[ChatFinalize] STREAM_FINALIZED payload 校验失败: session_id={session_id}, message_id={message_id}",
             )
-            return error_response(
-                message="事件 payload 校验失败",
-                code=ErrorCode.SERVER_ERROR,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-        except Exception as e:
-            logger.warning(f"[ChatFinalize] 广播 STREAM_FINALIZED 失败: {e}")
-            return error_response(
-                message="通知流式完成失败",
-                code=ErrorCode.SERVER_ERROR,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            raise BaseAppError("事件 payload 校验失败", business_code=ErrorCode.SERVER_ERROR) from None
 
         return success_response(message="流式完成通知已发送")
 
@@ -896,8 +858,7 @@ class ChatSessionCreateView(BaseChatAPIView):
         from Django_xm.apps.cache_manager.services.cache_service import invalidate_chat_cache
 
         serializer = ChatSessionCreateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return validation_error_response(errors=serializer.errors)
+        serializer.is_valid(raise_exception=True)
 
         session = serializer.save(user=request.user)
 
@@ -940,7 +901,7 @@ class ChatSessionDetailView(BaseChatAPIView):
     def get(self, request, session_id):
         session = self.get_session_or_404(session_id, request.user, prefetch_attachments=True)
         if not session:
-            return error_response(code=ErrorCode.NOT_FOUND, message="会话不存在", http_status=status.HTTP_404_NOT_FOUND)
+            raise NotFound("会话不存在")
 
         serializer = ChatSessionDetailSerializer(
             session,
@@ -956,11 +917,11 @@ class ChatSessionDetailView(BaseChatAPIView):
 
         session = self.get_session_or_404(session_id, request.user)
         if not session:
-            return error_response(code=ErrorCode.NOT_FOUND, message="会话不存在", http_status=status.HTTP_404_NOT_FOUND)
+            raise NotFound("会话不存在")
 
         serializer = ChatSessionUpdateSerializer(session, data=request.data, partial=True)
         if not serializer.is_valid():
-            return validation_error_response(errors=serializer.errors, message="更新参数错误")
+            raise ValidationError(serializer.errors)
 
         serializer.save()
         invalidate_chat_cache(user_id=request.user.id)
@@ -987,7 +948,7 @@ class ChatSessionDetailView(BaseChatAPIView):
 
         session = self.get_session_or_404(session_id, request.user)
         if not session:
-            return error_response(code=ErrorCode.NOT_FOUND, message="会话不存在", http_status=status.HTTP_404_NOT_FOUND)
+            raise NotFound("会话不存在")
 
         linked_tasks = get_linked_research_tasks(session.session_id)
 
@@ -1081,7 +1042,7 @@ class ChatSessionCompactView(BaseChatAPIView):
     def post(self, request, session_id):
         session = self.get_session_or_404(session_id, request.user, prefetch_attachments=True)
         if not session:
-            return error_response(code=ErrorCode.NOT_FOUND, message="会话不存在", http_status=status.HTTP_404_NOT_FOUND)
+            raise NotFound("会话不存在")
 
         from Django_xm.apps.context_manager.services.manager import create_context_manager
 
@@ -1122,12 +1083,12 @@ class ChatMessageCreateView(BaseChatAPIView):
 
         session = self.get_session_or_404(session_id, request.user)
         if not session:
-            return error_response(code=ErrorCode.NOT_FOUND, message="会话不存在", http_status=status.HTTP_404_NOT_FOUND)
+            raise NotFound("会话不存在")
 
         serializer = ChatMessageSerializer(data=request.data, context={"research_task_map": {}})
         if not serializer.is_valid():
             logger.warning(f"消息验证失败: {serializer.errors}, 请求数据: {request.data}")
-            return validation_error_response(errors=serializer.errors)
+            raise ValidationError(serializer.errors)
 
         message = serializer.save(session=session)
 
@@ -1154,14 +1115,14 @@ class ChatMessageBatchCreateView(BaseChatAPIView):
     def post(self, request, session_id):
         session = self.get_session_or_404(session_id, request.user)
         if not session:
-            return error_response(code=ErrorCode.NOT_FOUND, message="会话不存在", http_status=status.HTTP_404_NOT_FOUND)
+            raise NotFound("会话不存在")
 
         messages_data = request.data.get("messages", [])
         if not isinstance(messages_data, list):
-            return error_response(code=ErrorCode.INVALID_PARAMS, message="messages 字段必须是数组")
+            raise BaseAppError("messages 字段必须是数组", business_code=ErrorCode.INVALID_PARAMS)
 
         if len(messages_data) > 50:
-            return error_response(code=ErrorCode.INVALID_PARAMS, message="单次批量创建消息数量不能超过50条")
+            raise BaseAppError("单次批量创建消息数量不能超过50条", business_code=ErrorCode.INVALID_PARAMS)
 
         created_messages = []
         with transaction.atomic():
@@ -1209,14 +1170,12 @@ class ChatMessagePairDeleteView(BaseChatAPIView):
     def delete(self, request, session_id, user_message_id):
         session = self.get_session_or_404(session_id, request.user)
         if not session:
-            return error_response(code=ErrorCode.NOT_FOUND, message="会话不存在", http_status=status.HTTP_404_NOT_FOUND)
+            raise NotFound("会话不存在")
 
         # user_message_id 由 URL int 转换器注入，类型必为 int，无需 body 传参与校验（dj-16）
         user_message = ChatMessage.objects.filter(id=user_message_id, session=session, is_deleted=False).first()
         if not user_message:
-            return error_response(
-                code=ErrorCode.NOT_FOUND, message="用户消息不存在", http_status=status.HTTP_404_NOT_FOUND
-            )
+            raise NotFound("用户消息不存在")
 
         # 链式截断：删除该 user 消息及其后全部消息（N..末尾），N 之前完整保留
         deleted_messages = list(
@@ -1267,7 +1226,7 @@ class ChatMessageUpdateView(BaseChatAPIView):
     def patch(self, request, message_id):
         message = self.get_message_or_404(message_id, request.user)
         if not message:
-            return error_response(code=ErrorCode.NOT_FOUND, message="消息不存在", http_status=status.HTTP_404_NOT_FOUND)
+            raise NotFound("消息不存在")
 
         # 固化检测：is_finalized 由 false→true 时，save 后广播 MESSAGE_FINALIZED
         # 供所有浏览器同步（其他 Tab 停止固化计时器、禁用重生成、版本切换降级只读）。
@@ -1277,7 +1236,7 @@ class ChatMessageUpdateView(BaseChatAPIView):
         # 仅做输入校验（响应在下方用新实例序列化），契约传空映射
         serializer = ChatMessageSerializer(message, data=request.data, partial=True, context={"research_task_map": {}})
         if not serializer.is_valid():
-            return validation_error_response(errors=serializer.errors, message="更新参数错误")
+            raise ValidationError(serializer.errors)
 
         serializer.save()
         # 重新查询以 prefetch attachments，避免序列化时 N+1
@@ -1320,7 +1279,7 @@ class ChatMessageDeleteView(ChatMessageUpdateView):
     def delete(self, request, message_id):
         message = self.get_message_or_404(message_id, request.user)
         if not message:
-            return error_response(code=ErrorCode.NOT_FOUND, message="消息不存在", http_status=status.HTTP_404_NOT_FOUND)
+            raise NotFound("消息不存在")
 
         message.soft_delete()
 

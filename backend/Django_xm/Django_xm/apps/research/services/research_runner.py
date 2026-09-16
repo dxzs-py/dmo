@@ -111,6 +111,7 @@ async def execute_research_async(
     interrupt_handler=None,
     parent_tool_names: list[str] | None = None,
     parent_config: dict | None = None,
+    enable_sandbox: bool = False,
 ) -> ResearchResult:
     """异步研究执行逻辑（会话级单执行流，执行器模式）。
 
@@ -134,6 +135,8 @@ async def execute_research_async(
             替代历史 get_parent_tool_context 全局旁路，经 configurable 显式传递）
         parent_config: 主 agent 运行配置（model_name/store/enable_deep_thinking/
             use_web_search/use_mcp，供子代理 AgentConfig 继承）
+        enable_sandbox: 任务级沙箱开关（写入工具调用上下文 configurable，
+            shell 工具据此路由 HIGH 级命令；默认关闭走本机执行）
 
     Returns:
         ResearchResult 标准化结果
@@ -154,6 +157,8 @@ async def execute_research_async(
                 "tool_names": list(parent_tool_names or []),
                 "user_id": user_id,
                 "session_id": thread_id,
+                # 任务级沙箱开关：shell 工具经 config.configurable 读取后路由 HIGH 级命令
+                "enable_sandbox": bool(enable_sandbox),
             }
             if parent_config:
                 configurable.update(parent_config)
@@ -364,10 +369,13 @@ def self_heal_expired_approvals(thread_id: str, graph_interrupt_id: str) -> int:
 
 
 def cleanup_research_sandbox(thread_id: str) -> dict:
-    """研究完成后删除 sandbox 目录（含 skill 工具等临时资源）。
+    """研究完成后删除 sandbox 目录（含 skill 工具等临时资源）并释放长驻容器。
 
     注意：sandbox 仅含临时工具文件（如 skill 脚本），不含用户可见的研究产出；
     研究产出（notes/plans/reports）存储在 research/{thread_id}/ 根目录，由守卫保护。
+
+    沙箱加固（Task 1.4）：任务终态后同时 docker rm -f 释放该 thread_id 对应的
+    长驻沙箱容器（仅开启沙箱的任务存在容器，未开启时清理为无操作）。
 
     Args:
         thread_id: 研究任务 ID
@@ -378,6 +386,15 @@ def cleanup_research_sandbox(thread_id: str) -> dict:
     import shutil
 
     from django.conf import settings as django_settings
+
+    # 沙箱加固（Task 1.4）：任务终态后 docker rm -f 释放该 thread_id 对应的长驻容器。
+    # 未开启沙箱的任务无容器，cleanup_sandbox 为无操作（best effort，不抛错）。
+    try:
+        from Django_xm.common.sandbox import cleanup_sandbox as _cleanup_sandbox_container
+
+        _cleanup_sandbox_container(thread_id)
+    except Exception:
+        logger.warning(f"[Research] 清理沙箱容器失败（非致命）: thread_id={thread_id}", exc_info=True)
 
     data_dir = str(
         getattr(django_settings, "DATA_DIR", None)

@@ -27,8 +27,8 @@ from langchain_core.exceptions import (
 )
 from langchain_core.tools import ToolException
 
-from Django_xm.common.exceptions import BaseAppError
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.common.exceptions import BaseAppError
 
 logger = get_logger(__name__)
 
@@ -221,6 +221,9 @@ def classify_exception(exc: Exception) -> LCAgentException:
             APIConnectionError as OpenAIConnectionError,
         )
         from openai import (
+            APIStatusError as OpenAIStatusError,
+        )
+        from openai import (
             APITimeoutError as OpenAITimeoutError,
         )
         from openai import (
@@ -234,9 +237,6 @@ def classify_exception(exc: Exception) -> LCAgentException:
         )
         from openai import (
             RateLimitError as OpenAIRateLimitError,
-        )
-        from openai import (
-            APIStatusError as OpenAIStatusError,
         )
 
         if isinstance(exc, OpenAIRateLimitError):
