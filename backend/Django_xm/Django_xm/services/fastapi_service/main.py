@@ -1,7 +1,7 @@
 """FastAPI Agent 执行服务入口（独立进程，端口 8001）。
 
 与 Django Web 进程完全隔离：
-- 承载深度研究长任务（SessionManager + SessionExecutor，单协程 + 事件驱动）
+- 承载聊天 + 深度研究长任务（SessionManager + SessionExecutor，单协程 + 事件驱动）
 - 事件复用 Django 的 realtime_sync 通道（Redis + Channels 网关），前端零改动
 - 共享 PostgreSQL + Redis
 
