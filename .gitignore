@@ -17,8 +17,12 @@ build/
 
 # Django
 backend/db.sqlite3
-backend/Django_xm/.env
 backend/Django_xm/logs/
+
+# 环境变量：忽略一切真实配置，仅保留 .env.example 模板
+.env
+.env.*
+!.env.example
 
 # 运行时数据目录：忽略全部内容，但保留 RAG 评测资产（语料 / 评测集 / 报告）以支持复现。
 # 注意：必须写成 data/* 而非 data/，否则 Git 无法重新包含其子目录。
@@ -43,8 +47,7 @@ Thumbs.db
 
 # Project
 performance_benchmark.py
-.trae
-.trae/*
-
-docs
-docs/*
+.codebuddy/
+docs/
+.trae/
+trae/
