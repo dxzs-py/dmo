@@ -41,7 +41,7 @@ def broadcast_stream_completed(
 
     深度研究完成（成功/失败）时由执行服务（services/fastapi_service SessionExecutor）调用，
     作为权威完成事件。
-    与聊天 SSE 结束时发布的 stream_completed（finalized=false，无 task_id）不同，
+    与聊天流式连接结束时发布的 stream_completed（finalized=false，无 task_id）不同，
     本事件始终携带 task_id 和 finalized=true，前端据此进入深度研究回写逻辑。
 
     统一底层：同时广播到 session + task 双频道，确保所有模块订阅者都能收到：

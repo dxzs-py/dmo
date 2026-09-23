@@ -255,7 +255,7 @@ const _isResearchRunning = computed(() => {
     return researchStatus === ResearchTaskStatus.PENDING || researchStatus === ResearchTaskStatus.RUNNING || researchStatus === ResearchTaskStatus.AWAITING_APPROVAL
   }
   // 权威状态缺失（P12 根因修复）：
-  // 深度研究触发后 chat SSE 立即结束（start_celery 架构），后端通过
+  // 深度研究触发后聊天流式连接立即结束（信令 + FastAPI 异步执行架构），后端通过
   // stream_interrupted 明确通知"任务未完成"，但 researchTaskStatus 尚未注入
   // （需 research_task_id 写库后才能查询）。此时仅 INTERRUPTED 或流式中的
   // 消息视为"研究进行中"。已完成/历史消息不误显，避免代理模式下旧深度研究

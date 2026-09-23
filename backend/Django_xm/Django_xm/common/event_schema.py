@@ -72,7 +72,7 @@ class EventType(StrEnum):
     STREAM_STARTED = "stream_started"  # 流式会话已开始（通知非触发浏览器显示"正在思考"）
     STREAM_COMPLETED = "stream_completed"  # 流式会话已完成（通知所有浏览器更新终态）
     STREAM_FINALIZED = "stream_finalized"  # 流式输出已持久化（非请求浏览器可安全拉取后端数据）
-    STREAM_INTERRUPTED = "stream_interrupted"  # 流被中断（深度研究模式：chat SSE 结束，执行服务仍在运行）
+    STREAM_INTERRUPTED = "stream_interrupted"  # 流被中断（深度研究模式：聊天流式连接结束，执行服务仍在运行）
     STREAM_REASONING = "stream_reasoning"  # 推理过程
     STREAM_SOURCES = "stream_sources"  # 来源引用
     STREAM_SUGGESTIONS = "stream_suggestions"  # 建议

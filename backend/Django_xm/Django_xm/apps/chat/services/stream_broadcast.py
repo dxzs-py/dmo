@@ -267,7 +267,7 @@ async def publish_stream_event(
                 "sources": EventType.STREAM_SOURCES,
                 "suggestions": EventType.STREAM_SUGGESTIONS,
                 "context": EventType.STREAM_CONTEXT,
-                # 深度研究模式：chat SSE 因审批中断结束，广播 stream_interrupted，
+                # 深度研究模式：聊天流式连接因审批中断结束，广播 stream_interrupted，
                 # 前端 handleStreamInterrupted 据此设置 researchTaskId + INTERRUPTED 状态，
                 # 使非触发浏览器也能显示"研究进行中 + 查看详情"卡片。
                 "interrupted": EventType.STREAM_INTERRUPTED,

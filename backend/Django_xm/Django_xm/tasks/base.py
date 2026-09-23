@@ -105,10 +105,20 @@ class TrackedTask:
                 update_task_status as common_update,
             )
 
+            # 用任务真实类型写入 Redis 记录，而非写死 OTHER，
+            # 否则 task_redis_manager 的 TaskType 枚举与"按类型筛选"将整体失效。
+            task_type = TaskType.OTHER
+            if self._pending_type:
+                try:
+                    task_type = TaskType(self._pending_type)
+                except ValueError:
+                    # 未知类型（如枚举已移除）兜底为 OTHER，避免崩溃
+                    pass
+
             result = common_update(self._task_manager_id, status_updates)
             if result is None:
                 common_create(
-                    task_type=TaskType.OTHER,
+                    task_type=task_type,
                     task_id=self._task_manager_id,
                     user_id=self._pending_user_id,
                     task_name=self.celery_task.name,

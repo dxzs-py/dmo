@@ -733,7 +733,7 @@ class ChatService:
                 yield event
 
     async def _create_agent_for_deep_research(self, data: dict[str, Any]) -> AsyncGenerator[dict[str, Any], None]:
-        """深度研究模式处理（chat SSE 立即返回架构）：
+        """深度研究模式处理（聊天流式连接立即返回架构）：
 
         1. 创建深度研究任务记录（create_deep_research_task，仅建任务，不启动执行）
         2. 发送 deep_research 事件，前端据此：
@@ -742,9 +742,9 @@ class ChatService:
         3. 更新 ChatMessage 双向关联（research_task_id + message_id）
         4. 发布执行启动信令（start_execution → Redis SIGNAL_START，不等待结果）
         5. 发送 interrupted 事件（触发 stream_broadcast 广播 stream_interrupted WebSocket 事件）
-        6. chat SSE 立即结束（return），不持续等待研究完成
+        6. 聊天流式连接立即结束（return），不持续等待研究完成
 
-        研究结果回写链路（完全独立于 chat SSE）：
+        研究结果回写链路（完全独立于聊天流式连接）：
         - 执行服务完成/失败时调用 writeback_to_chat_message 回写 final_report 到 ChatMessage
         - 执行服务调用 broadcast_stream_completed 广播 WebSocket 事件
         - 前端通过 WebSocket stream_completed 事件回写结果并转 COMPLETED
@@ -794,7 +794,7 @@ class ChatService:
         }
         # 设置 researchTaskId（触发浏览器通过 SSE 设置 lastMessage 的 researchTaskId）
         yield {"type": "research_task_id", "data": {"research_task_id": task_id}}
-        # 立即结束 chat SSE 流，不发送 chunk（最终报告由执行服务通过 WebSocket 回写）
+        # 立即结束聊天流式连接，不发送 chunk（最终报告由执行服务通过 WebSocket 回写）
         return
 
     async def _link_research_task_to_message(self, assistant_msg_id, task_id: str) -> None:

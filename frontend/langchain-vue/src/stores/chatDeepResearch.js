@@ -21,7 +21,7 @@ import { logger } from '../utils/logger'
  *   触碰 research store 的数据，故不静态引入（避免未使用的死依赖）。
  */
 export const useChatDeepResearchStore = defineStore('chatDeepResearch', () => {
-  /** 深度研究任务对象（SSE deep_research 事件数据） */
+  /** 深度研究任务对象（deep_research 事件数据） */
   const deepResearchTask = ref(null)
   /** 深度研究任务 ID（深度研究审批路由依赖此值） */
   const researchTaskId = ref(null)
@@ -29,7 +29,7 @@ export const useChatDeepResearchStore = defineStore('chatDeepResearch', () => {
   const researchContextInfo = ref(null)
 
   /**
-   * 设置深度研究任务（chat SSE setDeepResearchTask 回调）
+   * 设置深度研究任务（聊天流式链路 setDeepResearchTask 回调）
    * 任务创建时立即写入 researchTaskId，确保后续审批能正确路由到研究审批 API
    * @param {Object} data - 深度研究任务数据
    */
@@ -41,7 +41,7 @@ export const useChatDeepResearchStore = defineStore('chatDeepResearch', () => {
   }
 
   /**
-   * 设置聊天深度研究任务 ID（chat SSE setResearchTaskId 回调 / 审批恢复）
+   * 设置聊天深度研究任务 ID（聊天流式链路 setResearchTaskId 回调 / 审批恢复）
    * @param {string} taskId - 深度研究任务 ID
    */
   const setChatResearchTaskId = (taskId) => {

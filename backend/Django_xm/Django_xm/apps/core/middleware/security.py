@@ -63,6 +63,7 @@ class SessionSecurityMiddleware:
             return None
 
         auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+        # Bearer 是 token 认证,不走 Django session 的 user_id 绑定,拿 session 去比 user_id 没意义,所以跳过。
         if auth_header.startswith("Bearer "):
             return None
 
@@ -78,12 +79,13 @@ class SessionSecurityMiddleware:
             )
 
             logout(request)
-
+            # 若已绑定且不一致 → 说明"这个 session 属于 A 用户,但当前登录的是 B 用户",疑似会话固定/会话被盗,logout + 返回 403。
             return JsonResponse(
                 {"code": 403, "message": "会话验证失败，请重新登录", "error": "SESSION_MISMATCH"}, status=403
             )
 
         if not stored_session_user_id:
+            # 若还没绑定过 → 把当前 user_id 写进 session 并 save(),即"标记这个 session 归属于该用户",供后续请求比对。
             request.session["user_id"] = user_id
             request.session.save()
 

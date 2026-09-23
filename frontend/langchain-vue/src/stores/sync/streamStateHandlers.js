@@ -284,11 +284,11 @@ export const createStreamStateHandlers = (ctx) => {
   /**
    * 流式输出被中断（stream_interrupted 事件）
    *
-   * 事件来源：后端 views_chat.py 在 chat SSE 发送 deep_research 事件时发布，
+   * 事件来源：后端 views_chat.py 在聊天流式连接发送 deep_research 事件时发布，
    * 通过 WebSocket session 频道广播到所有浏览器。
    *
-   * 语义：深度研究模式下，chat SSE 流被中断，Celery worker 仍在后台执行研究任务。
-   * 消息进入 INTERRUPTED 状态，等待 Celery worker 完成后通过 stream_completed
+   * 语义：深度研究模式下，聊天流式连接已结束，FastAPI 执行服务仍在后台执行研究任务。
+   * 消息进入 INTERRUPTED 状态，等待执行服务完成后通过 stream_completed
    * （finalized=true，携带 task_id/final_report）回写结果。
    *
    * 概念边界（区分"深度研究模式"与"深度思考功能"）：
@@ -303,7 +303,7 @@ export const createStreamStateHandlers = (ctx) => {
    * - 设置消息的 streamState=INTERRUPTED（避免 showContinueResearch 提前显示"继续研究"按钮）
    *
    * 幂等性：
-   * - 触发浏览器已通过 SSE deep_research 事件（setDeepResearchTask）完成上述设置，
+   * - 触发浏览器已通过 deep_research 事件（setDeepResearchTask）完成上述设置，
    *   此事件对触发浏览器是幂等的。
    * - 非触发浏览器只能通过此事件感知深度研究模式，此事件是必需的。
    *
@@ -392,7 +392,7 @@ export const createStreamStateHandlers = (ctx) => {
    *    幂等性：与 handleTaskEvent 的 stream_completed 分支形成双路径，updateTaskFromEvent 使用 force:true 保证一致
    *
    * 事件语义（两类 stream_completed 事件）：
-   * - 聊天 SSE 完成事件（chat_executor_core / session_executor 广播）：
+   * - 聊天流式完成事件（chat_executor_core / session_executor 广播）：
    *   不含 finalized 字段（后端落库先于广播，非请求浏览器可安全全量同步）。
    * - 深度研究权威完成事件（writeback.broadcast_stream_completed）：
    *   始终携带 task_id + finalized=true（深研回写专属标记），进入研究结果回写逻辑。
@@ -404,10 +404,10 @@ export const createStreamStateHandlers = (ctx) => {
     const session = getSession(sessionStore, sessionId)
     if (!session?.messages) return
 
-    // 深度研究模式下，chat SSE 结束时发布的 stream_completed（无 finalized 字段）
+    // 深度研究模式下，聊天流式连接结束时发布的 stream_completed（无 finalized 字段）
     // 不应让前端误判研究完成。当消息处于 INTERRUPTED 状态时，
     // 忽略该事件（不更新消息状态，不显示"研究已完成"/"继续研究"按钮），仅由事件队列推进 seq。
-    // 真正的研究完成事件由 Celery worker 通过 broadcast_stream_completed 发布
+    // 真正的研究完成事件由 FastAPI 执行服务通过 broadcast_stream_completed 发布
     //（finalized=true，携带 task_id/final_report），届时正常进入下方研究结果回写逻辑。
     // 普通聊天模式消息不会处于 INTERRUPTED 状态，不受此判断影响，行为与原有逻辑一致。
     if (payload.finalized !== true) {
@@ -429,8 +429,8 @@ export const createStreamStateHandlers = (ctx) => {
     }
 
     // === 处理深度研究最终结果 ===
-    // 深度研究完成事件由 Celery worker 回写时发布，始终携带 task_id 和 finalized=true，
-    // 与聊天 SSE 结束时的 stream_completed（无 task_id/finalized 字段）区分。
+    // 深度研究完成事件由 FastAPI 执行服务回写时发布，始终携带 task_id 和 finalized=true，
+    // 与聊天流式连接结束时的 stream_completed（无 task_id/finalized 字段）区分。
     // 即使 final_report 为空字符串（AI 回复过短且磁盘文件提取失败），也需进入回写逻辑：
     // 1. 标记消息 COMPLETED + isStreaming=false（解除 FINALIZING 卡死状态）
     // 2. 触发 requestFullSync 从后端拉取 writeback_to_chat_message 已写入的正确内容
@@ -461,8 +461,8 @@ export const createStreamStateHandlers = (ctx) => {
 
       if (targetMsg) {
         // 计算深度研究耗时并设置到 reasoning.duration
-        // 触发浏览器: chat SSE 很快结束，message.timestamp 接近深度研究开始时间
-        // 非触发浏览器: message_added 事件在 chat SSE 开始时发布，timestamp 也接近深度研究开始时间
+        // 触发浏览器: 聊天流式连接很快结束，message.timestamp 接近深度研究开始时间
+        // 非触发浏览器: message_added 事件在聊天流式连接建立时发布，timestamp 也接近深度研究开始时间
         // 注意：mergeMessageFromBackend 的 reasoning 完成态保护（messageOperations.js）
         // 在 streamState=COMPLETED 且本地 reasoning 非空时不用后端覆盖，
         // 故此处设置的 duration 和 content 均不会被 requestFullSync 覆盖

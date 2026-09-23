@@ -77,7 +77,7 @@ def update_chat_message_research_task_id_async(
 
     P12 修复：写库成功后广播 message_updated（携带权威 research_task_status），
     让所有浏览器及时获得研究任务权威状态，消除对快照校对延迟的依赖。
-    否则触发浏览器 chat SSE 立即结束后 researchTaskStatus 仍为 null，
+    否则触发浏览器聊天流式连接立即结束后 researchTaskStatus 仍为 null，
     ChatMessage._isResearchRunning 回退判定会误显"研究已完成"闪现。
     广播失败仅记录日志，不影响研究任务主流程（前端快照校对兜底）。
     """
@@ -227,7 +227,7 @@ class DeepChatService:
     ) -> str:
         """发布深度研究执行启动信令（触发 FastAPI 执行服务，不等待结果）
 
-        Chat SSE 在深度研究模式下应"立即返回"——发送 deep_research 事件后立即结束流。
+        聊天流式连接在深度研究模式下应"立即返回"——发送 deep_research 事件后立即结束流。
         研究过程由 fastapi_service SessionExecutor 协程异步执行，通过以下两条链路回写：
           1. writeback_to_chat_message：回写 final_report 到 ChatMessage（持久化）
           2. broadcast_stream_completed：广播 stream_completed WebSocket 事件（实时通知）

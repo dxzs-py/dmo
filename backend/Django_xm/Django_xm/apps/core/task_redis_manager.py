@@ -25,13 +25,11 @@ class TaskStatus(Enum):
 
 
 class TaskType(Enum):
-    DEEP_RESEARCH = "deep_research"
     RAG_INDEX = "rag_index"
     RAG_ADD_DOCS = "rag_add_docs"
     RAG_UPLOAD = "rag_upload"
     RAG_DELETE_INDEX = "rag_delete_index"
     RAG_UPDATE_INDEX = "rag_update_index"
-    WORKFLOW = "workflow"
     CHAT_CLEANUP = "chat_cleanup"
     CHAT_INDEX = "chat_index"
     CHAT_STORAGE = "chat_storage"
