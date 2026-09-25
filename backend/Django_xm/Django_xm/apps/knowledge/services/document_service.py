@@ -28,10 +28,6 @@ SUPPORTED_EXTENSIONS = {
 }
 
 
-def get_supported_extensions() -> dict[str, str]:
-    return SUPPORTED_EXTENSIONS.copy()
-
-
 def get_document_loader(file_path: str) -> Any | None:
     path = Path(file_path)
     extension = path.suffix.lower()
@@ -189,65 +185,3 @@ def load_documents_from_directory(
     except Exception:
         logger.exception(f"目录加载失败: {directory_path}, 错误")
         raise
-
-
-def load_documents_from_paths(
-    file_paths: list[str],
-    show_progress: bool = True,
-) -> list[Document]:
-    """从文件路径列表加载文档"""
-    logger.info(f"📚 开始加载 {len(file_paths)} 个文件")
-
-    all_documents: list[Document] = []
-    success_count = 0
-    error_count = 0
-
-    for i, file_path in enumerate(file_paths, 1):
-        try:
-            if show_progress:
-                logger.info(f"   [{i}/{len(file_paths)}] 加载: {Path(file_path).name}")
-
-            documents = load_document(file_path, add_metadata=True)
-            all_documents.extend(documents)
-            success_count += 1
-
-        except Exception:
-            logger.exception(f"   ❌ 加载失败: {file_path}, 错误")
-            error_count += 1
-            continue
-
-    logger.info("✅ 批量加载完成:")
-    logger.info(f"   成功: {success_count} 个文件")
-    logger.info(f"   失败: {error_count} 个文件")
-    logger.info(f"   总计: {len(all_documents)} 个文档块")
-
-    return all_documents
-
-
-def load_directory(
-    directory_path: str,
-    glob_pattern: str = "**/*",
-    exclude_patterns: list[str] | None = None,
-    recursive: bool = True,
-    show_progress: bool = True,
-    max_files: int | None = None,
-) -> list[Document]:
-    """
-    批量加载目录中的文档（兼容源项目API）
-
-    Args:
-        directory_path: 目录路径
-        glob_pattern: 文件匹配模式
-        exclude_patterns: 排除的文件模式列表
-        recursive: 是否递归加载子目录
-        show_progress: 是否显示加载进度
-        max_files: 最大加载文件数
-
-    Returns:
-        Document 对象列表
-    """
-    return load_documents_from_directory(
-        directory_path=directory_path,
-        recursive=recursive,
-        add_metadata=True,
-    )

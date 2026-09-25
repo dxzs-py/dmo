@@ -5,7 +5,6 @@ Django 信号处理模块 - 核心自定义信号定义
 各应用的模型信号处理已移至各自 apps 的 signals.py 中。
 
 自定义信号:
-  - cache_invalidated: 缓存失效通知
   - task_status_changed: 任务状态变更通知
   - ai_data_cleanup_needed: AI 数据（checkpoint/Store）清理通知
 """
@@ -18,7 +17,6 @@ from django.dispatch import Signal, receiver
 logger = logging.getLogger(__name__)
 
 
-cache_invalidated = Signal()
 task_status_changed = Signal()
 ai_data_cleanup_needed = Signal()
 

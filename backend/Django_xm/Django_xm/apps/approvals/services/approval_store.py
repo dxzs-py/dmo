@@ -3,7 +3,6 @@
 按 interrupt_id 索引（替代旧的按 session_id 索引），支持：
 - pending 审批持久化到 Redis List（按 source_id 分组）
 - processed 审批最终状态持久化到 Redis Key（按 interrupt_id 索引）
-- 历史审批合并读取（pending + processed 覆盖）
 """
 
 import json
@@ -67,8 +66,7 @@ def persist_approval_processed(interrupt_id, processed_data):
 def persist_approval_state(interrupt_id, state, extra=None):
     """更新审批状态到 Redis（不依赖 complete，processing 状态也写入覆盖）。
 
-    当审批状态变更（processing/approved/rejected/timeout）时立即调用，
-    确保 get_approval_history 用最新状态覆盖 pending 中的旧数据。
+    当审批状态变更（processing/approved/rejected/timeout）时立即写入最新状态。
 
     Args:
         interrupt_id: 审批中断 ID
@@ -84,86 +82,3 @@ def persist_approval_state(interrupt_id, state, extra=None):
         persist_approval_processed(interrupt_id, processed_data)
     except Exception:
         logger.exception("[ApprovalStore] persist_approval_state 失败")
-
-
-def get_approval_processed(interrupt_id):
-    """获取已处理审批最终状态。
-
-    Args:
-        interrupt_id: 审批中断 ID
-
-    Returns:
-        dict 或 None
-    """
-    try:
-        redis_client = get_redis_client()
-        key = f"{APPROVAL_PROCESSED_PREFIX}{interrupt_id}"
-        raw = redis_client.get(key)
-        if not raw:
-            return None
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8")
-        return json.loads(raw)
-    except Exception:
-        logger.exception("[ApprovalStore] 获取 processed 失败")
-        return None
-
-
-def get_approval_history(source_id):
-    """获取审批历史（pending + processed 覆盖）。
-
-    合并策略：
-    1. 读取 pending List 中的所有审批（按时间顺序）
-    2. 对每个 pending 审批，检查是否有对应的 processed Key
-    3. 如果有 processed，用其数据覆盖 pending（保留最终状态）
-    4. 返回合并后的审批列表
-
-    Args:
-        source_id: 会话 ID 或任务 ID
-
-    Returns:
-        list[dict]: 审批数据列表
-    """
-    try:
-        redis_client = get_redis_client()
-        pending_key = f"{APPROVAL_PENDING_PREFIX}{source_id}"
-        pending_items = redis_client.lrange(pending_key, 0, -1)
-
-        # 解析所有 pending items，收集 interrupt_id
-        parsed_items = []  # [(approval_data, interrupt_id_or_None), ...]
-        for item in pending_items:
-            try:
-                raw_item = item.decode("utf-8") if isinstance(item, bytes) else item
-                approval_data = json.loads(raw_item)
-                interrupt_id = approval_data.get("interrupt_id")
-                parsed_items.append((approval_data, interrupt_id))
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                continue
-
-        # 用 Pipeline 批量获取所有 processed entries
-        pipe = redis_client.pipeline()
-        for _, interrupt_id in parsed_items:
-            if interrupt_id:
-                pipe.get(f"{APPROVAL_PROCESSED_PREFIX}{interrupt_id}")
-        processed_results = pipe.execute() if parsed_items else []
-
-        # 将批量结果映射回对应的 approval_data
-        result = []
-        processed_idx = 0
-        for approval_data, interrupt_id in parsed_items:
-            merged = approval_data
-            if interrupt_id:
-                raw = processed_results[processed_idx]
-                processed_idx += 1
-                if raw:
-                    raw = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-                    processed_data = json.loads(raw)
-                    merged = {**approval_data, **processed_data}
-            result.append(merged)
-
-        if result:
-            logger.info(f"[ApprovalStore] 读取历史审批: source_id={source_id}, count={len(result)}")
-        return result
-    except Exception:
-        logger.exception("[ApprovalStore] 获取审批历史失败")
-        return []

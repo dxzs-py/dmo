@@ -55,6 +55,9 @@ def authenticate_sse_request(request):
     """
     SSE端点统一认证：支持session、Authorization header、query param token
 
+    query param token 是刻意的安全权衡：浏览器原生 EventSource 无法携带
+    Authorization header，跨端点降级场景只能靠 URL 传 JWT。
+
     Args:
         request: Django HttpRequest 对象
 
@@ -63,39 +66,38 @@ def authenticate_sse_request(request):
     """
     from rest_framework import HTTP_HEADER_ENCODING
     from rest_framework_simplejwt.authentication import JWTAuthentication
-    from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
     if request.user and request.user.is_authenticated:
         return request.user
 
     auth = JWTAuthentication()
 
-    auth_header = request.META.get("HTTP_AUTHORIZATION", "")
-    if auth_header.startswith("Bearer "):
-        token_str = auth_header.split(" ", 1)[1]
+    def _resolve_user_from_header_bytes(header_bytes):
+        """header_bytes → User，失败返回 None（统一 warning 日志）"""
         try:
-            header_bytes = f"Bearer {token_str}".encode(HTTP_HEADER_ENCODING)
             raw_token = auth.get_raw_token(header_bytes)
             if raw_token:
                 validated_token = auth.get_validated_token(raw_token)
                 user = auth.get_user(validated_token)
                 if user and user.is_authenticated:
                     return user
-        except (InvalidToken, TokenError, Exception) as auth_err:
-            logger.warning(f"[Auth] SSE端点Header Token验证失败: {auth_err}")
+        except Exception as auth_err:
+            logger.warning(f"[Auth] SSE端点Token验证失败: {auth_err}")
+        return None
+
+    auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+    if auth_header.startswith("Bearer "):
+        header_bytes = f"Bearer {auth_header.split(' ', 1)[1]}".encode(HTTP_HEADER_ENCODING)
+        user = _resolve_user_from_header_bytes(header_bytes)
+        if user:
+            return user
 
     token = request.GET.get("token")
     if token:
-        try:
-            header_bytes = f"Bearer {token}".encode(HTTP_HEADER_ENCODING)
-            raw_token = auth.get_raw_token(header_bytes)
-            if raw_token:
-                validated_token = auth.get_validated_token(raw_token)
-                user = auth.get_user(validated_token)
-                if user and user.is_authenticated:
-                    return user
-        except (InvalidToken, TokenError, Exception) as auth_err:
-            logger.warning(f"[Auth] SSE端点QueryParam Token验证失败: {auth_err}")
+        header_bytes = f"Bearer {token}".encode(HTTP_HEADER_ENCODING)
+        user = _resolve_user_from_header_bytes(header_bytes)
+        if user:
+            return user
 
     return None
 
@@ -119,7 +121,6 @@ def authenticate_websocket_scope(scope):
         已认证的 User 对象，或 None
     """
     from rest_framework_simplejwt.authentication import JWTAuthentication
-    from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
     # 1. AuthMiddleware 已认证（如配置了 channels 的 AuthMiddlewareStack）
     user = scope.get("user") if isinstance(scope, dict) else None
@@ -134,7 +135,7 @@ def authenticate_websocket_scope(scope):
             user = auth.get_user(validated_token)
             if user and user.is_authenticated:
                 return user
-        except (InvalidToken, TokenError, Exception) as auth_err:
+        except Exception as auth_err:
             logger.warning(f"[Auth] WebSocket Token验证失败: {auth_err}")
         return None
 

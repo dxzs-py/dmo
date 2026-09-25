@@ -416,15 +416,42 @@ class UserPreferencesView(APIView):
 class UserUsageStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    CACHE_KEY_TEMPLATE = "users:usage_stats:user{uid}"
+
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
+        from django.apps import apps
+        from django.db.models.functions import TruncDate
+
+        from Django_xm.apps.analytics.services.analytics_service import AnalyticsService
+        from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
+
         user = request.user
+        cache_key = self.CACHE_KEY_TEMPLATE.format(uid=user.id)
+        cached = CacheService.get(cache_key)
+        if cached is not None:
+            return success_response(data=cached)
+
+        # 会话/消息/Token：复用 analytics 的实时聚合，避免维护 users 表冗余计数器
+        overview = AnalyticsService._get_overview_stats(user)
+
+        # 活跃天数：该用户消息按创建日期去重计数
+        ChatMessage = apps.get_model("chat", "ChatMessage")
+        active_days = (
+            ChatMessage.objects.filter(session__user=user)
+            .annotate(day=TruncDate("created_at"))
+            .values("day")
+            .distinct()
+            .count()
+        )
+
         stats = {
-            "total_messages": getattr(user, "total_messages", 0),
-            "total_sessions": getattr(user, "total_sessions", 0),
-            "total_tokens": getattr(user, "total_tokens", 0),
-            "active_days": getattr(user, "active_days", 0),
+            "total_messages": overview["total_messages"],
+            "total_sessions": overview["total_sessions"],
+            "total_tokens": overview["total_tokens"],
+            "active_days": active_days,
         }
+        CacheService.set(cache_key, stats, CacheTTL.QUERY_SHORT)
         return success_response(data=stats)
 
 

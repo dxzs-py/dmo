@@ -14,13 +14,15 @@ class CacheControlMiddleware:
     - 聊天/研究等实时性接口：no-store
     - 知识库接口：短时私有缓存
     - 其他 API 接口：默认私有缓存
+
+    真实路径均带 /api/v1/ 前缀（见项目根 urls.py）。
     """
 
     CACHE_POLICIES: ClassVar[dict[str, str]] = {
-        "/api/chat/": "no-store, no-cache, must-revalidate",
-        "/api/research/": "no-store, no-cache, must-revalidate",
-        "/api/knowledge/": "private, max-age=300",
-        "/api/core/cache/": "no-store, no-cache, must-revalidate",
+        "/api/v1/chat/": "no-store, no-cache, must-revalidate",
+        "/api/v1/research/": "no-store, no-cache, must-revalidate",
+        "/api/v1/knowledge/": "private, max-age=300",
+        "/api/v1/cache/": "no-store, no-cache, must-revalidate",
     }
 
     DEFAULT_POLICY = "private, max-age=60"

@@ -51,6 +51,12 @@ class WorkflowSubmitSerializer(serializers.Serializer):
     )
 
 
+class WorkflowQuestionUpdateSerializer(serializers.Serializer):
+    """修改单题答案请求"""
+
+    user_answer = serializers.CharField(required=True, help_text="用户答案文本")
+
+
 class WorkflowStatusSerializer(serializers.Serializer):
     """工作流状态"""
 

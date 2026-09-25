@@ -11,7 +11,6 @@ from drf_spectacular.utils import extend_schema
 from rest_framework.decorators import api_view, permission_classes, renderer_classes, throttle_classes
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.renderers import BaseRenderer
 from rest_framework.views import APIView
 
 from Django_xm.apps.cache_manager.services.cache_service import (
@@ -25,7 +24,7 @@ from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.responses import success_response
 from Django_xm.common.serializers import EmptySerializer
-from Django_xm.common.sse_utils import sse_error_event, sse_response
+from Django_xm.common.sse_utils import SSERenderer, sse_error_event, sse_response
 
 from .serializers import (
     RagQuerySerializer,
@@ -41,14 +40,6 @@ from .vector_store import search_vector_store
 from .views_utils import get_user_index_name
 
 logger = get_logger(__name__)
-
-
-class SSERenderer(BaseRenderer):
-    media_type = "text/event-stream"
-    format = "txt"
-
-    def render(self, data, accepted_media_type=None, renderer_context=None):
-        return data
 
 
 class RAGQueryView(APIView):

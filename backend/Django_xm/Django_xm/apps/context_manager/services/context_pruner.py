@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.common.messages import content_to_str
 
 logger = get_logger(__name__)
 
@@ -173,7 +174,7 @@ class ContextPruner:
         """计算单条消息与查询的语义相关性分数"""
         content = msg.get("content", "")
         if isinstance(content, list):
-            content = " ".join(block.get("text", "") if isinstance(block, dict) else str(block) for block in content)
+            content = content_to_str(content)
         if not isinstance(content, str) or not content.strip():
             return 0.0
 

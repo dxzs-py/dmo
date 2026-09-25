@@ -10,7 +10,6 @@
         ShellExecApprovalPolicy,
         FileReaderApprovalPolicy,
         FsWriteFileApprovalPolicy,
-        ApprovalTimeoutHandler,
         TIMEOUT_DECISION,
     )
 
@@ -26,19 +25,15 @@ from .policies import (
 )
 from .timeout_handler import (
     TIMEOUT_DECISION,
-    ApprovalTimeoutHandler,
     build_timeout_tool_message,
-    get_timeout_handler,
 )
 
 __all__ = [
     "TIMEOUT_DECISION",
     "ApprovalMiddleware",
     "ApprovalPolicy",
-    "ApprovalTimeoutHandler",
     "FileReaderApprovalPolicy",
     "FsWriteFileApprovalPolicy",
     "ShellExecApprovalPolicy",
     "build_timeout_tool_message",
-    "get_timeout_handler",
 ]

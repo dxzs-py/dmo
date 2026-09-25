@@ -109,6 +109,12 @@ async def run_astream_loop(
             config=config,
             stream_mode=list(stream_mode),
         ):
+            """
+            # 对"单个 chunk"来说：是互斥的，不可能同时存在。
+            chunk1 → ("messages", AIMessageChunk)  → 走 messages 分支
+            chunk2 → ("updates",  {节点:...})      → 走 updates 分支
+            chunk3 → ("messages", AIMessageChunk)  → 走 messages 分支
+            """
             if check_soft_timeout and timeout_mgr is not None and timeout_mgr.check_soft_timeout():
                 logger.warning(f"[ExecutionLoop] 执行超时 (soft): {timeout_mgr.elapsed:.1f}s")
 
@@ -145,7 +151,7 @@ async def run_astream_loop(
 
         # 重复调用警告 / 子代理重试指令：注入 graph state 后以 None 续流
         if control.warnings or control.retry_messages:
-            messages_to_inject = list(control.warnings) or list(control.retry_messages)
+            messages_to_inject = list(control.warnings) + list(control.retry_messages)
             if inject_state_messages is not None:
                 logger.info(f"[ExecutionLoop] 注入 {len(messages_to_inject)} 条韧性消息到 agent 状态")
                 try:

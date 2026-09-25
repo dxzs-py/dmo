@@ -56,10 +56,14 @@ class SessionCacheInvalidationTestBase(TestCase):
         SecureSessionCacheService.cache_session(self.user.id, {"session_id": "sess-a", "title": "A"})
         SecureSessionCacheService.cache_session(self.user.id, {"session_id": "sess-b", "title": "B"})
 
+    def _is_session_cached(self, session_id):
+        """通过生产读取入口 get_cached_sessions_batch 判断单条会话是否在缓存。"""
+        return bool(SecureSessionCacheService.get_cached_sessions_batch(self.user.id, [session_id]))
+
     def _assert_both_cached(self):
         """两个会话单条 key 与列表索引均在缓存中。"""
-        self.assertIsNotNone(SecureSessionCacheService.get_cached_session(self.user.id, "sess-a"))
-        self.assertIsNotNone(SecureSessionCacheService.get_cached_session(self.user.id, "sess-b"))
+        self.assertTrue(self._is_session_cached("sess-a"))
+        self.assertTrue(self._is_session_cached("sess-b"))
         self.assertEqual(SecureSessionCacheService.get_user_sessions_list(self.user.id), ["sess-a", "sess-b"])
 
 
@@ -73,12 +77,12 @@ class SessionSaveSignalCacheTests(SessionCacheInvalidationTestBase):
         self.sess_a.title = "A-renamed"
         self.sess_a.save()  # 触发 post_save（created=False）
 
-        self.assertIsNone(
-            SecureSessionCacheService.get_cached_session(self.user.id, "sess-a"),
+        self.assertFalse(
+            self._is_session_cached("sess-a"),
             "被更新的会话单条 key 应失效",
         )
-        self.assertIsNotNone(
-            SecureSessionCacheService.get_cached_session(self.user.id, "sess-b"),
+        self.assertTrue(
+            self._is_session_cached("sess-b"),
             "未触碰的另一会话单条 key 不应失效（dj-09 根因：不再全量清空）",
         )
         self.assertEqual(
@@ -98,12 +102,12 @@ class SessionDeleteSignalCacheTests(SessionCacheInvalidationTestBase):
         with mock.patch("Django_xm.apps.ai_engine.services.cross_app.schedule_ai_data_cleanup"):
             self.sess_a.delete()  # 触发 post_delete
 
-        self.assertIsNone(
-            SecureSessionCacheService.get_cached_session(self.user.id, "sess-a"),
+        self.assertFalse(
+            self._is_session_cached("sess-a"),
             "被删除会话的单条 key 应失效",
         )
-        self.assertIsNotNone(
-            SecureSessionCacheService.get_cached_session(self.user.id, "sess-b"),
+        self.assertTrue(
+            self._is_session_cached("sess-b"),
             "未删除的另一会话单条 key 不应失效",
         )
         self.assertEqual(
@@ -129,8 +133,8 @@ class ChatSessionDetailPatchCacheTests(SessionCacheInvalidationTestBase):
 
         self.assertEqual(resp.status_code, 200, resp.content)
         self.assertEqual(resp.json()["data"]["title"], "renamed")
-        self.assertIsNone(
-            SecureSessionCacheService.get_cached_session(self.user.id, "sess-a"),
+        self.assertFalse(
+            self._is_session_cached("sess-a"),
             "重命名会话的单条 key 应失效",
         )
         self.assertEqual(
@@ -138,8 +142,8 @@ class ChatSessionDetailPatchCacheTests(SessionCacheInvalidationTestBase):
             [],
             "列表索引 key 应被删除，保证列表接口回源 DB 拿到新标题",
         )
-        self.assertIsNotNone(
-            SecureSessionCacheService.get_cached_session(self.user.id, "sess-b"),
+        self.assertTrue(
+            self._is_session_cached("sess-b"),
             "其它会话单条 key 不应被重命名操作波及",
         )
 

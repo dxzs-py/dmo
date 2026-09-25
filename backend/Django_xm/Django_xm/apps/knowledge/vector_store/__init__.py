@@ -30,8 +30,7 @@ def search_vector_store(
         raise
 
 
-# PGVector 向量存储支持（向后兼容）
-# 新抽象层导出
+# 向量存储后端抽象层
 from .base import VectorStoreBackend
 from .chroma_backend import ChromaBackend
 from .faiss_backend import FAISSBackend
@@ -41,13 +40,6 @@ from .pgvector_backend import PGVectorBackend
 from .pgvector_runtime import (
     reset_pgvector_cache,
     warm_up_pgvector_runtime,
-)
-from .pgvector_store import (
-    create_pgvector_store,
-    delete_pgvector_store,
-    get_pgvector_connection_string,
-    list_pgvector_stores,
-    load_pgvector_store,
 )
 from .registry import VectorStoreRegistry
 
@@ -61,12 +53,7 @@ __all__ = [
     # 新抽象层
     "VectorStoreBackend",
     "VectorStoreRegistry",
-    "create_pgvector_store",
-    "delete_pgvector_store",
-    "get_pgvector_connection_string",
-    "list_pgvector_stores",
-    "load_pgvector_store",
-    # PGVector 运行时（预热/缓存重置）与向后兼容
+    # PGVector 运行时（预热/缓存重置）
     "reset_pgvector_cache",
     "search_vector_store",
     "warm_up_pgvector_runtime",

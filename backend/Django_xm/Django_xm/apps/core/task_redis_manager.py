@@ -49,9 +49,6 @@ class TaskManager:
     def _get_cache_key(self, task_id: str) -> str:
         return f"{self.CACHE_PREFIX}{task_id}"
 
-    def _get_user_tasks_key(self, user_id: int) -> str:
-        return f"user_tasks:{user_id}"
-
     def create_task(
         self,
         task_type: TaskType,
@@ -91,13 +88,6 @@ class TaskManager:
         cache_key = self._get_cache_key(task_id)
         self.cache.set(cache_key, task_data, self.CACHE_TIMEOUT)
 
-        if user_id is not None:
-            user_tasks_key = self._get_user_tasks_key(user_id)
-            user_task_ids = self.cache.get(user_tasks_key, [])
-            if task_id not in user_task_ids:
-                user_task_ids.append(task_id)
-                self.cache.set(user_tasks_key, user_task_ids, self.CACHE_TIMEOUT)
-
         logger.info(f"[TaskManager] 创建任务：{task_id}, 类型：{task_type.value}")
 
         return task_id
@@ -134,52 +124,6 @@ class TaskManager:
         cache_key = self._get_cache_key(task_id)
         return self.cache.get(cache_key)
 
-    def get_user_tasks(
-        self,
-        user_id: int,
-        task_type: TaskType | None = None,
-        status: TaskStatus | None = None,
-        limit: int = 50,
-    ) -> list[dict[str, Any]]:
-        logger.debug(f"[TaskManager] 查询用户任务：user={user_id}")
-
-        user_tasks_key = self._get_user_tasks_key(user_id)
-        user_task_ids = self.cache.get(user_tasks_key, [])
-
-        tasks = []
-        for task_id in user_task_ids:
-            task_data = self.cache.get(self._get_cache_key(task_id))
-            if not task_data:
-                continue
-
-            if task_type and task_data.get("task_type") != task_type.value:
-                continue
-            if status and task_data.get("status") != status.value:
-                continue
-
-            tasks.append(task_data)
-
-        tasks.sort(key=lambda t: t.get("updated_at", ""), reverse=True)
-        return tasks[:limit]
-
-    def delete_task(self, task_id: str) -> bool:
-        cache_key = self._get_cache_key(task_id)
-        task_data = self.cache.get(cache_key)
-
-        user_id = task_data.get("user_id") if task_data else None
-
-        deleted = self.cache.delete(cache_key)
-
-        if deleted and user_id is not None:
-            user_tasks_key = self._get_user_tasks_key(user_id)
-            user_task_ids = self.cache.get(user_tasks_key, [])
-            if task_id in user_task_ids:
-                user_task_ids.remove(task_id)
-                self.cache.set(user_tasks_key, user_task_ids, self.CACHE_TIMEOUT)
-            logger.info(f"[TaskManager] 删除任务：{task_id}")
-
-        return bool(deleted)
-
 
 _task_manager: TaskManager | None = None
 
@@ -214,34 +158,3 @@ def create_task(
 def update_task_status(task_id: str, status_updates: dict[str, Any]) -> dict[str, Any] | None:
     manager = get_task_manager()
     return manager.update_task_status(task_id, status_updates)
-
-
-def get_task_status(task_id: str) -> dict[str, Any] | None:
-    manager = get_task_manager()
-    return manager.get_task_status(task_id)
-
-
-def format_task_duration(task_data: dict[str, Any]) -> str | None:
-    if not task_data.get("start_time"):
-        return None
-
-    start_time = datetime.fromisoformat(task_data["start_time"])
-    end_time = task_data.get("end_time")
-
-    if end_time:
-        end_time = datetime.fromisoformat(end_time)
-    else:
-        end_time = datetime.now(UTC)
-
-    duration = end_time - start_time
-
-    if duration.total_seconds() < 60:
-        return f"{duration.total_seconds():.1f}s"
-    elif duration.total_seconds() < 3600:
-        minutes = int(duration.total_seconds() / 60)
-        seconds = int(duration.total_seconds() % 60)
-        return f"{minutes}m{seconds}s"
-    else:
-        hours = int(duration.total_seconds() / 3600)
-        minutes = int((duration.total_seconds() % 3600) / 60)
-        return f"{hours}h{minutes}m"

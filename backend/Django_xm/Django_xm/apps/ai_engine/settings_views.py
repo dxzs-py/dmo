@@ -9,7 +9,7 @@ import logging
 from typing import Any
 
 from drf_spectacular.utils import extend_schema
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.views import APIView
 
 from Django_xm.apps.ai_engine.config import HELPER_MODEL_PRIORITY, get_available_providers
@@ -27,7 +27,6 @@ from Django_xm.apps.core.throttling import MetaRateThrottle
 from Django_xm.apps.knowledge.services.index_service import IndexManager
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.exceptions import BaseAppError
-from Django_xm.common.permissions import IsAdmin
 from Django_xm.common.responses import success_response
 
 logger = logging.getLogger(__name__)
@@ -109,11 +108,11 @@ class SandboxAvailabilityView(APIView):
 class AISettingsView(APIView):
     """全局 AI 设置视图
 
-    仅管理员可访问（IsAdmin），普通用户访问返回 403。
+    仅管理员可访问（IsAdminUser），普通用户访问返回 403。
     涉及系统级 LLM/Embedding 配置，属于敏感操作。
     """
 
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminUser]
     # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）
     throttle_classes = [MetaRateThrottle]
 
@@ -418,11 +417,11 @@ class AISettingsView(APIView):
 class RebuildIndexesView(APIView):
     """触发索引重建视图
 
-    仅管理员可访问（IsAdmin），普通用户访问返回 403。
+    仅管理员可访问（IsAdminUser），普通用户访问返回 403。
     重建索引会调整 PGVector 维度，属于高风险操作。
     """
 
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminUser]
 
     @extend_schema(exclude=True)
     def post(self, request):

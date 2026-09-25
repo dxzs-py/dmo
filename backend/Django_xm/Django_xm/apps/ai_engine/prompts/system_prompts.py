@@ -60,33 +60,6 @@ def get_system_prompt(
     return prompt
 
 
-def create_custom_prompt(
-    role: str,
-    capabilities: list,
-    principles: list,
-    additional_context: str | None = None,
-) -> str:
-    prompt_parts = [f"你是 {role}。"]
-
-    if capabilities:
-        prompt_parts.append("\n你的能力：")
-        for i, cap in enumerate(capabilities, 1):
-            prompt_parts.append(f"{i}. {cap}")
-
-    if principles:
-        prompt_parts.append("\n你的准则：")
-        for principle in principles:
-            prompt_parts.append(f"- {principle}")
-
-    if additional_context:
-        prompt_parts.append(f"\n{additional_context}")
-
-    current_time = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
-    prompt_parts.append(f"\n当前时间：{current_time}")
-
-    return "\n".join(prompt_parts)
-
-
 TOOL_USAGE_INSTRUCTIONS = """
 可用工具说明（分为两类：内置工具 和 MCP 工具）：
 
@@ -178,12 +151,6 @@ TOOL_USAGE_INSTRUCTIONS = """
 - 只在必要时引用关键片段作为佐证，且引用部分不超过3-5行
 - 如果检索结果很长，提取与用户问题直接相关的要点
 """
-
-
-def get_prompt_with_tools(mode: str = "default", mcp_tools_section: str = "（当前未加载 MCP 工具）") -> str:
-    base_prompt = get_system_prompt(mode)
-    tool_instructions = TOOL_USAGE_INSTRUCTIONS.format(mcp_tools_section=mcp_tools_section)
-    return f"{base_prompt}\n\n{tool_instructions}"
 
 
 def build_dynamic_prompt(

@@ -100,6 +100,10 @@ paths:
       operationId: approvals_list
       description: 审批列表（dj-15：真分页 + django-filter，替代 [:100] 硬截断）。
       parameters:
+      - in: query
+        name: chat_session_id
+        schema:
+          type: string
       - name: page
         required: false
         in: query
@@ -112,6 +116,38 @@ paths:
         description: 每页返回的结果数量。
         schema:
           type: integer
+      - in: query
+        name: source
+        schema:
+          type: string
+          enum:
+          - chat
+          - deep_research
+        description: |-
+          * `chat` - Chat
+          * `deep_research` - Deep Research
+      - in: query
+        name: source_id
+        schema:
+          type: string
+      - in: query
+        name: state
+        schema:
+          type: string
+          enum:
+          - approved
+          - pending
+          - processing
+          - rejected
+          - timeout
+          - waiting
+        description: |-
+          * `pending` - Pending
+          * `processing` - Processing
+          * `waiting` - Waiting
+          * `approved` - Approved
+          * `rejected` - Rejected
+          * `timeout` - Timeout
       tags:
       - approvals
       security:
@@ -825,7 +861,7 @@ paths:
           description: No response body
   /api/v1/knowledge/knowledge-bases/{kb_id}/:
     get:
-      operationId: knowledge_knowledge_bases_retrieve_2
+      operationId: knowledge_knowledge_base_detail
       parameters:
       - in: path
         name: kb_id
@@ -1173,6 +1209,18 @@ paths:
         required: true
       tags:
       - learning
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowQuestionUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/WorkflowQuestionUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/WorkflowQuestionUpdate'
+        required: true
       security:
       - jwtAuth: []
       - cookieAuth: []
@@ -1773,18 +1821,6 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/mcp/call-log/:
-    get:
-      operationId: tools_mcp_call_log_retrieve
-      tags:
-      - tools
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
   /api/v1/tools/mcp/servers/:
     get:
       operationId: tools_mcp_servers_retrieve
@@ -2045,7 +2081,7 @@ paths:
           description: No response body
   /api/v1/tools/skills/packages/{name}/:
     get:
-      operationId: tools_skills_packages_retrieve_2
+      operationId: tools_skill_package_detail
       description: Skill 包资源视图：GET 查看 SKILL.md 内容 / DELETE 卸载（name 经 URL path 传递）
       parameters:
       - in: path
@@ -2662,6 +2698,10 @@ components:
           type: boolean
           default: false
           description: 是否启用深度思考
+        enable_sandbox:
+          type: boolean
+          default: false
+          description: 是否启用沙箱执行（深度研究模式的 HIGH 级命令在容器内隔离）
         use_mcp:
           type: boolean
           default: false
@@ -3354,6 +3394,9 @@ components:
         enable_doc_analysis:
           type: boolean
           default: false
+        enable_sandbox:
+          type: boolean
+          default: false
         knowledge_base_ids:
           type: array
           items:
@@ -3445,6 +3488,10 @@ components:
           type: boolean
           default: false
           description: 是否启用文档分析
+        enable_sandbox:
+          type: boolean
+          default: false
+          description: 是否启用沙箱执行（HIGH 级命令在容器内隔离）
         knowledge_base_ids:
           type: array
           items:
@@ -3671,6 +3718,15 @@ components:
       - password
       - password_confirm
       - username
+    WorkflowQuestionUpdate:
+      type: object
+      description: 修改单题答案请求
+      properties:
+        user_answer:
+          type: string
+          description: 用户答案文本
+      required:
+      - user_answer
     WorkflowResponse:
       type: object
       description: 工作流通用响应

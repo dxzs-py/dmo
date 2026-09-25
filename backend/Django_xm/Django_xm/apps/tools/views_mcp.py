@@ -265,31 +265,6 @@ async def _test_mcp_server(server_name, target):
     }
 
 
-class McpToolCallLogView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(responses={200: EmptySerializer})
-    def get(self, request):
-        try:
-            from Django_xm.apps.tools.mcp.middleware import get_tool_call_log
-
-            log = get_tool_call_log()
-            limit = int(request.query_params.get("limit", 50))
-            records = log.get_recent(limit=limit)
-            paginator = StandardPagination()
-            page = paginator.paginate_queryset(records, request)
-            if page is not None:
-                return paginator.get_paginated_response(page)
-            return success_response(
-                data={
-                    "records": records,
-                    "total": len(records),
-                }
-            )
-        except ImportError:
-            return success_response(data={"records": [], "total": 0})
-
-
 class MethodThrottleMixin:
     """按 HTTP 方法区分限流类的 mixin。
 
@@ -877,7 +852,8 @@ class SkillPackageDetailView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(responses={200: EmptySerializer})
+    # 显式 operation_id：避免与集合视图 SkillPackageView 的自动生成 id 冲突（W001）
+    @extend_schema(operation_id="tools_skill_package_detail", responses={200: EmptySerializer})
     def get(self, request, name):
         from Django_xm.apps.tools.skills.loader import SkillLoader
 

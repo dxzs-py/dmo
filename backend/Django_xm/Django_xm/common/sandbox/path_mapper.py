@@ -78,30 +78,3 @@ def map_to_container_path(windows_path: str) -> str | None:
     except Exception as e:
         logger.warning(f"[SandboxPathMapper] 路径映射失败: path={windows_path}, error={e}")
         return None
-
-
-def map_to_host_path(container_path: str) -> str | None:
-    """将容器内路径映射回宿主路径（供结果路径回显）。
-
-    Args:
-        container_path: 容器内绝对路径（如 /workspace/research/t1/reports/x.md）
-
-    Returns:
-        宿主路径字符串，或 None（不在挂载点内）
-    """
-    if not container_path:
-        return None
-
-    data_root = _get_data_root()
-
-    # 检查是否以挂载点开头
-    if not container_path.startswith(CONTAINER_WORKSPACE):
-        return container_path  # 非挂载点路径，原样返回
-
-    # 提取相对路径
-    relative = container_path[len(CONTAINER_WORKSPACE) :].lstrip("/")
-    if not relative:
-        return data_root
-
-    # 拼接宿主路径
-    return str(PurePath(data_root) / relative)

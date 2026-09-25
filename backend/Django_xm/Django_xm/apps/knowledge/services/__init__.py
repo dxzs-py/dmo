@@ -13,21 +13,15 @@ Knowledge 服务层 - 提供知识库管理的所有服务接口
 
 from .document_service import (
     get_document_loader,
-    get_supported_extensions,
     load_document,
     load_documents_from_directory,
 )
 from .embedding_service import (
-    EMBEDDING_CONFIGS,
     CachedEmbeddings,
     get_embedding_dimension,
     get_embeddings,
-    get_embeddings_by_preset,
-    test_embeddings,
 )
-from .index_service import (
-    IndexManager,
-)
+from .index_service import IndexManager
 from .kb_service import (
     create_knowledge_base,
     delete_document,
@@ -45,20 +39,13 @@ from .rag_evaluation import (
     RAGEvaluator,
     RetrievalMetrics,
 )
-
-# FallbackEmbeddings / EMBEDDING_FALLBACK_REGISTRY 已迁移到 ai_engine.services.embedding_factory
-# 请直接使用: from Django_xm.apps.ai_engine.services.embedding_factory import FallbackEmbedding
 from .retrieval_service import (
     SearchType,
-    create_advanced_retriever,
     create_multi_query_retriever,
-    create_multi_retriever,
     create_reranker,
     create_reranking_retriever,
     create_retriever,
     create_retriever_tool,
-    get_retriever_config,
-    test_retriever,
 )
 from .splitters import (
     SplitterType,
@@ -73,7 +60,6 @@ from .strict_rag_chain import (
 )
 
 __all__ = [
-    "EMBEDDING_CONFIGS",
     "CachedEmbeddings",
     "GenerationMetrics",
     "IndexManager",
@@ -83,10 +69,8 @@ __all__ = [
     "SearchType",
     "SplitterType",
     "astream_strict_rag",
-    "create_advanced_retriever",
     "create_knowledge_base",
     "create_multi_query_retriever",
-    "create_multi_retriever",
     "create_reranker",
     "create_reranking_retriever",
     "create_retriever",
@@ -97,10 +81,7 @@ __all__ = [
     "get_document_loader",
     "get_embedding_dimension",
     "get_embeddings",
-    "get_embeddings_by_preset",
     "get_knowledge_base_detail",
-    "get_retriever_config",
-    "get_supported_extensions",
     "get_text_splitter",
     "list_documents",
     "list_knowledge_bases",
@@ -110,8 +91,6 @@ __all__ = [
     "search_knowledge_base",
     "split_documents",
     "stream_strict_rag",
-    "test_embeddings",
-    "test_retriever",
     "update_knowledge_base",
     "upload_documents",
 ]

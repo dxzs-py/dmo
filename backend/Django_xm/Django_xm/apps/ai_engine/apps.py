@@ -28,6 +28,10 @@ class AiEngineConfig(AppConfig):
 
     def ready(self):
 
+        # 注册跨应用信号 receiver：用户注销/删除、会话删除 → Celery 清理
+        # checkpoint/Store。必须显式导入，receiver 装饰器才会生效。
+        from . import signals  # noqa: F401
+
         # LangSmith 追踪配置统一入口（Task 14.1 / 16.3 / 15.6a）
         # 抽取自 agent_factory.py 与 base_builder.py 的重复实现
         # 归属 ai_engine（LangSmith 追踪是 AI 引擎职责，不应放在 core）

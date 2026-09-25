@@ -21,6 +21,7 @@ from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
 
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.common.messages import content_to_str
 
 try:
     import tiktoken as _tiktoken
@@ -256,7 +257,7 @@ class TokenEstimator:
     def estimate_messages(cls, messages: list[BaseMessage], model_name: str = "") -> int:
         total = 0
         for msg in messages:
-            total += cls.estimate_tokens(msg.content if isinstance(msg.content, str) else str(msg.content), model_name)
+            total += cls.estimate_tokens(content_to_str(msg.content), model_name)
             if hasattr(msg, "tool_calls") and msg.tool_calls:
                 for tc in msg.tool_calls:
                     total += cls.estimate_tokens(str(tc.get("args", {})), model_name)
@@ -270,11 +271,7 @@ class TokenEstimator:
             if isinstance(content, str):
                 total += cls.estimate_tokens(content, model_name)
             elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict):
-                        total += cls.estimate_tokens(block.get("text", ""), model_name)
-                    elif isinstance(block, str):
-                        total += cls.estimate_tokens(block, model_name)
+                total += cls.estimate_tokens(content_to_str(content), model_name)
             tool_calls = msg.get("tool_calls", [])
             if tool_calls:
                 for tc in tool_calls:
@@ -357,9 +354,7 @@ class EntityExtractor:
             role = msg.get("role", "")
             content = msg.get("content", "")
             if isinstance(content, list):
-                content = " ".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
-                )
+                content = content_to_str(content)
             if not isinstance(content, str) or not content.strip():
                 continue
 
@@ -500,7 +495,7 @@ class ContextCompressionEngine:
         # msg 的 content 中包含 long_term_tags 中的关键词 → LONG_TERM
         content = msg.get("content", "")
         if isinstance(content, list):
-            content = " ".join(block.get("text", "") if isinstance(block, dict) else str(block) for block in content)
+            content = content_to_str(content)
         if isinstance(content, str):
             content_lower = content.lower()
             for tag in self.config.long_term_tags:
@@ -703,9 +698,7 @@ class ContextCompressionEngine:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             if isinstance(content, list):
-                content = " ".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
-                )
+                content = content_to_str(content)
             if not isinstance(content, str) or not content.strip():
                 continue
 
@@ -1075,22 +1068,3 @@ class ContextCompressionEngine:
                 existing_contents.add(msg.get("content"))
 
         return compressed
-
-
-def create_compression_engine(
-    model_name: str | None = None,
-    strategy: str = "hybrid",
-    threshold_ratio: float = 0.8,
-    keep_recent: int = 6,
-    store: Any | None = None,
-    user_id: str | None = None,
-    thread_id: str | None = None,
-) -> ContextCompressionEngine:
-    model_limit = TokenEstimator.get_model_limit(model_name or "")
-    config = CompressionConfig(
-        max_context_tokens=model_limit,
-        token_threshold_ratio=threshold_ratio,
-        keep_recent_messages=keep_recent,
-        strategy=CompressionStrategy(strategy),
-    )
-    return ContextCompressionEngine(config, store=store, user_id=user_id, thread_id=thread_id)

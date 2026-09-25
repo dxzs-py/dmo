@@ -324,6 +324,3 @@ def execute_command(
 def get_all_commands() -> list[dict[str, Any]]:
     return [cmd.to_dict() for cmd in COMMANDS.values()]
 
-
-def get_commands_by_category(category: CommandCategory) -> list[dict[str, Any]]:
-    return [cmd.to_dict() for cmd in COMMANDS.values() if cmd.category == category]

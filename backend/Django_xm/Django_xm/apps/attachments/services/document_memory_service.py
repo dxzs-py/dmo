@@ -158,31 +158,3 @@ class DocumentMemoryService:
             logger.exception("生成文档摘要失败")
             fallback = truncated[:200].replace("\n", " ").strip()
             return f"[自动截取] {fallback}..."
-
-
-def on_attachment_uploaded(
-    user_id: int,
-    attachment_id: int,
-    doc_name: str,
-    content: str,
-    file_size: int = 0,
-    file_type: str = "",
-    store=None,
-) -> bool:
-    service = DocumentMemoryService(store=store)
-    metadata = {
-        "file_size": file_size,
-        "file_type": file_type,
-    }
-    return service.save_document(
-        user_id=user_id,
-        attachment_id=attachment_id,
-        doc_name=doc_name,
-        content=content,
-        metadata=metadata,
-    )
-
-
-def get_user_document_context(user_id: int, store=None) -> str:
-    service = DocumentMemoryService(store=store)
-    return service.build_document_context(user_id)

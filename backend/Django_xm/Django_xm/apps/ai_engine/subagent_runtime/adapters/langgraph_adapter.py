@@ -17,6 +17,7 @@ from typing import Any
 from Django_xm.apps.ai_engine.models import SubAgentStatus
 from Django_xm.apps.ai_engine.subagent_runtime.adapters.base import BaseRuntimeAdapter
 from Django_xm.apps.ai_engine.subagent_runtime.runtime import MAX_SUBAGENT_ROUNDS
+from Django_xm.common.messages import content_to_str
 
 logger = logging.getLogger(__name__)
 
@@ -602,8 +603,7 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             for msg in reversed(messages):
                 content = getattr(msg, "content", None)
                 if content:
-                    text = str(content)
-                    return text[:5000]
+                    return content_to_str(content)[:5000]
         except Exception:
             logger.exception("提取子代理结果失败（非致命）")
         return ""

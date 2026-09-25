@@ -16,7 +16,6 @@ from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.renderers import BaseRenderer
 from rest_framework.views import APIView
 
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
@@ -30,12 +29,13 @@ from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.realtime_events import publish_event_sync
 from Django_xm.common.responses import success_response
 from Django_xm.common.serializers import EmptySerializer
-from Django_xm.common.sse_utils import sse_error_event, sse_response
+from Django_xm.common.sse_utils import SSERenderer, sse_error_event, sse_response
 
 from .models import WorkflowAttempt, WorkflowQuestion, WorkflowQuestionStatus, WorkflowQuestionType, WorkflowSession
 from .serializers import (
     WorkflowAttemptSerializer,
     WorkflowQuestionSerializer,
+    WorkflowQuestionUpdateSerializer,
     WorkflowResponseSerializer,
     WorkflowSessionSerializer,
     WorkflowStartSerializer,
@@ -51,14 +51,6 @@ from .services.study_flow import (
     get_workflow_state,
     prepare_restart,
 )
-
-
-class SSERenderer(BaseRenderer):
-    media_type = "text/event-stream"
-    format = "txt"
-
-    def render(self, data, accepted_media_type=None, renderer_context=None):
-        return data
 
 
 logger = get_logger(__name__)
@@ -419,7 +411,7 @@ class WorkflowRestartStreamView(APIView):
     throttle_classes = [LearningRateThrottle]
     renderer_classes = [SSERenderer]
 
-    @extend_schema(responses={200: EmptySerializer})
+    @extend_schema(request=None, responses={200: EmptySerializer})
     def post(self, request, thread_id):
         session = WorkflowSession.objects.filter(
             thread_id=thread_id, created_by=request.user, is_deleted=False
@@ -594,7 +586,7 @@ class WorkflowQuestionUpdateView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [LearningRateThrottle]
 
-    @extend_schema(responses={200: EmptySerializer})
+    @extend_schema(request=WorkflowQuestionUpdateSerializer, responses={200: EmptySerializer})
     def put(self, request, thread_id, question_id):
         session = WorkflowSession.objects.filter(
             thread_id=thread_id, created_by=request.user, is_deleted=False

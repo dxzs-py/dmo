@@ -17,7 +17,6 @@ from django.test import SimpleTestCase
 from Django_xm.common.sandbox.path_mapper import (
     CONTAINER_WORKSPACE,
     map_to_container_path,
-    map_to_host_path,
 )
 
 
@@ -53,21 +52,3 @@ class PathMapperTests(SimpleTestCase):
         """相对路径直接拼接到 /workspace 下。"""
         self.assertEqual(map_to_container_path("research/t2"), "/workspace/research/t2")
         self.assertEqual(map_to_container_path(""), CONTAINER_WORKSPACE)
-
-    def test_map_to_host_path_roundtrip(self):
-        """容器路径回写宿主（供结果路径回显）。"""
-        host = map_to_host_path("/workspace/research/t1/reports/final_report.md")
-        expected = os.path.join(self.data_dir, "research", "t1", "reports", "final_report.md")
-        self.assertEqual(host, expected)
-
-    def test_map_to_host_path_root(self):
-        """容器根 /workspace → 宿主 DATA_DIR。"""
-        self.assertEqual(map_to_host_path("/workspace"), self.data_dir)
-
-    def test_map_to_host_path_outside_unchanged(self):
-        """非挂载点容器路径原样返回（保持原语义）。"""
-        self.assertEqual(map_to_host_path("/etc/passwd"), "/etc/passwd")
-
-    def test_map_to_host_path_empty(self):
-        """空路径 → None。"""
-        self.assertIsNone(map_to_host_path(""))

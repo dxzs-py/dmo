@@ -1,4 +1,4 @@
-"""审批状态机与查询 API 单元测试。
+"""审批状态机单元测试。
 
 覆盖 Django_xm.apps.approvals.services.approval_service 的状态机与查询链路：
 - resume_approval：pending 单条（无批次）直达 processing 的批准/拒绝/confirm_with_input
@@ -7,8 +7,6 @@
   extra 合并）、批次锁释放、同批次终态化委托、记录不存在静默跳过、重复完成幂等
 - timeout_approval：dispatch_resume=True / False 双分支（状态落库、恢复路由调用与否）、
   非 pending 幂等、锁占用跳过
-- get_pending_approvals（source_id / chat_session_id 过滤）、
-  get_approval_history_by_source（委托 Redis store 的透传契约）
 - build_approval_extra：路由 ID setdefault、tool_config / model_config 默认值
 
 mock 策略（与 test_approval_batch_resume.py 一致）：
@@ -41,8 +39,6 @@ from Django_xm.apps.approvals.services import approval_gateway, approval_service
 from Django_xm.apps.approvals.services.approval_service import (
     build_approval_extra,
     complete_approval,
-    get_approval_history_by_source,
-    get_pending_approvals,
     resume_approval,
     timeout_approval,
 )
@@ -393,52 +389,6 @@ class TimeoutApprovalTests(TestCase):
         self.assertEqual(approval.state, Approval.State.PENDING)
         self.pab_mock.assert_not_called()
         self.route_timeout_mock.assert_not_called()
-
-
-class ApprovalQueryTests(TestCase):
-    """查询 API：get_pending_approvals 过滤与 get_approval_history_by_source 委托。"""
-
-    def test_get_pending_approvals_filters_by_source_id(self) -> None:
-        """按 source_id 过滤：仅返回该 source 的 pending 记录。"""
-        _make_approval("q_p1", source_id="s1")
-        _make_approval("q_p2", source_id="s2")
-        _make_approval("q_p3", state=Approval.State.APPROVED, source_id="s1")
-        _make_approval("q_p4", state=Approval.State.PROCESSING, source_id="s1")
-
-        result_all = get_pending_approvals()
-        self.assertEqual({a.interrupt_id for a in result_all}, {"q_p1", "q_p2"})
-
-        result_s1 = get_pending_approvals(source_id="s1")
-        self.assertEqual([a.interrupt_id for a in result_s1], ["q_p1"])
-
-        result_s9 = get_pending_approvals(source_id="s9-none")
-        self.assertEqual(result_s9, [])
-
-    def test_get_pending_approvals_filters_by_chat_session_id(self) -> None:
-        """按 chat_session_id 过滤：命中该会话的 pending 记录。"""
-        _make_approval("q_c1", source_id="s1", chat_session_id="cs-A")
-        _make_approval("q_c2", source_id="s2", chat_session_id="cs-B")
-        _make_approval("q_c3", state=Approval.State.TIMEOUT, source_id="s1", chat_session_id="cs-A")
-
-        result = get_pending_approvals(chat_session_id="cs-A")
-        self.assertEqual([a.interrupt_id for a in result], ["q_c1"])
-
-        combined = get_pending_approvals(source_id="s1", chat_session_id="cs-B")
-        self.assertEqual(combined, [])
-
-    def test_get_approval_history_by_source_delegates_to_store(self) -> None:
-        """get_approval_history_by_source：透传 source_id 并原样返回 store 结果。"""
-        history = [
-            {"interrupt_id": "h1", "state": Approval.State.APPROVED},
-            {"interrupt_id": "h2", "state": Approval.State.PENDING},
-        ]
-        with mock.patch.object(
-            approval_service, "_get_approval_history_from_store", return_value=history
-        ) as store_mock:
-            result = get_approval_history_by_source("session-h")
-
-        store_mock.assert_called_once_with("session-h")
-        self.assertEqual(result, history)
 
 
 class BuildApprovalExtraTests(TestCase):

@@ -30,6 +30,7 @@ from Django_xm.apps.context_manager.services.termination_judge import (
     TerminationAction,
     TerminationSignal,
 )
+from Django_xm.common.messages import content_to_str
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +174,7 @@ class ContextManagerMiddleware(AgentMiddleware):
             last_msg = messages[-1]
             if isinstance(last_msg, AIMessage) and last_msg.content:
                 tokens = TokenEstimator.estimate_tokens(
-                    last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content),
+                    content_to_str(last_msg.content),
                     self._model_name,
                 )
                 self._termination_judge.record_token_usage(tokens)
@@ -235,7 +236,7 @@ class ContextManagerMiddleware(AgentMiddleware):
         total = 0
         for msg in messages:
             # 1. 消息内容
-            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            content = content_to_str(msg.content)
             total += TokenEstimator.estimate_tokens(content, self._model_name)
 
             # 2. 工具调用：name + args + id
@@ -267,7 +268,7 @@ class ContextManagerMiddleware(AgentMiddleware):
                 ToolMessage: "tool",
             }
             role = role_map.get(type(msg), "unknown")
-            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            content = content_to_str(msg.content)
             entry: dict[str, Any] = {"role": role, "content": content}
             if hasattr(msg, "id") and msg.id:
                 entry["id"] = msg.id
@@ -351,9 +352,7 @@ class ContextManagerMiddleware(AgentMiddleware):
                 if isinstance(content, str) and content.strip():
                     return content.strip()[:500]
                 elif isinstance(content, list):
-                    text = " ".join(
-                        block.get("text", "") if isinstance(block, dict) else str(block) for block in content
-                    )
+                    text = content_to_str(content)
                     if text.strip():
                         return text.strip()[:500]
         return None

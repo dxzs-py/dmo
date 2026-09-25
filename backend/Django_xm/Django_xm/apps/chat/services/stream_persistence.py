@@ -23,6 +23,7 @@
 import logging
 from typing import Any
 
+from Django_xm.common.tool_call_aggregation import TERMINAL_STATUSES
 from Django_xm.common.tool_call_lifecycle import service as tool_call_service
 
 logger = logging.getLogger(__name__)
@@ -40,9 +41,8 @@ _TOOL_CALL_STATUS_PRIORITY: dict[str, int] = {
     "rejected": 3,
 }
 
-# 工具调用终态集合（不可回退）。
-# 与前端 ``TERMINAL_STATUSES``（completed/failed/timeout/rejected）保持一致。
-_TOOL_CALL_TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "failed", "timeout", "rejected"})
+# 工具调用终态集合（不可回退）统一引用 common.tool_call_aggregation.TERMINAL_STATUSES
+# （全项目唯一权威，值域 completed/failed/timeout/rejected，与前端一致）。
 
 
 def _build_persisted_tool_calls(
@@ -177,7 +177,7 @@ def _evolve_tool_call(
     # 在审批 approved 时提前将 status 映射为 completed 终态，若在此整体
     # return，工具执行完成后的 result 永远无法落库，刷新/后开浏览器
     # 快照将缺失工具输出结果）。
-    if existing_status in _TOOL_CALL_TERMINAL_STATUSES:
+    if existing_status in TERMINAL_STATUSES:
         for field in ("state", "result", "error"):
             if field in new_tc and new_tc[field] is not None:
                 evolved[field] = new_tc[field]
@@ -188,7 +188,7 @@ def _evolve_tool_call(
         can_evolve_status = False
     elif new_status == existing_status:
         can_evolve_status = False  # 等值幂等，避免无意义变更
-    elif new_status in _TOOL_CALL_TERMINAL_STATUSES:
+    elif new_status in TERMINAL_STATUSES:
         can_evolve_status = True  # 非终态 → 终态
     else:
         # 两者皆非终态：按优先级演进（pending<waiting<running），拒绝回退

@@ -12,13 +12,12 @@ from django.core.exceptions import ObjectDoesNotExist
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import NotFound
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.views import APIView
 
 from Django_xm.apps.core.throttling import KnowledgeRateThrottle
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.exceptions import BaseAppError
-from Django_xm.common.permissions import IsAdmin
 from Django_xm.common.responses import success_response
 from Django_xm.common.serializers import EmptySerializer
 
@@ -144,7 +143,7 @@ class ChatAttachmentDeleteView(APIView):
 
 
 class AttachmentAdminListView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminUser]
 
     @extend_schema(operation_id="attachments_admin_list", responses={200: None})
     def get(self, request):
@@ -162,7 +161,7 @@ class AttachmentAdminListView(APIView):
 
 
 class AttachmentAdminDetailView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminUser]
 
     @extend_schema(exclude=True)
     def get(self, request, attachment_id):
@@ -187,7 +186,7 @@ class AttachmentAdminDetailView(APIView):
 
 
 class AttachmentAdminActionView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminUser]
 
     @extend_schema(exclude=True)
     def post(self, request, attachment_id):
@@ -247,7 +246,7 @@ class AttachmentAdminActionView(APIView):
 
 
 class AttachmentAdminCleanupView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminUser]
 
     @extend_schema(exclude=True)
     def post(self, request):
@@ -281,7 +280,7 @@ class AttachmentAdminCleanupView(APIView):
 
 
 class AttachmentAdminStatsView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminUser]
 
     @extend_schema(exclude=True)
     def get(self, request):
@@ -290,7 +289,7 @@ class AttachmentAdminStatsView(APIView):
 
 
 class AttachmentAdminBatchView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminUser]
 
     @extend_schema(exclude=True)
     def post(self, request):
@@ -325,7 +324,7 @@ class StorageAlertView(APIView):
     子类只覆盖 ``@extend_schema`` 装饰器，不改变任何运行时行为。
     """
 
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminUser]
 
     def get(self, request, alert_id=None):
         if alert_id:

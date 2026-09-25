@@ -9,7 +9,6 @@
 - ContextCompressionEngine.compress：SUMMARY / SLIDING_WINDOW / HYBRID 策略选择、
   LLM 摘要调用（mock 引擎内部 _get_compression_model，不发起真实请求）、
   摘要超长截断、LLM 失败回退本地摘要
-- create_compression_engine 工厂：模型上限映射与参数透传
 
 mock 点说明：LLM 调用发生在 _generate_summary → _get_compression_model() →
 model.invoke(...)，测试在引擎实例上 patch _get_compression_model 返回假模型；
@@ -37,7 +36,6 @@ from Django_xm.apps.context_manager.services.compression import (
     ContextCompressionEngine,
     SummaryQuality,
     TokenEstimator,
-    create_compression_engine,
 )
 
 
@@ -246,34 +244,6 @@ class CompressTests(unittest.TestCase):
 
         self.assertTrue(summary.startswith("对话摘要"))
         self.assertIn("如何部署服务到生产环境", summary)
-
-
-class CreateCompressionEngineTests(unittest.TestCase):
-    """create_compression_engine 工厂：模型上限映射与参数透传。"""
-
-    def test_known_model_limit_mapped_to_config(self) -> None:
-        """已知模型：max_context_tokens 取模型上限，阈值与策略按参数计算。"""
-        engine = create_compression_engine("gpt-4")
-
-        self.assertEqual(engine.config.max_context_tokens, 8192)
-        self.assertEqual(engine.config.trigger_threshold, int(8192 * 0.8))
-        self.assertIs(engine.config.strategy, CompressionStrategy.HYBRID)
-
-    def test_unknown_model_and_custom_params_passthrough(self) -> None:
-        """未知模型回退 128000；strategy/threshold_ratio/keep_recent 透传到配置。"""
-        engine = create_compression_engine(
-            "unknown-model-x", strategy="summary", threshold_ratio=0.5, keep_recent=3
-        )
-
-        self.assertEqual(engine.config.max_context_tokens, 128000)
-        self.assertEqual(engine.config.trigger_threshold, 64000)
-        self.assertIs(engine.config.strategy, CompressionStrategy.SUMMARY)
-        self.assertEqual(engine.config.keep_recent_messages, 3)
-
-    def test_no_model_name_falls_back_to_default_limit(self) -> None:
-        """未指定模型名：回退默认上限 128000。"""
-        engine = create_compression_engine()
-        self.assertEqual(engine.config.max_context_tokens, 128000)
 
 
 if __name__ == "__main__":

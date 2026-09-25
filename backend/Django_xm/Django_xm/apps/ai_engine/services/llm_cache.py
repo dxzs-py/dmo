@@ -96,63 +96,6 @@ def setup_llm_cache() -> None:
         logger.warning(f"设置全局 LLM Cache 失败: {e}")
 
 
-def setup_semantic_cache(
-    redis_url: str | None = None,
-    embedding_model: str | None = None,
-) -> None:
-    """设置 Redis 语义缓存（基于 embedding 相似度命中）
-
-    语义缓存允许"问题相似但不完全相同"的查询命中缓存。
-    需要配置 Redis + embedding 模型，否则回退到 InMemoryCache。
-
-    Args:
-        redis_url: Redis 连接字符串，默认从 settings.redis_url 读取
-        embedding_model: embedding 模型名，默认从 settings.embedding_model 读取
-    """
-    try:
-        from langchain_community.cache import RedisSemanticCache
-        from langchain_core.globals import set_llm_cache
-
-        from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
-
-        redis: str = redis_url or getattr(settings, "redis_url", "redis://127.0.0.1:6379/5")
-        model_name = embedding_model or getattr(settings, "embedding_model", "text-embedding-3-small")
-        embeddings = get_embeddings(model=model_name, use_cache=False)
-
-        semantic_cache = RedisSemanticCache(
-            redis_url=redis,
-            embedding=embeddings,
-        )
-        set_llm_cache(semantic_cache)
-        logger.info(f"语义缓存已设置 (redis={redis}, model={model_name})")
-    except ImportError:
-        try:
-            import langchain_core
-            from langchain_community.cache import RedisSemanticCache
-
-            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
-
-            redis: str = redis_url or getattr(settings, "redis_url", "redis://127.0.0.1:6379/5")
-            model_name = embedding_model or getattr(settings, "embedding_model", "text-embedding-3-small")
-            embeddings = get_embeddings(model=model_name, use_cache=False)
-
-            langchain_core.llm_cache = RedisSemanticCache(  # type: ignore[attr-defined]  # langchain compat: llm_cache module attr not in stubs
-                redis_url=redis,
-                embedding=embeddings,
-            )
-            logger.info(f"语义缓存已设置 (兼容模式, redis={redis}, model={model_name})")
-        except ImportError:
-            logger.warning(
-                "langchain_community.cache.RedisSemanticCache 不可用，请安装: pip install langchain-community redis"
-            )
-        except Exception as e:
-            logger.warning(f"设置语义缓存失败: {e}，回退到 InMemoryCache")
-            setup_llm_cache()
-    except Exception as e:
-        logger.warning(f"设置语义缓存失败: {e}，回退到 InMemoryCache")
-        setup_llm_cache()
-
-
 # ============== 速率限制器 ==============
 
 

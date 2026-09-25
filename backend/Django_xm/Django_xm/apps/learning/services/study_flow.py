@@ -143,10 +143,6 @@ class StudyFlow:
         self.graph.update_state(config={"configurable": {"thread_id": tid}}, values=new_state)
 
 
-def create_study_flow(thread_id: str | None = None, checkpointer: Any = None) -> StudyFlow:
-    return StudyFlow(thread_id=thread_id, checkpointer=checkpointer)
-
-
 _study_flow_cache: OrderedDict[str, tuple] = OrderedDict()
 _STUDY_FLOW_CACHE_MAXSIZE = 64
 _STUDY_FLOW_CACHE_TTL = 7200
@@ -633,12 +629,6 @@ def get_workflow_history(thread_id: str) -> list:
         logger.warning(f"[Study Flow] 获取历史失败: {e}")
 
     return history
-
-
-def get_study_flow_app(thread_id: str | None = None) -> StudyFlow:
-    if thread_id:
-        return _get_cached_study_flow(thread_id)
-    return StudyFlow()
 
 
 def _update_workflow_session_tokens(

@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from Django_xm.apps.context_manager.config import context_settings
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.common.messages import content_to_str
 
 logger = get_logger(__name__)
 
@@ -432,8 +433,8 @@ class ContextTerminationJudge:
         novelties: list[float] = []
         for i in range(max(1, len(recent_ai) - self._info_gain_window), len(recent_ai)):
             content = recent_ai[i].content
-            new_text = content if isinstance(content, str) else str(content)
-            context_text = " ".join(msg.content[:500] for msg in recent_ai[:i] if isinstance(msg.content, str))
+            new_text = content_to_str(content)
+            context_text = " ".join(content_to_str(msg.content)[:500] for msg in recent_ai[:i])
             novelty = self._compute_semantic_novelty(new_text, context_text)
             novelties.append(novelty)
 

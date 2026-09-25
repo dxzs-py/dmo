@@ -21,9 +21,6 @@ from Django_xm.apps.approvals.services.approval_constants import (
     APPROVAL_LOCK_TTL,
 )
 from Django_xm.apps.approvals.services.approval_store import (
-    get_approval_history as _get_approval_history_from_store,
-)
-from Django_xm.apps.approvals.services.approval_store import (
     persist_approval_pending,
     persist_approval_processed,
     persist_approval_state,
@@ -1828,20 +1825,3 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
     except Exception:
         logger.exception("[ApprovalService] 超时处理异常")
         release_lock(lock_key)
-
-
-def get_approval_history_by_source(source_id: str) -> list:
-    """获取审批历史（pending + processed 合并，直接从Redis读取）。"""
-    return _get_approval_history_from_store(source_id)
-
-
-def get_pending_approvals(source_id: str | None = None, chat_session_id: str | None = None) -> list:
-    qs = Approval.objects.filter(state=Approval.State.PENDING)
-    if source_id:
-        qs = qs.filter(source_id=source_id)
-    if chat_session_id:
-        qs = qs.filter(chat_session_id=chat_session_id)
-    return list(qs)
-
-
-get_approval_history = get_approval_history_by_source

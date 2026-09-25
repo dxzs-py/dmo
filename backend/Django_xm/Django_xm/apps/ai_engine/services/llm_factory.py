@@ -29,6 +29,7 @@ from langchain_core.messages import SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.common.messages import content_to_str
 
 from ..config import HELPER_MODEL_PRIORITY, get_model_presets, settings
 from ..providers import (
@@ -359,49 +360,6 @@ def get_chat_model(
     return primary_model
 
 
-def get_streaming_model(
-    model_name: str | None = None,
-    model_provider: str | None = None,
-    temperature: float | None = None,
-    **kwargs: Any,
-) -> BaseChatModel:
-    """创建流式模型（便捷封装，streaming=True）"""
-    return get_chat_model(
-        model_name=model_name,
-        model_provider=model_provider,
-        temperature=temperature,
-        streaming=True,
-        **kwargs,
-    )
-
-
-def get_structured_output_model(
-    model_name: str | None = None,
-    model_provider: str | None = None,
-    temperature: float = 0.0,
-    response_format: Any | None = None,
-    **kwargs: Any,
-) -> BaseChatModel:
-    """创建结构化输出模型（with_structured_output 封装）"""
-    model = get_chat_model(
-        model_name=model_name,
-        model_provider=model_provider,
-        temperature=temperature,
-        streaming=False,
-        **kwargs,
-    )
-
-    if response_format is not None:
-        try:
-            base = model.bound if hasattr(model, "bound") else model
-            model = base.with_structured_output(response_format)
-            logger.info(f"已绑定结构化输出: {getattr(response_format, '__name__', str(response_format))}")
-        except Exception as e:
-            logger.warning(f"绑定结构化输出失败: {e}，将使用普通模式")
-
-    return model
-
-
 def get_model_config(preset: str) -> dict:
     """从统一配置获取模型预设配置"""
     presets = get_model_presets()
@@ -436,22 +394,6 @@ def _get_provider_config(provider: str) -> dict[str, Any]:
             "api_key": getattr(settings, "anthropic_api_key", ""),
         }
     return {}
-
-
-def get_model_by_preset(preset: str = "default", **kwargs: Any) -> BaseChatModel:
-    """按预设创建模型（preset 来自 settings.MODEL_PRESETS）"""
-    presets = get_model_presets()
-    if preset not in presets:
-        available = ", ".join(presets.keys())
-        raise ValueError(f"未知的预设: {preset}. 可用预设: {available}")
-
-    config = presets[preset].copy()
-    config.pop("description", None)
-    model_provider = config.pop("model_provider", None)
-    config.update(kwargs)
-
-    logger.info(f"使用预设模型配置: {preset}")
-    return get_chat_model(model_provider=model_provider, **config)
 
 
 def get_model_string(
@@ -719,7 +661,7 @@ def test_model_connection(
             "model_info": {
                 "provider_id": provider_id,
                 "model_name": model_name or registry.get("default_model", ""),
-                "response_preview": str(response.content)[:100],
+                "response_preview": content_to_str(response.content)[:100],
             },
         }
     except Exception as e:

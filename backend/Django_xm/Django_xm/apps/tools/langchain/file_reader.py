@@ -173,14 +173,6 @@ def _read_image_file(file_path: Path) -> str:
         raise ValueError(f"图片识别失败: {e!s}") from e
 
 
-def is_image_file(file_path: str) -> bool:
-    return Path(file_path).suffix.lower() in IMAGE_EXTENSIONS
-
-
-def is_image_extension(ext: str) -> bool:
-    return f".{ext.lstrip('.')}" in IMAGE_EXTENSIONS
-
-
 def read_file_content(file_path: str) -> str:
     path = Path(file_path)
 

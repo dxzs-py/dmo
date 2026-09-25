@@ -16,7 +16,8 @@
 设计说明：
 - 审批等决策先落库（DB 为唯一真相源），信令仅用于即时唤醒挂起的执行协程；
   即使信令丢失，执行器挂起时周期性扫描 DB 批次决策与过期审批自愈，最终一致。
-- Redis Pub/Sub 不区分 DB，发布/订阅可使用任意 Redis 连接。
+- Redis Pub/Sub 按 DB 隔离：发布/订阅须在同一 DB 才能互通；
+  双方均经 get_signal_redis_url() 复用同一 Redis 连接串（含 DB 号），保证收发一致。
 """
 
 import json
@@ -74,7 +75,12 @@ def publish_retry_subagent_signal(
     user_id: int | None = None,
     chat_session_id: str | None = None,
 ) -> None:
-    """发布单独重启失败子代理信令（Django → 执行服务）。
+    """
+    # *参数的解释：
+    - 前面的参数：**既可以位置传参，也可以关键字传参**
+    - 后面的所有参数：**强制只能用关键字传参，不能按位置传**
+
+    发布单独重启失败子代理信令（Django → 执行服务）。
 
     执行服务收到后：会话运行中直接注入重试指令；会话已结束/服务重启恢复态
     从 checkpoint 恢复会话后注入。主 agent 收到指令后以原始入参重新调用

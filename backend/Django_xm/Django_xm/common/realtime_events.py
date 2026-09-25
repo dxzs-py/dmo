@@ -425,8 +425,8 @@ async def publish_event(
         每个 EventType 使用其 value 作为独立 ws_event_name，
         前端通过 event.type 直接区分事件子类型（不再统一映射为
         tool_call_changed / approval_changed）。
-        - 工具事件：tool_call_pending / tool_call_input_ready / tool_call_running /
-          tool_call_completed / tool_call_failed / tool_call_timeout 等
+        - 工具事件：tool_call_pending / tool_call_waiting / tool_call_running /
+          tool_call_completed / tool_call_failed / tool_call_timeout / tool_call_rejected 等
         - 审批事件：approval_pending / approval_processing / approval_approved /
           approval_rejected / approval_timeout 等
         - 流式事件：stream_event（reasoning/sources/suggestions/context/content_update）
@@ -695,29 +695,3 @@ def get_event_history(channel_type, channel_id, last_seq=None, limit=100):
     except Exception:
         logger.exception(f"[RealtimeEvents] 读取历史事件失败: {channel_type}:{channel_id}")
         return []
-
-
-def get_channel_seq(channel_type, channel_id):
-    """获取指定通道当前的最大 seq。
-
-    用于轮询兜底接口对比本地 last_seq 与服务端最新 seq，判断是否需要回放。
-
-    Args:
-        channel_type: 'user' / 'session' / 'task'
-        channel_id: 用户 ID / 会话 ID / 研究任务 ID
-
-    Returns:
-        int: 当前最大 seq，无事件时返回 0
-    """
-    try:
-        redis_client = get_redis_client()
-        key = _seq_key(channel_type, channel_id)
-        raw = redis_client.get(key)
-        if raw is None:
-            return 0
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8")
-        return int(raw)
-    except Exception:
-        logger.exception(f"[RealtimeEvents] 读取 seq 失败: {channel_type}:{channel_id}")
-        return 0

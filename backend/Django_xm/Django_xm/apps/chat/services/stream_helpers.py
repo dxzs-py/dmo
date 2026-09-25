@@ -50,7 +50,6 @@ __all__ = [
     "merge_existing_approval_fields",
     "parse_approval_interrupt_for_chat",
     "process_stream_chunk",
-    "sync_usage_from_messages",
     "update_usage_and_tokens",
 ]
 
@@ -94,37 +93,6 @@ def update_usage_and_tokens(cb, usage_tracker, token_detail_tracker=None):
             }
         )
         token_detail_tracker.finish_record()
-
-
-def sync_usage_from_messages(all_messages, usage_tracker, token_detail_tracker=None):
-    seen_ids = set()
-    for msg in reversed(all_messages):
-        if not isinstance(msg, AIMessage):
-            continue
-        msg_id = getattr(msg, "id", None)
-        if msg_id and msg_id in seen_ids:
-            continue
-        if msg_id:
-            seen_ids.add(msg_id)
-        resp_meta = getattr(msg, "response_metadata", {}) or {}
-        token_usage = resp_meta.get("token_usage", {})
-        if token_usage:
-            usage_tracker.add_input_tokens(token_usage.get("prompt_tokens", 0))
-            usage_tracker.add_output_tokens(token_usage.get("completion_tokens", 0))
-            if token_detail_tracker:
-                token_detail_tracker.update_from_metadata(
-                    {
-                        "usage_metadata": {
-                            "input_tokens": token_usage.get("prompt_tokens", 0),
-                            "output_tokens": token_usage.get("completion_tokens", 0),
-                        }
-                    }
-                )
-        usage_meta = resp_meta.get("usage_metadata", {})
-        if usage_meta:
-            usage_tracker.update_from_metadata({"usage_metadata": usage_meta})
-            if token_detail_tracker:
-                token_detail_tracker.update_from_metadata({"usage_metadata": usage_meta})
 
 
 def finalize_tool_calls(

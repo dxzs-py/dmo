@@ -15,6 +15,7 @@ from typing import Any
 from django.utils import timezone
 
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.common.messages import content_to_str
 
 from ..services._model_helper import get_chat_model_from_state
 from ..services.state import ScoreDetail, StudyFlowState
@@ -50,7 +51,7 @@ def _judge_fill_blank_semantic(model, question_text: str, correct_answer: str, u
 请只返回"正确"或"错误"。"""
     try:
         response = model.invoke([{"role": "user", "content": judge_prompt}])
-        result = str(response.content).strip()
+        result = content_to_str(response.content).strip()
         is_correct = "正确" in result and "错误" not in result
         logger.info(f"[Grading Node] 填空题 LLM 语义判断: {result}, is_correct={is_correct}")
         return is_correct

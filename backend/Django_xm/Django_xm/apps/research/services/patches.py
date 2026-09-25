@@ -29,6 +29,7 @@ from Django_xm.apps.agent_hub.services.agent_executor import (
     _HardTimeoutSignaled,
 )
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.common.messages import content_to_str
 
 logger = get_logger(__name__)
 
@@ -38,16 +39,7 @@ def _extract_ai_response(result: dict[str, Any]) -> str:
     messages = result.get("messages", [])
     for msg in reversed(messages):
         if isinstance(msg, AIMessage) and msg.content:
-            content = msg.content
-            if isinstance(content, list):
-                parts = []
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        parts.append(item.get("text", ""))
-                    elif isinstance(item, str):
-                        parts.append(item)
-                return "\n".join(parts)
-            return content
+            return content_to_str(msg.content, sep="\n")
     return ""
 
 

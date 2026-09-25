@@ -8,7 +8,6 @@ urlpatterns = [
     # MCP 只读端点（保留）
     path("mcp/tools/", views_mcp.McpToolsView.as_view(), name="mcp_tools"),
     path("mcp/status/", views_mcp.McpStatusView.as_view(), name="mcp_status"),
-    path("mcp/call-log/", views_mcp.McpToolCallLogView.as_view(), name="mcp_call_log"),
     # MCP Server 资源（显式动作路由须先于 <str:name> 注册，避免被当作资源名吞掉）
     path("mcp/servers/discover/", views_mcp.McpServerDiscoverView.as_view(), name="mcp_servers_discover"),
     path("mcp/servers/", views_mcp.McpServerView.as_view(), name="mcp_servers"),

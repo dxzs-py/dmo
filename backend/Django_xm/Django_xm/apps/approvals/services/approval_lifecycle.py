@@ -15,7 +15,6 @@
 import logging
 from datetime import UTC, datetime
 
-from asgiref.sync import sync_to_async
 from django.db import transaction
 
 from Django_xm.apps.approvals.models import Approval
@@ -104,27 +103,6 @@ class ApprovalLifecycleService:
             f"result={result}"
         )
         return result
-
-    async def complete_batch_async(
-        self,
-        graph_interrupt_id: str,
-        trigger_interrupt_id: str,
-        trigger_final_state: str,
-    ) -> dict:
-        """异步版本：通过 sync_to_async 包装同步 complete_batch。
-
-        保持与同步版本完全一致的事务语义（select_for_update + atomic）。
-        """
-
-        @sync_to_async
-        def _do():
-            return self.complete_batch(
-                graph_interrupt_id,
-                trigger_interrupt_id,
-                trigger_final_state,
-            )
-
-        return await _do()
 
     def _compute_final_state(
         self,

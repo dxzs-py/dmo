@@ -69,23 +69,6 @@ class SecureSessionCacheService:
             return []
 
     @classmethod
-    def get_cached_session(cls, user_id, session_id):
-        try:
-            cache_key = cls._get_cache_key(user_id, session_id)
-            session_data = cache.get(cache_key)
-
-            if session_data:
-                logger.debug(f"Cache hit for session {session_id} of user {user_id}")
-                return session_data
-
-            logger.debug(f"Cache miss for session {session_id} of user {user_id}")
-            return None
-
-        except Exception:
-            logger.exception("Failed to get cached session")
-            return None
-
-    @classmethod
     def get_user_sessions_list(cls, user_id):
         try:
             sessions_list_key = cls._get_user_sessions_key(user_id)
@@ -163,35 +146,3 @@ class SecureSessionCacheService:
         except Exception:
             logger.exception(f"Failed to invalidate all sessions for user {user_id}")
             return 0
-
-    @classmethod
-    def cache_messages_for_session(cls, user_id, session_id, messages):
-        try:
-            messages_key = f"{cls._get_cache_key(user_id, session_id)}:messages"
-            cache.set(messages_key, messages, timeout=cls.TIMEOUT // 2)
-            return True
-        except Exception:
-            logger.exception("Failed to cache messages")
-            return False
-
-    @classmethod
-    def get_cached_messages(cls, user_id, session_id):
-        try:
-            messages_key = f"{cls._get_cache_key(user_id, session_id)}:messages"
-            return cache.get(messages_key)
-        except Exception:
-            logger.exception("Failed to get cached messages")
-            return None
-
-    @classmethod
-    def update_session_access_time(cls, user_id, session_id):
-        try:
-            cache_key = cls._get_cache_key(user_id, session_id)
-            session_data = cache.get(cache_key)
-
-            if session_data:
-                session_data["last_accessed"] = timezone.now().isoformat()
-                cache.set(cache_key, session_data, timeout=cls.TIMEOUT)
-
-        except Exception:
-            logger.exception("Failed to update access time")

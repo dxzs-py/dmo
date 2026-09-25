@@ -153,18 +153,6 @@ class ProjectSettings(BaseSettings):
     def is_production(self) -> bool:
         return not self.debug
 
-    def ensure_data_dirs(self, base_dir: Path | None = None) -> list[Path]:
-        root = base_dir or Path(self.data_dir).resolve()
-        dirs = [
-            root,
-            root / "documents",
-            root / "indexes",
-            root / "uploads",
-        ]
-        for d in dirs:
-            d.mkdir(parents=True, exist_ok=True)
-        return dirs
-
 
 # ==================== 单例管理 ====================
 

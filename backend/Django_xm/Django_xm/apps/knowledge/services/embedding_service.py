@@ -2,8 +2,8 @@
 Embeddings 模块 - 薄壳层（thin wrapper）
 
 实际创建逻辑已迁移至 ai_engine.services.embedding_factory，
-本文件仅保留 CachedEmbeddings、get_embedding_dimension、test_embeddings、
-EMBEDDING_CONFIGS、get_embeddings_by_preset 等向后兼容 API。
+本文件保留仍被直接引用的接口：CachedEmbeddings（与 cache_manager 耦合）、
+get_embeddings、get_embedding_dimension。
 
 新的模块应该直接使用：
     from Django_xm.apps.ai_engine.services.embedding_factory import (
@@ -223,70 +223,3 @@ def get_embedding_dimension(model: str | None = None) -> int:
     except Exception as e:
         logger.warning(f"探测 Embedding 维度失败: {e}，返回默认值 1536")
         return 1536
-
-
-def test_embeddings(
-    model: str | None = None,
-    test_text: str = "这是一个测试文本",
-) -> bool:
-    """测试 Embedding 模型是否正常工作"""
-    try:
-        logger.info("测试 Embedding 模型...")
-
-        embeddings = get_embeddings(model=model, use_cache=False)
-
-        vector = embeddings.embed_query(test_text)
-        logger.info(f"   单文本嵌入: 维度={len(vector)}")
-
-        texts = [test_text, test_text + " 2", test_text + " 3"]
-        vectors = embeddings.embed_documents(texts)
-        logger.info(f"   批量嵌入: {len(vectors)} 个向量")
-
-        logger.info("Embedding 模型测试通过")
-        return True
-
-    except Exception:
-        logger.exception("Embedding 模型测试失败")
-        return False
-
-
-EMBEDDING_CONFIGS = {
-    "fast": {
-        "model": "text-embedding-3-small",
-        "description": "OpenAI 快速模型",
-    },
-    "quality": {
-        "model": "text-embedding-3-large",
-        "description": "OpenAI 高质量模型",
-    },
-    "legacy": {
-        "model": "text-embedding-ada-002",
-        "description": "OpenAI 旧版模型（不推荐）",
-    },
-    "local": {
-        "model": "BAAI/bge-small-zh-v1.5",
-        "description": "本地模型（兜底，无需 API）",
-    },
-}
-
-
-def get_embeddings_by_preset(
-    preset: str = "fast",
-    **kwargs,
-) -> Embeddings:
-    """根据预设配置获取 Embedding 模型"""
-    if preset not in EMBEDDING_CONFIGS:
-        available = ", ".join(EMBEDDING_CONFIGS.keys())
-        raise ValueError(f"未知的预设: {preset}. 可用预设: {available}")
-
-    config: dict[str, Any] = EMBEDDING_CONFIGS[preset].copy()
-    model_name = config.pop("model")
-    config.update(kwargs)
-
-    preferred = "local" if preset == "local" else None
-    logger.info(f"使用 Embedding 预设: {preset} (model={model_name})")
-    return get_embeddings(
-        model=model_name,
-        preferred_provider=preferred,
-        **config,
-    )

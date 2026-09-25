@@ -3,24 +3,21 @@ import json
 import logging
 
 from asgiref.sync import sync_to_async
-from rest_framework.renderers import BaseRenderer
 from rest_framework.views import APIView
 
 from Django_xm.apps.core.permissions import IsAuthenticatedOrQueryParam
-from Django_xm.common.sse_utils import authenticate_sse_request, sse_error_event, sse_error_response, sse_response
+from Django_xm.common.sse_utils import (
+    SSERenderer,
+    authenticate_sse_request,
+    sse_error_event,
+    sse_error_response,
+    sse_response,
+)
 
 from .models import ResearchTask
 from .services.task_manager import get_task_status
 
 logger = logging.getLogger(__name__)
-
-
-class SSERenderer(BaseRenderer):
-    media_type = "text/event-stream"
-    format = "txt"
-
-    def render(self, data, accepted_media_type=None, renderer_context=None):
-        return data
 
 
 @sync_to_async

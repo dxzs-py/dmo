@@ -18,6 +18,7 @@ from langchain_core.vectorstores import VectorStore
 from pydantic import BaseModel, Field
 
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.common.messages import content_to_str
 from Django_xm.apps.knowledge.config import settings
 
 logger = get_logger(__name__)
@@ -397,82 +398,6 @@ def create_multi_query_retriever(
         return base_retriever
 
 
-def create_advanced_retriever(
-    base_retriever: BaseRetriever,
-    llm: BaseChatModel | None = None,
-    use_reranker: bool = False,
-    use_multi_query: bool = False,
-    include_original: bool = True,
-) -> BaseRetriever:
-    retriever = base_retriever
-
-    if use_multi_query and llm is not None:
-        retriever = create_multi_query_retriever(retriever, llm=llm, include_original=include_original)
-        logger.info("高级检索器: 已启用 MultiQuery")
-
-    if use_reranker:
-        reranker = create_reranker()
-        if reranker is not None:
-            retriever = create_reranking_retriever(retriever, reranker)
-            logger.info("高级检索器: 已启用 Reranker")
-
-    logger.info("高级检索器创建完成")
-    return retriever
-
-
-def create_parent_document_retriever(
-    vector_store: VectorStore,
-    docstore=None,
-    child_splitter=None,
-    parent_splitter=None,
-    child_k: int = 20,
-    **kwargs,
-) -> BaseRetriever:
-    """
-    创建 ParentDocumentRetriever
-
-    核心思路：小块嵌入检索，返回包含该小块的完整父文档。
-    解决长文档分块后上下文碎片化问题。
-
-    Args:
-        vector_store: 用于存储子文档嵌入的向量库
-        docstore: 存储父文档的 docstore（默认 InMemoryDocstore）
-        child_splitter: 子文档分块器（小块，用于检索）
-        parent_splitter: 父文档分块器（大块，用于返回），None 表示不分块
-        child_k: 检索子文档数量
-
-    Returns:
-        ParentDocumentRetriever 实例
-    """
-    try:
-        from langchain_classic.retrievers import ParentDocumentRetriever
-    except ImportError:
-        logger.exception("ParentDocumentRetriever 不可用，请升级 langchain")
-        raise
-
-    if docstore is None:
-        from langchain_classic.storage import InMemoryStore
-
-        docstore = InMemoryStore()
-
-    if child_splitter is None:
-        from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-        child_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
-
-    retriever = ParentDocumentRetriever(
-        vectorstore=vector_store,
-        docstore=docstore,
-        child_splitter=child_splitter,
-        parent_splitter=parent_splitter,
-        search_kwargs={"k": child_k},
-        **kwargs,
-    )
-
-    logger.info(f"ParentDocumentRetriever 创建成功 (child_k={child_k})")
-    return retriever
-
-
 class _RetrieverToolInput(BaseModel):
     query: str = Field(description="搜索查询")
     retrieval_mode: str | None = Field(default=None, description="检索模式: auto/precise/comprehensive")
@@ -747,33 +672,6 @@ def create_retriever_tool(
         raise
 
 
-def test_retriever(
-    retriever: BaseRetriever,
-    query: str = "测试查询",
-    show_results: bool = True,
-) -> bool:
-    """测试检索器是否正常工作"""
-    try:
-        logger.info(f"🧪 测试检索器: query='{query}'")
-
-        docs = retriever.invoke(query)
-
-        logger.info(f"✅ 检索成功: 找到 {len(docs)} 个文档")
-
-        if show_results and docs:
-            logger.info("📄 检索结果:")
-            for i, doc in enumerate(docs, 1):
-                logger.info(f"   [{i}] {doc.page_content[:100]}...")
-                if doc.metadata:
-                    logger.info(f"       元数据: {doc.metadata}")
-
-        return True
-
-    except Exception:
-        logger.exception("❌ 检索器测试失败")
-        return False
-
-
 _INTENT_CLASSIFICATION_PROMPT = """分析用户查询的意图类型：
 
 1. precise - 精准查找：需要定位特定文档/数据/事实，答案通常在1-2个文档中。特征：包含具体名称、编号、日期等
@@ -854,7 +752,7 @@ class QueryIntentClassifier:
                 [HumanMessage(content=prompt)],
                 config={"timeout": 3, "callbacks": [], "tags": ["nostream"]},  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
             )
-            intent = self._parse_intent(str(response.content) if hasattr(response, "content") else str(response))
+            intent = self._parse_intent(content_to_str(response.content) if hasattr(response, "content") else str(response))
             self._set_cache(query, intent)
             logger.info(f"意图分类: query='{query[:50]}...' -> {intent}")
             return intent
@@ -888,7 +786,7 @@ class QueryIntentClassifier:
                 llm.ainvoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]}),  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
                 timeout=3.0,
             )
-            intent = self._parse_intent(str(response.content) if hasattr(response, "content") else str(response))
+            intent = self._parse_intent(content_to_str(response.content) if hasattr(response, "content") else str(response))
             self._set_cache(query, intent)
             logger.info(f"意图分类: query='{query[:50]}...' -> {intent}")
             return intent
@@ -987,7 +885,7 @@ class MapReduceDocCombiner:
             prompt = _MAP_PROMPT_TEMPLATE.format(doc=doc.page_content, question=query)
             try:
                 response = llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]})  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
-                content = str(response.content) if hasattr(response, "content") else str(response)
+                content = content_to_str(response.content) if hasattr(response, "content") else str(response)
                 results.append(content)
             except Exception as e:
                 logger.warning(f"Map 阶段文档处理失败: {e}")
@@ -1010,7 +908,7 @@ class MapReduceDocCombiner:
                 logger.warning(f"Map 阶段文档处理失败: {resp}")
                 results.append("")
             else:
-                content = str(resp.content) if hasattr(resp, "content") else str(resp)
+                content = content_to_str(resp.content) if hasattr(resp, "content") else str(resp)
                 results.append(content)
         return results
 
@@ -1029,7 +927,7 @@ class MapReduceDocCombiner:
             prompt = _STUFF_PROMPT_TEMPLATE.format(context=context, question=query)
             try:
                 response = llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]})  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
-                result = str(response.content) if hasattr(response, "content") else str(response)
+                result = content_to_str(response.content) if hasattr(response, "content") else str(response)
                 if "[NO_RELEVANT_INFO]" in result:
                     logger.warning("Stuff 策略 LLM 判定无相关信息，回退到原始文档")
                     return context
@@ -1060,7 +958,7 @@ class MapReduceDocCombiner:
         reduce_prompt = _REDUCE_PROMPT_TEMPLATE.format(summaries=combined, question=query)
         try:
             response = llm.invoke([HumanMessage(content=reduce_prompt)], config={"callbacks": [], "tags": ["nostream"]})  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
-            result = str(response.content) if hasattr(response, "content") else str(response)
+            result = content_to_str(response.content) if hasattr(response, "content") else str(response)
             # 限制 Reduce 结果长度，避免返回过多内容给 LLM
             if len(result) > 3000:
                 result = result[:3000].rstrip() + "\n\n[内容已截断，以上为最相关的核心要点摘要]"
@@ -1087,7 +985,7 @@ class MapReduceDocCombiner:
                 response = await llm.ainvoke(
                     [HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]}  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
                 )
-                result = str(response.content) if hasattr(response, "content") else str(response)
+                result = content_to_str(response.content) if hasattr(response, "content") else str(response)
                 if "[NO_RELEVANT_INFO]" in result:
                     logger.warning("Stuff 策略 LLM 判定无相关信息，回退到原始文档")
                     return context
@@ -1120,7 +1018,7 @@ class MapReduceDocCombiner:
             response = await llm.ainvoke(
                 [HumanMessage(content=reduce_prompt)], config={"callbacks": [], "tags": ["nostream"]}  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
             )
-            result = str(response.content) if hasattr(response, "content") else str(response)
+            result = content_to_str(response.content) if hasattr(response, "content") else str(response)
             # 限制 Reduce 结果长度，避免返回过多内容给 LLM
             if len(result) > 3000:
                 result = result[:3000].rstrip() + "\n\n[内容已截断，以上为最相关的核心要点摘要]"
@@ -1130,128 +1028,3 @@ class MapReduceDocCombiner:
             logger.warning(f"Reduce 阶段失败，返回合并摘要: {e}")
             return combined
 
-
-class _RRFEnsembleRetriever(BaseRetriever):
-    """基于 Reciprocal Rank Fusion 的组合检索器
-
-    替代已从 langchain_community 0.4+ 移除的 EnsembleRetriever。
-    使用加权 RRF 算法合并多个检索器的结果。
-    """
-
-    retrievers: list[BaseRetriever] = Field(default_factory=list)
-    weights: list[float] = Field(default_factory=list)
-    c: int = Field(default=60, description="RRF 常数，通常为 60")
-    k: int = Field(default=4, description="最终返回的文档数")
-
-    class Config:
-        arbitrary_types_allowed = True
-
-    def _get_relevant_documents(self, query: str) -> list[Document]:
-        doc_scores: dict = {}
-        doc_map: dict = {}
-
-        for retriever, weight in zip(self.retrievers, self.weights, strict=False):
-            try:
-                docs = retriever.invoke(query)
-            except Exception as e:
-                logger.warning(f"检索器 {retriever} 调用失败: {e}")
-                continue
-
-            for rank, doc in enumerate(docs, 1):
-                content_key = doc.page_content
-                if content_key not in doc_scores:
-                    doc_scores[content_key] = 0.0
-                    doc_map[content_key] = doc
-                doc_scores[content_key] += weight / (self.c + rank)
-
-        sorted_items = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
-        return [doc_map[k] for k, _ in sorted_items[: self.k]]
-
-    async def _aget_relevant_documents(self, query: str) -> list[Document]:
-        doc_scores: dict = {}
-        doc_map: dict = {}
-
-        for retriever, weight in zip(self.retrievers, self.weights, strict=False):
-            try:
-                docs = await retriever.ainvoke(query)
-            except Exception:
-                try:
-                    docs = await asyncio.to_thread(retriever.invoke, query)
-                except Exception as e:
-                    logger.warning(f"检索器 {retriever} 调用失败: {e}")
-                    continue
-
-            for rank, doc in enumerate(docs, 1):
-                content_key = doc.page_content
-                if content_key not in doc_scores:
-                    doc_scores[content_key] = 0.0
-                    doc_map[content_key] = doc
-                doc_scores[content_key] += weight / (self.c + rank)
-
-        sorted_items = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
-        return [doc_map[k] for k, _ in sorted_items[: self.k]]
-
-
-def create_multi_retriever(
-    retrievers: list,
-    weights: list | None = None,
-    **kwargs,
-) -> BaseRetriever:
-    """创建多检索器（基于 RRF 的组合检索器）"""
-    try:
-        logger.info(f"🔗 创建组合检索器: {len(retrievers)} 个检索器")
-
-        if weights is None:
-            weights = [1.0 / len(retrievers)] * len(retrievers)
-
-        k = kwargs.pop("k", 4)
-        c = kwargs.pop("c", 60)
-
-        ensemble = _RRFEnsembleRetriever(
-            retrievers=retrievers,
-            weights=weights,
-            k=k,
-            c=c,
-        )
-
-        logger.info("✅ 组合检索器创建成功")
-        return ensemble
-
-    except Exception:
-        logger.exception("❌ 创建组合检索器失败")
-        raise
-
-
-def get_retriever_config(search_type: str = "similarity") -> dict:
-    """获取推荐的检索器配置"""
-    configs = {
-        "similarity": {
-            "search_type": "similarity",
-            "k": 4,
-            "description": "基本相似度检索，速度快",
-        },
-        "mmr": {
-            "search_type": "mmr",
-            "k": 4,
-            "fetch_k": 20,
-            "description": "最大边际相关性检索，结果更多样化",
-        },
-        "threshold": {
-            "search_type": "similarity_score_threshold",
-            "score_threshold": 0.7,
-            "k": 10,
-            "description": "相似度阈值过滤，只返回高质量结果",
-        },
-    }
-
-    if search_type not in configs:
-        logger.warning(f"未知的检索类型: {search_type}，使用默认配置")
-        return configs["similarity"]
-
-    config = configs[search_type].copy()
-    logger.info(f"📋 推荐的检索器配置 ({search_type}):")
-    logger.info(f"   {config.get('description', '')}")
-
-    config.pop("description", None)
-
-    return config

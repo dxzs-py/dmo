@@ -69,10 +69,3 @@ def get_registered_builders() -> dict[AgentType, type[Any]]:
     """
     return dict(_builder_registry)
 
-
-def clear_registry() -> None:
-    """清空注册表。
-
-    .. warning:: 仅用于测试隔离，生产代码不应调用。
-    """
-    _builder_registry.clear()

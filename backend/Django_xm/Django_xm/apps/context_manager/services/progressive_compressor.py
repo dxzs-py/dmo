@@ -13,6 +13,7 @@ from Django_xm.apps.context_manager.services.compression import (
     TokenEstimator,
 )
 from Django_xm.apps.context_manager.services.context_pruner import ContextPruner
+from Django_xm.common.messages import content_to_str
 
 logger = logging.getLogger(__name__)
 
@@ -272,9 +273,7 @@ class ProgressiveCompressor:
             for msg in short_term_msgs[:-recent_count] if len(short_term_msgs) > recent_count else []:
                 content = msg.get("content", "")
                 if isinstance(content, list):
-                    content = " ".join(
-                        block.get("text", "") if isinstance(block, dict) else str(block) for block in content
-                    )
+                    content = content_to_str(content)
                 if isinstance(content, str) and msg.get("role") == "assistant":
                     import re
 

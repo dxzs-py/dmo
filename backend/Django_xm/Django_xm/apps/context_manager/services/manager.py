@@ -41,6 +41,7 @@ from Django_xm.apps.context_manager.services.knowledge_graph import (
 )
 from Django_xm.apps.context_manager.services.token_budget import ContextEfficiencyMetrics, TokenBudgetManager
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.common.messages import content_to_str
 
 logger = get_logger(__name__)
 
@@ -153,9 +154,7 @@ class ContextManager:
             # content 中包含 tags 中关键词的消息标记为 long_term
             content = msg.get("content", "")
             if isinstance(content, list):
-                content = " ".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
-                )
+                content = content_to_str(content)
             if isinstance(content, str):
                 content_lower = content.lower()
                 if any(tag.lower() in content_lower for tag in effective_tags):
@@ -185,9 +184,7 @@ class ContextManager:
             role = msg.get("role", "")
             content = msg.get("content", "")
             if isinstance(content, list):
-                content = " ".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
-                )
+                content = content_to_str(content)
 
             # 已标记的跳过
             if msg.get("memory_tier") == MemoryTier.LONG_TERM.value:
@@ -641,7 +638,7 @@ class ContextManager:
                 ToolMessage: "tool",
             }
             role = role_map.get(type(msg), "unknown")
-            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            content = content_to_str(msg.content)
             entry: dict[str, Any] = {"role": role, "content": content}
             if hasattr(msg, "tool_calls") and msg.tool_calls:
                 entry["tool_calls"] = msg.tool_calls
@@ -657,7 +654,7 @@ class ContextManager:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             if isinstance(content, list):
-                content = " ".join(c.get("text", str(c)) if isinstance(c, dict) else str(c) for c in content)
+                content = content_to_str(content)
             parts.append(f"[{role}]: {content}")
         return "\n".join(parts)
 

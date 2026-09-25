@@ -74,7 +74,8 @@ class KnowledgeBaseListView(APIView):
 class KnowledgeBaseDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(responses={200: EmptySerializer})
+    # 显式 operation_id：避免与集合视图 KnowledgeBaseListView 的自动生成 id 冲突（W001）
+    @extend_schema(operation_id="knowledge_knowledge_base_detail", responses={200: EmptySerializer})
     def get(self, request, kb_id):
         try:
             data = get_knowledge_base_detail(request.user, kb_id)

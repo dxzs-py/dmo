@@ -6,17 +6,6 @@ Chat 跨 app 服务层 - 供其他 app 调用的接口
 
 from django.apps import apps
 
-from ..models import ChatMode
-
-
-def get_chat_session(session_id, user=None):
-    """获取聊天会话（返回对象或 None）"""
-    ChatSession = apps.get_model("chat", "ChatSession")
-    qs = ChatSession.objects.filter(session_id=session_id, is_deleted=False)
-    if user is not None:
-        qs = qs.filter(user=user)
-    return qs.first()
-
 
 def get_chat_session_strict(session_id, user):
     """获取聊天会话，不存在则抛出 DoesNotExist"""
@@ -33,25 +22,6 @@ def clear_knowledge_base_selection(user_id=None, kb_name=None):
     if kb_name is not None:
         qs = qs.filter(selected_knowledge_base=kb_name)
     qs.update(selected_knowledge_base="")
-
-
-def soft_delete_session(session_id):
-    """软删除会话，返回是否成功
-
-    checkpoint/Store 数据清理已由 chat/signals.py 的 on_session_delete
-    通过自定义信号 ai_data_cleanup_needed 委托给 ai_engine 的 Celery 任务处理。
-    """
-    ChatSession = apps.get_model("chat", "ChatSession")
-    session = ChatSession.objects.filter(session_id=session_id, is_deleted=False).first()
-    if session:
-        session.soft_delete()
-        return True
-    return False
-
-
-def get_chat_mode_labels():
-    """获取聊天模式标签映射 {value: label}"""
-    return {m.value: m.label for m in ChatMode}
 
 
 # ── 供 research 应用调用的服务封装（消除 research → chat.models 直接导入） ────

@@ -23,6 +23,7 @@ from typing import Any, ClassVar
 from pydantic import BaseModel, Field
 
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.common.messages import content_to_str
 
 logger = get_logger(__name__)
 
@@ -191,9 +192,7 @@ class ConversationGraphExtractor:
             role = msg.get("role", "")
             content = msg.get("content", "")
             if isinstance(content, list):
-                content = " ".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
-                )
+                content = content_to_str(content)
             if not isinstance(content, str) or not content.strip():
                 continue
 
@@ -405,9 +404,7 @@ class ConversationGraphExtractor:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             if isinstance(content, list):
-                content = " ".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
-                )
+                content = content_to_str(content)
             if not isinstance(content, str) or not content.strip():
                 continue
             prefix = {"user": "用户", "assistant": "助手", "system": "系统"}.get(role, role)

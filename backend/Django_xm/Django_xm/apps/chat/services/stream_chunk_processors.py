@@ -26,6 +26,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from Django_xm.common.event_schema import EventSource, EventType
+from Django_xm.common.messages import content_to_str
 from Django_xm.common.tool_call_aggregation import STATE_TO_STATUS
 
 logger = logging.getLogger(__name__)
@@ -494,7 +495,8 @@ def _handle_ai_message_chunk(
             if accumulated_reasoning is not None:
                 prev_pending = accumulated_reasoning.get("_pending_content", "")
                 # message.content 可能是 str 或 list[ContentBlock]，统一转为 str 拼接
-                chunk_text = message.content if isinstance(message.content, str) else str(message.content)
+                # 流式 token 连续拼接，sep="" 避免在片段间插入空格
+                chunk_text = content_to_str(message.content, sep="")
                 accumulated_reasoning["_pending_content"] = prev_pending + chunk_text
                 _sync_pending_to_stream_state(accumulated_reasoning)
         else:

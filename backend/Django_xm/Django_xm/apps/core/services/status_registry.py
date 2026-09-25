@@ -90,10 +90,3 @@ def get_status_by_name(name: str) -> dict[str, Any]:
         "connection": "unregistered",
         "error": f"未注册的状态提供者: {name}",
     }
-
-
-def clear_status_providers() -> None:
-    """清空注册表（仅供测试使用）。"""
-    with _lock:
-        _providers.clear()
-        _provider_names.clear()

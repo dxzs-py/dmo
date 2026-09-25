@@ -469,16 +469,6 @@ class ToolCallLifecycleService:
             ctx["message_id"] = str(message_id)
             cache.set(key, ctx, _TC_CTX_TTL)
 
-    def bind_graph_interrupt_id(self, tool_call_id: str, graph_interrupt_id: str) -> None:
-        """补全批量审批批次 ID（ApprovalMiddleware 创建审批时调用）。"""
-        if not graph_interrupt_id:
-            return
-        key = f"{_TC_CTX_PREFIX}:{tool_call_id}"
-        ctx = cache.get(key) or {}
-        if not ctx.get("graph_interrupt_id"):
-            ctx["graph_interrupt_id"] = graph_interrupt_id
-            cache.set(key, ctx, _TC_CTX_TTL)
-
     def bind_position(self, tool_call_id: str, position: int | None) -> None:
         """补全工具调用的图层内 position（执行层在首次 PENDING 事件前调用）。
 
@@ -827,15 +817,6 @@ class ToolCallLifecycleService:
         if isinstance(position, int) and position >= 0:
             entry["position"] = position
         return entry
-
-    def clear_context(self, tool_call_id: str) -> None:
-        """清除工具调用上下文（工具进入终态后可调用，释放 Redis 空间）。"""
-        cache.delete(f"{_TC_CTX_PREFIX}:{tool_call_id}")
-        # 清除 legacy（无指纹）去重 key；指纹去重 key（tool_call:published:{id}:{type}:{fp}）
-        # 无法枚举全部指纹，依赖 24h TTL 自动过期（_TC_CTX_TTL）
-        for event_type in EventType:
-            if event_type.value.startswith("tool_call_"):
-                cache.delete(f"{_PUBLISHED_KEY_PREFIX}:{tool_call_id}:{event_type.value}")
 
 
 # 模块级单例

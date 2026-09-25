@@ -340,19 +340,6 @@ def get_settings() -> Settings:
     return _settings_instance
 
 
-def validate_settings() -> None:
-    s = get_settings()
-    try:
-        s.validate_required_keys()
-    except ValueError as e:
-        if s.debug:
-            import warnings
-
-            warnings.warn(str(e), stacklevel=2)
-        else:
-            raise
-
-
 settings = get_settings()
 
 

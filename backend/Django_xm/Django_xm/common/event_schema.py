@@ -6,9 +6,14 @@
 事件类型分层：
 - 工具调用生命周期事件（7 个）：覆盖 pending → waiting/running →
   completed/failed/timeout/rejected 的完整状态机
-- 审批事件（5 个）：覆盖 pending → processing → approved/rejected/timeout
-- 流式事件（5 个）：reasoning/sources/suggestions/context/content_update
-- 会话/消息事件（5 个）：session_created/updated/deleted + message_updated/deleted
+- 审批事件（6 个）：pending / processing / waiting / approved / rejected / timeout
+- 流式事件（11 个）：started / completed / finalized / interrupted +
+  reasoning / sources / suggestions / context / content_update +
+  subagent_content / stream_event 通用事件
+- 会话事件（3 个）：session_created / updated / deleted
+- 消息事件（7 个）：message_added / updated / deleted / messages_deleted +
+  regenerated / regenerate_reverted / finalized
+- 另有子代理状态（subagent_status_change）、任务（5 个）、工作流（4 个）事件
 
 状态由 event_type 本身表达，payload 不再携带 state 字段（审批事件除外，
 审批 state 字段保留用于前端 ApprovalStore 的状态映射，与 event_type 1:1 对应）。
@@ -146,7 +151,8 @@ class ToolCallLifecyclePayload(TypedDict, total=False):
     """工具调用生命周期事件 payload（统一 schema）。
 
     所有字段均为可选（total=False），但发布时调用方必须提供 tool_call_id、tool_name、
-    source、source_id、message_id、parameters 六个核心字段，由 validate_payload 强制校验。
+    source、source_id、parameters 五个核心字段，由 validate_payload 强制校验；
+    message_id 为可选字段（learning 模块无 chat message，未知时传 ''，不强制校验）。
 
     注意：不包含 state 字段，状态由 event_type 本身表达。
     前端通过 event.type（ws_event_name）直接区分工具事件子类型
@@ -156,9 +162,9 @@ class ToolCallLifecyclePayload(TypedDict, total=False):
     - tool_call_id 为唯一主键（= LLM AIMessage.tool_calls[].id）
     - source 为业务模块（CHAT/DEEP_RESEARCH/LEARNING），三模块共享同一 schema
     - source_id 为模块实例 ID（chat=session_id, deep_research=task_id, learning=thread_id）
-    - session_id / task_id 为路由字段，由 RealtimeSyncService._resolve_channels 自动填充
+    - session_id / task_id 为路由字段，由 realtime_sync._resolve_channels 自动填充
     - cross_module_id 为跨模块同步目标 ID（仅 DEEP_RESEARCH 关联 chat 时为 chat_session_id）
-    - parameters 必填（空参数必须传 {}），message_id 必填（未知时传 ''）
+    - parameters 必填（空参数必须传 {}），message_id 可选（learning 模块无 chat message，未知时传 ''）
     - graph_interrupt_id 为批量审批批次 ID（同批次审批共享）
 
     子 agent 嵌套层级字段（Phase E3，与 ApprovalPayload 对齐）：
@@ -174,7 +180,7 @@ class ToolCallLifecyclePayload(TypedDict, total=False):
     source_id: str  # 模块实例 ID（= session_id 或 task_id，必填）
     session_id: str | None  # 路由字段：chat/learning 场景的会话 ID
     task_id: str | None  # 路由字段：独立深度研究场景的任务 ID
-    message_id: str  # 关联的消息 ID（必填，未知时传 ''）
+    message_id: str  # 关联的消息 ID（可选，learning 模块无 chat message，未知时传 ''）
     parameters: dict  # 工具输入参数（必填，空参数传 {}）
     result: Any | None  # 工具执行结果（COMPLETED 事件必填）
     error: str | None  # 错误信息（FAILED 事件必填）
@@ -216,7 +222,7 @@ class ApprovalPayload(TypedDict, total=False):
     - source 为业务模块（CHAT/DEEP_RESEARCH/LEARNING）
     - source_id 为模块实例 ID（chat=session_id, deep_research=task_id, learning=thread_id）
     - cross_module_id 为跨模块同步目标 ID（仅 DEEP_RESEARCH 关联 chat 时为 chat_session_id）
-    - parameters 必填（审批面板展示用），message_id 必填（未知时传 ''）
+    - parameters 必填（审批面板展示用），message_id 可选（learning 模块无 chat message，未知时传 ''）
     - graph_interrupt_id 为批量审批批次 ID（同批次审批共享）
     """
 
@@ -229,7 +235,7 @@ class ApprovalPayload(TypedDict, total=False):
     task_id: str | None  # 路由字段：独立深度研究场景的任务 ID
     state: str  # 审批状态（pending/processing/approved/rejected/timeout，必填）
     parameters: dict  # 工具输入参数（必填，审批面板展示用，空参数传 {}）
-    message_id: str  # 关联的消息 ID（必填，未知时传 ''）
+    message_id: str  # 关联的消息 ID（可选，learning 模块无 chat message，未知时传 ''）
     graph_interrupt_id: str | None  # 批量审批批次 ID（同批次审批共享）
     cross_module_id: str | None  # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
     operation: str | None  # 审批操作描述
@@ -253,7 +259,7 @@ class ToolCallRejectedPayload(TypedDict, total=False):
     识别该事件，将工具卡片状态更新为 rejected。
 
     标准化（统一通用，三模块共享）：
-    - parameters 必填（空参数传 {}），message_id 必填（未知时传 ''）
+    - parameters 必填（空参数传 {}），message_id 可选（learning 模块无 chat message，未知时传 ''）
     - cross_module_id 为跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
     """
 
@@ -263,7 +269,7 @@ class ToolCallRejectedPayload(TypedDict, total=False):
     source_id: str  # 模块实例 ID（= session_id 或 task_id，必填）
     session_id: str | None  # 路由字段：chat/learning 场景的会话 ID
     task_id: str | None  # 路由字段：独立深度研究场景的任务 ID
-    message_id: str  # 关联的消息 ID（必填，未知时传 ''）
+    message_id: str  # 关联的消息 ID（可选，learning 模块无 chat message，未知时传 ''）
     parameters: dict  # 工具输入参数（必填，空参数传 {}）
     graph_interrupt_id: str | None  # 批量审批批次 ID（同批次审批共享）
     cross_module_id: str | None  # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
@@ -336,7 +342,7 @@ _PAYLOAD_TYPE_MAP: dict[EventType, type] = {
 _REQUIRED_FIELDS: dict[EventType, tuple[str, ...]] = {
     # 工具调用生命周期事件：5 个核心字段必填（三模块共享）
     # parameters 必填（空参数传 {}），message_id 可选（learning 模块无 chat message）
-    # session_id/task_id 二选一路由，由 RealtimeSyncService._resolve_channels 自动填充，不在必填校验中
+    # session_id/task_id 二选一路由，由 realtime_sync._resolve_channels 自动填充，不在必填校验中
     EventType.TOOL_CALL_PENDING: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
     EventType.TOOL_CALL_WAITING: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
     EventType.TOOL_CALL_RUNNING: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),

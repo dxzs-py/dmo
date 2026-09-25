@@ -1,8 +1,8 @@
 """
 全局错误码定义
 
-每个错误码携带默认消息和 HTTP 状态码，新增错误码只需在此处添加，
-无需同步修改 responses.py 的 _infer_http_status。
+每个错误码携带默认消息和 HTTP 状态码，新增错误码只需在此处添加；
+HTTP 状态码由本模块 infer_error_code_from_http_status 统一推断。
 """
 
 from enum import IntEnum

@@ -255,6 +255,9 @@ class ApprovalListView(generics.ListAPIView):
 
     permission_classes = [IsAuthenticated]
     serializer_class = ApprovalReadSerializer
+    # 显式空 queryset：drf-spectacular 生成 schema 时无请求上下文，会以 AnonymousUser
+    # 求值 get_queryset() 触发告警；实际查询仍由下方 get_queryset() 覆写提供。
+    queryset = Approval.objects.none()
     filter_backends = [DjangoFilterBackend]
     filterset_class = ApprovalFilter
     pagination_class = ProjectPagination

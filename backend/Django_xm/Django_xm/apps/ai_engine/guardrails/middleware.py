@@ -37,7 +37,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 
-from Django_xm.common.messages import content_to_str
+from Django_xm.common.messages import content_to_str, message_text
 
 from .content_filters import ContentFilter
 from .input_validators import InputValidator
@@ -516,7 +516,7 @@ class GuardrailsMiddleware(AgentMiddleware):
         messages = state.get("messages", [])
         for msg in reversed(messages):
             if isinstance(msg, HumanMessage):
-                query = content_to_str(msg.content)[:100]
+                query = message_text(msg)[:100]
                 break
         logger.info(f"[Guardrails] Agent 开始执行, 查询: {query}...")
         return None
@@ -586,7 +586,7 @@ class GuardrailsMiddleware(AgentMiddleware):
                     last_user_msg = msg.content
                     break
             if last_user_msg:
-                self._validate_input(content_to_str(last_user_msg), "模型输入")
+                self._validate_input(message_text(last_user_msg), "模型输入")
 
         response = handler(request)
 
@@ -630,7 +630,7 @@ class GuardrailsMiddleware(AgentMiddleware):
 
         output_text = ""
         if isinstance(result, ToolMessage):
-            output_text = str(result.content) if result.content else ""
+            output_text = content_to_str(result.content)
         elif isinstance(result, str):
             output_text = result
 
@@ -700,7 +700,7 @@ class GuardrailsMiddleware(AgentMiddleware):
 
         output_text = ""
         if isinstance(result, ToolMessage):
-            output_text = str(result.content) if result.content else ""
+            output_text = content_to_str(result.content)
         elif isinstance(result, str):
             output_text = result
 
@@ -747,7 +747,7 @@ class PIIMiddleware(AgentMiddleware):
         if messages:
             for i, msg in enumerate(messages):
                 if isinstance(msg, HumanMessage):
-                    filter_result = self._content_filter.filter_input(content_to_str(msg.content))
+                    filter_result = self._content_filter.filter_input(message_text(msg))
                     if not filter_result.is_safe:
                         if self.reject_on_pii:
                             raise ValueError("输入包含个人身份信息(PII)，已被安全策略拒绝")
@@ -767,7 +767,7 @@ class PIIMiddleware(AgentMiddleware):
         if messages:
             for i, msg in enumerate(messages):
                 if isinstance(msg, HumanMessage):
-                    filter_result = self._content_filter.filter_input(content_to_str(msg.content))
+                    filter_result = self._content_filter.filter_input(message_text(msg))
                     if not filter_result.is_safe:
                         if self.reject_on_pii:
                             raise ValueError("输入包含个人身份信息(PII)，已被安全策略拒绝")
@@ -957,102 +957,6 @@ def build_middleware_stack(
         stack.extend(extra_middleware)
 
     return stack
-
-
-def create_guardrails_runnable(
-    runnable,
-    input_validator: InputValidator | None = None,
-    output_validator: OutputValidator | None = None,
-    validate_input: bool = True,
-    validate_output: bool = True,
-    raise_on_error: bool = True,
-):
-    from langchain_core.runnables import RunnableLambda
-
-    middleware = GuardrailsMiddleware(
-        input_validator=input_validator,
-        output_validator=output_validator,
-        raise_on_error=raise_on_error,
-    )
-
-    components = []
-
-    if validate_input:
-        components.append(RunnableLambda(middleware.validate_input).with_config({"run_name": "input_validation"}))
-
-    components.append(runnable)
-
-    if validate_output:
-        components.append(RunnableLambda(middleware.validate_output).with_config({"run_name": "output_validation"}))
-
-    if len(components) == 1:
-        return components[0]
-
-    result = components[0]
-    for component in components[1:]:
-        result = result | component
-
-    return result
-
-
-def create_input_filter(
-    content_filter: ContentFilter | None = None,
-    strict_mode: bool = False,
-) -> "RunnableLambda":
-    from langchain_core.runnables import RunnableLambda
-
-    validator = InputValidator(
-        content_filter=content_filter,
-        strict_mode=strict_mode,
-    )
-
-    def filter_func(input_data: Any) -> Any:
-        text = input_data if isinstance(input_data, str) else str(input_data)
-        result = validator.validate(text)
-        if not result.is_valid:
-            raise ValueError(f"输入验证失败: {', '.join(result.errors)}")
-        return result.filtered_input
-
-    return RunnableLambda(filter_func).with_config({"run_name": "input_filter"})
-
-
-def create_output_filter(
-    content_filter: ContentFilter | None = None,
-    require_sources: bool = False,
-    strict_mode: bool = False,
-) -> "RunnableLambda":
-    from langchain_core.runnables import RunnableLambda
-
-    validator = OutputValidator(
-        content_filter=content_filter,
-        require_sources=require_sources,
-        strict_mode=strict_mode,
-    )
-
-    def filter_func(output_data: Any) -> Any:
-        text = output_data if isinstance(output_data, str) else str(output_data)
-        result = validator.validate(text)
-        if not result.is_valid:
-            raise ValueError(f"输出验证失败: {', '.join(result.errors)}")
-        return result.filtered_output
-
-    return RunnableLambda(filter_func).with_config({"run_name": "output_filter"})
-
-
-def add_guardrails_to_agent(
-    agent,
-    enable_input_validation: bool = True,
-    enable_output_validation: bool = True,
-    strict_mode: bool = False,
-):
-    return create_guardrails_runnable(
-        agent,
-        input_validator=InputValidator(strict_mode=strict_mode) if enable_input_validation else None,
-        output_validator=OutputValidator(strict_mode=strict_mode) if enable_output_validation else None,
-        validate_input=enable_input_validation,
-        validate_output=enable_output_validation,
-        raise_on_error=True,
-    )
 
 
 class GroqToolCallCompatMiddleware(AgentMiddleware):

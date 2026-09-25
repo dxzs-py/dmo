@@ -16,7 +16,7 @@ from typing import Any
 
 from langchain_core.messages import BaseMessage
 
-__all__ = ["content_to_str", "first_text", "message_text"]
+__all__ = ["content_to_str", "message_text"]
 
 
 def content_to_str(content: str | Sequence[Any], sep: str = " ") -> str:
@@ -25,7 +25,7 @@ def content_to_str(content: str | Sequence[Any], sep: str = " ") -> str:
     Args:
         content: ``BaseMessage.content``，可为 ``str`` 或多模态列表。
         sep: 列表元素拼接分隔符。完整消息文本提取用空格（默认），
-            流式 token 连续拼接用空串 ``""``（避免在 token 片段间插入空格）。
+            流式 token 连续拼接用空串 ``""``（避免在 token 片段间插入空格）。是约定 / 工程规范
 
     Returns:
         拼接后的纯文本字符串。
@@ -53,17 +53,3 @@ def message_text(message: BaseMessage | None) -> str:
     if message is None:
         return ""
     return content_to_str(message.content)
-
-
-def first_text(messages: Sequence[BaseMessage] | None) -> str:
-    """从消息列表中提取第一条消息的纯文本。
-
-    Args:
-        messages: 消息列表，可为 ``None`` 或空。
-
-    Returns:
-        第一条消息的纯文本，空列表或 ``None`` 返回空串。
-    """
-    if not messages:
-        return ""
-    return message_text(messages[0])

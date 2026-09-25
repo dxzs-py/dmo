@@ -1,8 +1,8 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { ElMessage } from 'element-plus'
-import { User, Lock, Phone, Upload } from '@element-plus/icons-vue'
+import { User, Lock, Phone, Upload, ChatDotRound, Document, DataAnalysis, Calendar } from '@element-plus/icons-vue'
 import { userAPI } from '@/api/user'
 import { logger } from '../utils/logger'
 
@@ -176,6 +176,27 @@ async function handleBindPhone() {
     phoneLoading.value = false
   }
 }
+
+// ── 使用统计（切到该 tab 时懒加载） ──
+const statsLoading = ref(false)
+const usageStats = ref(null)
+
+async function loadUsageStats() {
+  if (usageStats.value) return
+  statsLoading.value = true
+  try {
+    const response = await userAPI.getUsageStats()
+    usageStats.value = response.data?.data || null
+  } catch (error) {
+    ElMessage.error(error.response?.data?.message || '加载使用统计失败')
+  } finally {
+    statsLoading.value = false
+  }
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'stats') loadUsageStats()
+})
 </script>
 
 <template>
@@ -254,6 +275,43 @@ async function handleBindPhone() {
                 {{ formData.mobile ? '更换' : '绑定' }}
               </el-button>
             </div>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane name="stats">
+          <template #label>
+            <span class="stats-tab-label"><el-icon><DataAnalysis /></el-icon> 使用统计</span>
+          </template>
+
+          <div v-loading="statsLoading" class="stats-grid">
+            <el-card shadow="hover" class="stat-card">
+              <div class="stat-icon sessions"><el-icon :size="26"><ChatDotRound /></el-icon></div>
+              <div class="stat-meta">
+                <div class="stat-value">{{ usageStats?.totalSessions ?? 0 }}</div>
+                <div class="stat-label">总会话数</div>
+              </div>
+            </el-card>
+            <el-card shadow="hover" class="stat-card">
+              <div class="stat-icon messages"><el-icon :size="26"><Document /></el-icon></div>
+              <div class="stat-meta">
+                <div class="stat-value">{{ usageStats?.totalMessages ?? 0 }}</div>
+                <div class="stat-label">总消息数</div>
+              </div>
+            </el-card>
+            <el-card shadow="hover" class="stat-card">
+              <div class="stat-icon tokens"><el-icon :size="26"><DataAnalysis /></el-icon></div>
+              <div class="stat-meta">
+                <div class="stat-value">{{ usageStats?.totalTokens ?? 0 }}</div>
+                <div class="stat-label">总 Token 数</div>
+              </div>
+            </el-card>
+            <el-card shadow="hover" class="stat-card">
+              <div class="stat-icon days"><el-icon :size="26"><Calendar /></el-icon></div>
+              <div class="stat-meta">
+                <div class="stat-value">{{ usageStats?.activeDays ?? 0 }}</div>
+                <div class="stat-label">活跃天数</div>
+              </div>
+            </el-card>
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -404,6 +462,48 @@ async function handleBindPhone() {
 .security-desc {
   font-size: 14px;
   color: var(--el-text-color-secondary);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+  min-height: 120px;
+}
+
+.stat-card :deep(.el-card__body) {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+}
+
+.stat-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+
+.stat-icon.sessions { background: color-mix(in srgb, var(--el-color-primary) 14%, transparent); color: var(--el-color-primary); }
+.stat-icon.messages { background: color-mix(in srgb, var(--el-color-success) 14%, transparent); color: var(--el-color-success); }
+.stat-icon.tokens { background: color-mix(in srgb, var(--el-color-warning) 16%, transparent); color: var(--el-color-warning-dark-2); }
+.stat-icon.days { background: color-mix(in srgb, var(--el-color-danger) 12%, transparent); color: var(--el-color-danger); }
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--el-text-color-primary);
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin-top: 2px;
 }
 
 @media (max-width: 1024px) {

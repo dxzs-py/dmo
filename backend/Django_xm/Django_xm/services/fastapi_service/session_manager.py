@@ -368,7 +368,7 @@ class SessionManager:
             logger.exception("[SessionManager] 信令订阅循环异常")
 
     async def _dispatch_signal(self, channel: str, data: str) -> None:
-        """解析频道（research:{kind}:{thread_id}）并路由。"""
+        """解析频道（agent:{kind}:{thread_id}）并路由。"""
         prefix = f"{SIGNAL_PREFIX}:"
         if not channel.startswith(prefix):
             return

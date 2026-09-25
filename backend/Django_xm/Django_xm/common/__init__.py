@@ -5,33 +5,3 @@
     from Django_xm.common.responses import success_response
     from Django_xm.common.error_codes import ErrorCode
 """
-
-__all__ = [
-    "ErrorCode",
-    "IsAdmin",
-    "api_response",
-    "custom_exception_handler",
-    "get_client_ip",
-    "get_error_message",
-    "get_user_agent",
-    "success_response",
-]
-
-
-def __getattr__(name):
-    _MODULE_MAP = {
-        "api_response": ".responses",
-        "success_response": ".responses",
-        "ErrorCode": ".error_codes",
-        "get_error_message": ".error_codes",
-        "custom_exception_handler": ".exceptions",
-        "get_client_ip": ".request_utils",
-        "get_user_agent": ".request_utils",
-        "IsAdmin": ".permissions",
-    }
-    if name in _MODULE_MAP:
-        import importlib
-
-        module = importlib.import_module(_MODULE_MAP[name], __package__)
-        return getattr(module, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

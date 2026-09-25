@@ -25,6 +25,8 @@ import json
 import logging
 from typing import Any
 
+from Django_xm.common.messages import content_to_str
+
 logger = logging.getLogger(__name__)
 
 
@@ -311,7 +313,7 @@ def extract_tool_events_from_message(
                     "tool_call_id": tc_id,
                     "tool_name": tool_name,
                     "parameters": tool_parameters,
-                    "error": content if isinstance(content, str) else str(content),
+                    "error": content_to_str(content),
                 }
             )
         else:
