@@ -168,7 +168,6 @@ export const APPROVAL_EVENT_TYPES = new Set([
  * @property {string} [description] - 审批描述
  * @property {Object} [parameters] - 工具调用参数
  * @property {string} [graphInterruptId] - 批量审批的图中断 ID
- * @property {string} [inputPlaceholder] - 输入框占位文案
  * @property {string} [messageBackendId] - 关联消息的 backendId（前端附加）
  */
 

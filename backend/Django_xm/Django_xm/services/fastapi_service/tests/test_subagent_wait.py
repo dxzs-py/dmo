@@ -507,58 +507,6 @@ class TestSubAgentToolEventInterruptPassthrough(unittest.TestCase):
         mw._forward_event.assert_awaited_once()
 
 
-class TestApprovalChannelRouting(unittest.TestCase):
-    """chat 子代理审批频道修正（嵌套审批按钮不渲染的根因）。
-
-    子代理审批的 source_id 是 subagent_xxx（子代理归属），_resolve_channels
-    会把事件发到 session:subagent_xxx 频道，前端仅订阅主会话频道而收不到。
-    修复：publish_approval 对 CHAT 模块用 approval 注入的 chat_session_id
-    覆盖 session 频道，确保嵌套子代理（L2）的审批按钮正常渲染。
-    """
-
-    def _call_publish_approval(self, module_id: str, extra: dict | None):
-        from Django_xm.common.event_schema import EventSource, EventType
-        from Django_xm.common.realtime_sync import publish_approval
-
-        async def run():
-            with mock.patch("Django_xm.common.realtime_sync.publish_event") as pub:
-                await publish_approval(
-                    EventType.APPROVAL_PENDING,
-                    interrupt_id="call_xxx",
-                    tool_call_id="call_xxx",
-                    module=EventSource.CHAT,
-                    module_id=module_id,
-                    state="pending",
-                    tool_name="shell_exec",
-                    message_id="1",
-                    extra_fields=extra or {},
-                )
-                return pub.call_args.kwargs["session_id"]
-
-        return asyncio.run(run())
-
-    def test_subagent_approval_routed_to_main_session_channel(self):
-        # B 的 shell 审批：source_id=subagent_A，须发到主会话频道
-        session_id = self._call_publish_approval(
-            "subagent_110b8c7c0a674400",
-            {"chat_session_id": "6088ecf8-c51f-4892-951d-67cf8f974495"},
-        )
-        self.assertEqual(session_id, "6088ecf8-c51f-4892-951d-67cf8f974495")
-
-    def test_main_session_approval_unchanged(self):
-        # 主会话审批：source_id=主会话，频道保持主会话
-        session_id = self._call_publish_approval(
-            "6088ecf8-c51f-4892-951d-67cf8f974495",
-            {"chat_session_id": "6088ecf8-c51f-4892-951d-67cf8f974495"},
-        )
-        self.assertEqual(session_id, "6088ecf8-c51f-4892-951d-67cf8f974495")
-
-    def test_chat_without_chat_session_id_keeps_module_id(self):
-        # 兼容：无 chat_session_id（历史/异常数据）时回退 module_id
-        session_id = self._call_publish_approval("6088ecf8-c51f-4892-951d-67cf8f974495", {})
-        self.assertEqual(session_id, "6088ecf8-c51f-4892-951d-67cf8f974495")
-
-
 class TestSubagentApprovalAttribution(unittest.TestCase):
     """子代理审批归属判定（根会话标识，source/source_id 一致归集）。
 

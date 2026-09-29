@@ -38,8 +38,9 @@ logger = logging.getLogger(__name__)
 class PayloadValidationError(Exception):
     """payload 校验失败异常。
 
-    由 validate_payload 抛出，调用方可选择捕获或上抛。
-    发布接口（publish_event）内部捕获此异常并记录 warning，不中断业务流程。
+    由 validate_payload 抛出。发布接口 publish_event 校验失败时记录 ERROR
+    日志后重新抛出（realtime_events.publish_event，非内部静默处理），
+    调用方 MUST 捕获并决定降级策略，避免事件被丢弃且调用方无感知。
     """
 
 
@@ -121,6 +122,16 @@ class EventType(StrEnum):
             return cls(value)
         except ValueError:
             return None
+
+
+# 工具调用终态事件（唯一声明源）：lifecycle 状态机（_VALID_TRANSITIONS 终态语义）
+# 与 aggregation 终态集合（TERMINAL_STATUSES）均由此派生，新增终态事件只改此处。
+TERMINAL_TOOL_CALL_EVENTS: tuple[EventType, ...] = (
+    EventType.TOOL_CALL_COMPLETED,
+    EventType.TOOL_CALL_FAILED,
+    EventType.TOOL_CALL_TIMEOUT,
+    EventType.TOOL_CALL_REJECTED,
+)
 
 
 class EventSource(StrEnum):

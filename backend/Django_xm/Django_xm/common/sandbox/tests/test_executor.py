@@ -1,12 +1,14 @@
 """SandboxExecutor 单测（mock subprocess，不依赖真实 Docker）。
 
-覆盖（Task 1.6）：
+覆盖（Task 1.6 + 收编加固）：
 - 容器复用：同一 thread_id 仅创建一次容器，命令经 docker exec 顺序复用
 - 损坏自愈：exec 失败（容器被删）→ rm -f + 重建一次 → 重试成功
 - 二次失败 fail-closed：重建后仍失败 → 返回明确错误（不静默降级本机）
 - 路径映射：docker exec 工作目录 = /workspace/research/{thread_id}
 - 清理：cleanup_sandbox 调用 docker rm -f
 - 全局 SANDBOX_ENABLED=False（test.py 默认）：本机执行，不触任何 docker 命令
+- 收编：docker run 重名冲突（跨 worker/重启残留）→ running 收编复用 /
+  exited 删后重建；容器不存在（真实失败）→ 维持 fail-closed
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
     python manage.py test Django_xm.common.sandbox.tests.test_executor --noinput
@@ -36,8 +38,11 @@ def _join(args) -> str:
     return str(args)
 
 
-def _fake_run(calls, *, exec_rc=0, exec_stderr="", run_rc=0, rm_rc=0):
-    """构造 subprocess.run side_effect：按 docker 子命令分发固定结果。"""
+def _fake_run(calls, *, exec_rc=0, exec_stderr="", run_rc=0, rm_rc=0, inspect_status=None):
+    """构造 subprocess.run side_effect：按 docker 子命令分发固定结果。
+
+    inspect_status: docker inspect 返回的容器状态；None 表示容器不存在（inspect 非零退出）。
+    """
 
     def _side_effect(args, *a, **kw):
         calls.append(_join(args))
@@ -48,6 +53,10 @@ def _fake_run(calls, *, exec_rc=0, exec_stderr="", run_rc=0, rm_rc=0):
             return MagicMock(returncode=run_rc, stdout="container-id", stderr="")
         if "docker rm" in joined:
             return MagicMock(returncode=rm_rc, stdout="", stderr="")
+        if "docker inspect" in joined:
+            if inspect_status is None:
+                return MagicMock(returncode=1, stdout="", stderr="Error: No such object")
+            return MagicMock(returncode=0, stdout=inspect_status, stderr="")
         if "docker info" in joined:
             return MagicMock(returncode=0, stdout="24.0.0", stderr="")
         return MagicMock(returncode=0, stdout="", stderr="")
@@ -140,6 +149,93 @@ class SandboxExecutorTests(SimpleTestCase):
         run_call = next(c for c in calls if "docker run" in c)
         self.assertIn(f"{settings.DATA_DIR}:/workspace", run_call)
         self.assertNotIn(str(settings.PROJECT_ROOT) + ":", run_call)
+
+    # ------------------------------------------------------------------
+    # 收编（docker run 重名冲突：跨 worker / 进程重启残留，幂等保障）
+    # ------------------------------------------------------------------
+    @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
+    def test_container_conflict_adopt_running(self):
+        """run 重名冲突且容器运行中（其他 worker 创建）→ 收编复用，不 fail-closed。"""
+        executor = SandboxExecutor()
+        executor._docker_available = True
+        calls = []
+        with patch(
+            "Django_xm.common.sandbox.executor.subprocess.run",
+            side_effect=_fake_run(calls, run_rc=1, inspect_status="running"),
+        ):
+            result = executor.execute("cmd", enable_sandbox=True, thread_id="t-adopt")
+
+        self.assertEqual(result.return_code, 0)
+        self.assertEqual(result.stdout, "exec-out")
+        self.assertTrue(result.sandboxed)
+        run_calls = [c for c in calls if "docker run" in c]
+        inspect_calls = [c for c in calls if "docker inspect" in c]
+        rm_calls = [c for c in calls if "docker rm" in c]
+        self.assertEqual(len(run_calls), 1, "收编复用不应重复 run")
+        self.assertEqual(len(inspect_calls), 1, "run 失败后应 inspect 一次")
+        self.assertEqual(len(rm_calls), 0, "运行中容器不应被删除")
+
+    @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
+    def test_container_conflict_exited_recreated(self):
+        """重名容器已退出（daemon 重启等残留）→ rm -f 删除后重建。"""
+        executor = SandboxExecutor()
+        executor._docker_available = True
+        calls = []
+        state = {"run_fail": True}
+
+        def _side_effect(args, *a, **kw):
+            calls.append(_join(args))
+            joined = _join(args)
+            if "docker inspect" in joined:
+                return MagicMock(returncode=0, stdout="exited", stderr="")
+            if "docker run" in joined:
+                if state["run_fail"]:
+                    state["run_fail"] = False
+                    return MagicMock(
+                        returncode=1, stdout="", stderr="Conflict. The container name is already in use"
+                    )
+                return MagicMock(returncode=0, stdout="container-id", stderr="")
+            if "docker exec" in joined:
+                return MagicMock(returncode=0, stdout="ok", stderr="")
+            if "docker rm" in joined:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if "docker info" in joined:
+                return MagicMock(returncode=0, stdout="24.0.0", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch(
+            "Django_xm.common.sandbox.executor.subprocess.run", side_effect=_side_effect
+        ):
+            result = executor.execute("cmd", enable_sandbox=True, thread_id="t-exited")
+
+        self.assertEqual(result.return_code, 0)
+        self.assertEqual(result.stdout, "ok")
+        run_calls = [c for c in calls if "docker run" in c]
+        rm_calls = [c for c in calls if "docker rm" in c]
+        inspect_calls = [c for c in calls if "docker inspect" in c]
+        self.assertEqual(len(run_calls), 2, "失败 run + 重建 run")
+        self.assertEqual(len(rm_calls), 1, "已退出容器应 rm -f 后重建")
+        self.assertEqual(len(inspect_calls), 1)
+
+    @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
+    def test_run_real_failure_still_fail_closed(self):
+        """run 失败且容器不存在（真实原因如镜像拉取失败）→ 维持 fail-closed，不降级本机。"""
+        executor = SandboxExecutor()
+        executor._docker_available = True
+        with patch(
+            "Django_xm.common.sandbox.executor.subprocess.run",
+            side_effect=_fake_run([], run_rc=1, inspect_status=None),
+        ) as mock_run, patch(
+            "Django_xm.common.sandbox.executor.subprocess.Popen"
+        ) as mock_popen:
+            result = executor.execute("cmd", enable_sandbox=True, thread_id="t-real-fail")
+
+        self.assertNotEqual(result.return_code, 0)
+        self.assertTrue(result.error, "真实失败必须返回错误原因")
+        self.assertFalse(result.sandboxed)
+        mock_popen.assert_not_called()
+        inspect_calls = [c for c in mock_run.call_args_list if "docker inspect" in _join(c.args[0])]
+        self.assertEqual(len(inspect_calls), 1, "run 失败后应 inspect 确认容器不存在")
 
     # ------------------------------------------------------------------
     # 损坏自愈（重建一次重试成功）

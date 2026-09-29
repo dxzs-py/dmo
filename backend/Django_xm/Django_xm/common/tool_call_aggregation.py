@@ -6,7 +6,8 @@
 
 设计边界：
 - ``aggregate_tool_entry`` 只负责单条 entry 的字段演进（默认结构、终态保护、
-  图层字段、seq/position 从 ToolCallContext 权威源补齐），不关心模块/source 差异。
+  图层字段、seq/position 经 lifecycle enrich_entry_seq/position 从 ToolCallContext
+  权威源补齐），不关心模块/source 差异。
 - ``merge_subagent_content`` 只负责正文累计 + 幂等去重，返回是否重复；
   广播（publish_event）由各自入口处理（source/task_id 路由差异保留在入口）。
 - 状态映射常量、终态集合为全项目唯一权威，chat / research / 持久化层统一引用。
@@ -14,11 +15,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
+from Django_xm.common.event_schema import TERMINAL_TOOL_CALL_EVENTS
+
 # 工具事件类型 → 落库条目 status（与前端 toolCallTransition 语义一致）。
-# 覆盖主/子代理所有 tool_call_* 事件，非子代理专属。
+# 消费方为子代理落库聚合链路（chat 子代理回调 / research extractor），事件集
+# 与状态机（lifecycle._VALID_TRANSITIONS）对齐；终态事件以
+# event_schema.TERMINAL_TOOL_CALL_EVENTS 为唯一声明源。
 EVENT_STATUS_MAP: dict[str, str] = {
     "tool_call_pending": "pending",
     "tool_call_waiting": "waiting",
@@ -26,6 +30,7 @@ EVENT_STATUS_MAP: dict[str, str] = {
     "tool_call_completed": "completed",
     "tool_call_failed": "failed",
     "tool_call_timeout": "timeout",
+    "tool_call_rejected": "rejected",
 }
 
 # 审批状态 / 工具内部状态 → 展示 status（唯一权威）。
@@ -48,8 +53,11 @@ STATE_TO_STATUS: dict[str, str] = {
 }
 
 # 终态集合：状态只前进不回退（审批 resume 重放 PENDING 不降级终态）。
-# 与持久化层 _TOOL_CALL_TERMINAL_STATUSES 语义一致，此处为唯一权威。
-TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "failed", "timeout", "rejected"})
+# 由终态事件唯一声明源（event_schema.TERMINAL_TOOL_CALL_EVENTS）经
+# EVENT_STATUS_MAP 派生，禁止再硬编码第二份终态列表。
+TERMINAL_STATUSES: frozenset[str] = frozenset(
+    EVENT_STATUS_MAP[e.value] for e in TERMINAL_TOOL_CALL_EVENTS
+)
 
 
 def _build_default_entry(tool_call_id: str, tool_name: str) -> dict:
@@ -75,13 +83,13 @@ def aggregate_tool_entry(
     subagent_thread_id: str = "",
     agent_name: str = "",
     depth: int = 0,
-    get_ctx: Callable[[str], dict | None] | None = None,
 ) -> dict:
     """聚合单个工具事件到落库条目（原地写入 ``entries`` 并返回该 entry）。
 
     status/parameters/result/error 随事件演进，终态不可回退（审批 resume 重放
-    PENDING 不降级）；图层字段（subagent_thread_id/agent_name/depth）非空才写；
-    seq/position 从 ToolCallContext 权威源读取（register/bind_position 已写入）。
+    PENDING 不降级）；subagent_thread_id/agent_name 非空才写，depth 恒写入
+    （主代理为 0）；seq/position 经 lifecycle enrich_entry_seq/position 从
+    ToolCallContext 权威源补全（守卫 seq>0 / position>=0，缺失时保持原值）。
 
     Args:
         entries: 会话/任务级聚合容器（tool_call_id → entry），原地更新。
@@ -93,8 +101,7 @@ def aggregate_tool_entry(
         error: 工具错误（is not None 才写）。
         subagent_thread_id: 子代理 thread_id（非空才写）。
         agent_name: 子代理名（非空才写）。
-        depth: 嵌套层级（int 才写）。
-        get_ctx: 读取 ToolCallContext 的可调用对象，默认用全局 service.get_context。
+        depth: 嵌套层级（0=主代理，恒写入）。
 
     Returns:
         更新后的 entry dict。
@@ -102,10 +109,8 @@ def aggregate_tool_entry(
     if not tool_call_id:
         return {}
 
-    if get_ctx is None:
-        from Django_xm.common.tool_call_lifecycle import service as _tc_service
-
-        get_ctx = _tc_service.get_context
+    # 惰性导入防循环依赖（seq/position 权威补全收口到 lifecycle enrich_*）
+    from Django_xm.common.tool_call_lifecycle import service as _tc_service
 
     _ev = event_type.value if hasattr(event_type, "value") else str(event_type)
     _new_status = EVENT_STATUS_MAP.get(_ev, "")
@@ -134,11 +139,10 @@ def aggregate_tool_entry(
     if isinstance(depth, int):
         entry["depth"] = depth
 
-    _ctx = get_ctx(tool_call_id) or {}
-    if isinstance(_ctx.get("seq"), int):
-        entry["seq"] = _ctx["seq"]
-    if isinstance(_ctx.get("position"), int):
-        entry["position"] = _ctx["position"]
+    # seq/position 权威补全收口到 lifecycle enrich_*（守卫 seq>0 / position>=0，
+    # 与持久化/审批侧出口一致；ctx 缺失时保持 entry 原值，由数组顺序兜底）。
+    _tc_service.enrich_entry_seq(entry, tool_call_id)
+    _tc_service.enrich_entry_position(entry, tool_call_id)
 
     entries[tool_call_id] = entry
     return entry

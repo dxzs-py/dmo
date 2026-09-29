@@ -17,6 +17,9 @@
     - 后续 docker exec -w <容器工作目录> 复用执行
     - exec 失败（容器被删/已退出）→ docker rm -f + 重建一次重试；
       重建后仍失败 → 返回明确错误 SandboxResult（fail-closed）
+    - docker run 遇同名容器（其他 worker 进程创建 / 上次进程崩溃残留）
+      → 收编复用：inspect 状态为 running 直接复用，exited 删除重建一次；
+      容器不存在（run 因其他原因失败）→ 维持 fail-closed（创建操作幂等）
     - cleanup_sandbox(thread_id)（docker rm -f）供 research_runner 在
       任务终态 / SESSION_TIMEOUT 超时后释放容器
 
@@ -70,6 +73,10 @@ CONTAINER_ERROR_MARKERS = (
     "Error response from daemon",
     "Cannot connect to the Docker daemon",
 )
+
+# docker inspect 返回的容器状态（收编跨进程/重启残留容器时判定）
+_CONTAINER_RUNNING_STATE = "running"
+_CONTAINER_EXITED_STATE = "exited"
 
 
 @dataclass
@@ -297,10 +304,27 @@ class SandboxExecutor:
         return any(marker in result.stderr for marker in CONTAINER_ERROR_MARKERS)
 
     def _ensure_container(self, container: str) -> bool:
-        """创建长驻沙箱容器（docker run -d，仅挂载 DATA_DIR）。
+        """确保长驻沙箱容器可用（创建或收编，幂等）。
+
+        docker run 失败时的典型原因：同名容器已存在——其他 worker 进程创建，
+        或上次进程崩溃未清理的残留（本进程登记表无记录）。此时不直接失败，
+        而是收编已存在容器：
+        - 容器运行中 → 直接复用（跨进程安全）
+        - 容器已退出 → docker rm -f 删除后重建一次
+        - 容器不存在（run 因其他原因失败，如镜像拉取失败）→ 维持 fail-closed
 
         Returns:
-            bool: True 表示容器创建成功可复用
+            bool: True 表示容器可用（新建或收编）
+        """
+        if self._run_container(container):
+            return True
+        return self._adopt_existing_container(container)
+
+    def _run_container(self, container: str) -> bool:
+        """执行 docker run -d 创建长驻沙箱容器（仅挂载 DATA_DIR）。
+
+        Returns:
+            bool: True 表示容器创建成功
         """
         config = _get_sandbox_config()
         image = config.get("DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
@@ -358,6 +382,47 @@ class SandboxExecutor:
             )
             return False
         return True
+
+    def _adopt_existing_container(self, container: str) -> bool:
+        """收编同名已存在容器（跨进程部署 / 进程重启后的幂等保障）。
+
+        Returns:
+            bool: True 表示已存在容器可复用（或已重建成功）
+        """
+        state = self._inspect_container_state(container)
+        if state == _CONTAINER_RUNNING_STATE:
+            logger.info(
+                f"[SandboxExecutor] 容器已存在且运行中，收编复用: container={container}"
+            )
+            return True
+        if state == _CONTAINER_EXITED_STATE:
+            logger.info(
+                f"[SandboxExecutor] 同名容器已退出，删除重建: container={container}"
+            )
+            self._remove_container(container)
+            return self._run_container(container)
+        # 容器不存在或状态未知：run 失败是真实原因（如镜像拉取失败），维持 fail-closed
+        return False
+
+    def _inspect_container_state(self, container: str) -> str | None:
+        """查询容器状态（docker inspect -f {{.State.Status}}）。
+
+        Returns:
+            容器状态字符串（running/exited/...）；容器不存在或查询失败返回 None。
+        """
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Status}}", container],
+                capture_output=True,
+                text=True,
+                timeout=DOCKER_LIFECYCLE_TIMEOUT,
+                shell=(platform.system() == "Windows"),
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
 
     def _exec_in_container(
         self,

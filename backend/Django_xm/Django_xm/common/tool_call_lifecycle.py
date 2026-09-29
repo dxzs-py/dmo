@@ -1,4 +1,4 @@
-"""工具调用生命周期服务（三模块共享的状态机）。
+"""工具调用生命周期服务（chat / deep_research 两模块共享的状态机）。
 
 管理工具调用从创建到终态的完整上下文：
   pending → waiting/running → completed/failed/timeout/rejected
@@ -8,7 +8,7 @@
 2. 状态机转换合法（非法转换仅 warning，不抛异常，容错优先）
 3. 事件不重复发布（批次指纹去重：同 tool_call_id + 同 event_type + 同批次指纹仅发布一次；
    PENDING 同样参与去重，指纹以 parameters 稳定哈希为批次维度，参数变化允许重新发布）
-4. 三模块（chat/deep_research/learning）共享同一份代码
+4. chat / deep_research 两模块共享同一份代码（learning 经 publish_event 直发，不经本服务）
 
 使用方式：
     from Django_xm.common.tool_call_lifecycle import service, ToolCallContext
@@ -61,11 +61,13 @@ _TC_CTX_TTL = 24 * 60 * 60
 _PUBLISHED_KEY_PREFIX = "tool_call:published"
 
 # 状态机：合法的前驱状态集合（None 表示初始状态，允许从无到有）
-# PENDING 允许自循环（参数补全场景下重发）；允许从 None 转换（chat/learning/research 模块首个工具事件）
+# PENDING 允许自循环（参数补全场景下重发）；允许从 None 转换（chat/research 模块首个工具事件）
 # WAITING 允许从 None/PENDING 转换，自循环（ApprovalMiddleware 直接发布 WAITING / 审批重试）
 # RUNNING 允许从 None/PENDING/WAITING 转换，自循环（无需审批直接执行 / 审批通过后执行 / 并发重发）
 # 终态（COMPLETED/FAILED/TIMEOUT/REJECTED）允许从任意非终态 + None 转换
 # REJECTED 不包括 RUNNING（执行中的工具不可被拒绝，只能取消）
+# 终态事件集合（COMPLETED/FAILED/TIMEOUT/REJECTED）以
+# event_schema.TERMINAL_TOOL_CALL_EVENTS 为唯一声明源。
 _VALID_TRANSITIONS: dict[EventType, set[EventType | None]] = {
     EventType.TOOL_CALL_PENDING: {None, EventType.TOOL_CALL_PENDING},
     EventType.TOOL_CALL_WAITING: {None, EventType.TOOL_CALL_PENDING, EventType.TOOL_CALL_WAITING},
@@ -225,8 +227,8 @@ class ToolCallContext:
     """工具调用上下文（Redis 持久化，跨模块共享）。
 
     核心字段：
-        module: 业务模块（CHAT / DEEP_RESEARCH / LEARNING）
-        module_id: 模块实例 ID（chat=session_id, deep_research=task_id, learning=thread_id）
+        module: 业务模块（CHAT / DEEP_RESEARCH）
+        module_id: 模块实例 ID（chat=session_id, deep_research=task_id）
         cross_module_id: 跨模块同步目标（仅 DEEP_RESEARCH 关联 chat 时为 chat_session_id）
         auto_approved: SAFE 级自动通过标记（True=无需用户审批，仅审计）
 
@@ -336,7 +338,7 @@ _FIELD_MERGE_POLICY: dict[str, str] = {
 
 
 class ToolCallLifecycleService:
-    """工具调用生命周期服务（模块级单例，三模块共享）。
+    """工具调用生命周期服务（模块级单例，chat / deep_research 两模块共享）。
 
     通过 Redis 持久化上下文，确保：
     - 跨请求/跨 worker 状态一致（Celery worker 重启后仍可恢复）
@@ -576,7 +578,6 @@ class ToolCallLifecycleService:
         error: str | None = None,
         parameters: dict | None = None,
         batch_fingerprint: str | None = None,
-        _index: int | None = None,
     ) -> None:
         """状态机转换并发布事件（同步版，适配 sync 上下文：chat 模块 stream_helpers）。
 
@@ -592,14 +593,13 @@ class ToolCallLifecycleService:
             parameters: 补全的参数（可选，用于参数恢复场景）
             batch_fingerprint: 批次指纹（可选，显式传入时跳过自动推导，
                 如审批流程直接传入 graph_interrupt_id）
-            _index: LLM 生成的工具调用原始序号（用于跨浏览器工具顺序稳定排序）
         """
         prepared = self._prepare_transition(tool_call_id, event_type, parameters, batch_fingerprint)
         if prepared is None:
             return
         ctx_dict, fingerprint = prepared
 
-        # 从 context 透传所有字段（三模块共享逻辑）
+        # 从 context 透传所有字段（两模块共享逻辑）
         module_value = ctx_dict.get("module", "chat")
         module_enum = EventSource.from_value(module_value) or EventSource.CHAT
 
@@ -633,7 +633,6 @@ class ToolCallLifecycleService:
                 risk_level=_normalize_risk_level(ctx_dict.get("risk_level")),
                 # description 透传：子 agent 角色描述（任务目标），仅子 agent 事件携带
                 description=ctx_dict.get("description") or None,
-                _index=_index if _index is not None else ctx_dict.get("_index"),
                 # seq 透传：从 context 读取，注入到 tool_call_* 事件 payload
                 # 根因修复：seq 为 (module, module_id) 内跨 LLM 轮次全局递增序号，
                 # 前端据此跨浏览器统一排序（替代跨轮重复的 _index）
@@ -661,9 +660,8 @@ class ToolCallLifecycleService:
         error: str | None = None,
         parameters: dict | None = None,
         batch_fingerprint: str | None = None,
-        _index: int | None = None,
     ) -> None:
-        """状态机转换并发布事件（异步版，适配 async 上下文：research/learning 模块）。
+        """状态机转换并发布事件（异步版，适配 async 上下文：research 模块）。
 
         内部 await publish_tool_call，确保事件按调用顺序发布（避免 fire-and-forget 顺序错乱）。
 
@@ -675,7 +673,6 @@ class ToolCallLifecycleService:
             parameters: 补全的参数（可选，用于参数恢复场景）
             batch_fingerprint: 批次指纹（可选，显式传入时跳过自动推导，
                 如审批流程直接传入 graph_interrupt_id）
-            _index: LLM 生成的工具调用原始序号（用于跨浏览器工具顺序稳定排序）
         """
         prepared = self._prepare_transition(tool_call_id, event_type, parameters, batch_fingerprint)
         if prepared is None:
@@ -715,7 +712,6 @@ class ToolCallLifecycleService:
                 risk_level=_normalize_risk_level(ctx_dict.get("risk_level")),
                 # description 透传：子 agent 角色描述（任务目标），仅子 agent 事件携带
                 description=ctx_dict.get("description") or None,
-                _index=_index if _index is not None else ctx_dict.get("_index"),
                 # seq 透传：从 context 读取，注入到 tool_call_* 事件 payload
                 # 根因修复：seq 为 (module, module_id) 内跨 LLM 轮次全局递增序号，
                 # 前端据此跨浏览器统一排序（替代跨轮重复的 _index）
@@ -736,7 +732,12 @@ class ToolCallLifecycleService:
         self._finalize_transition(tool_call_id, event_type, ctx_dict, fingerprint)
 
     def get_context(self, tool_call_id: str) -> dict | None:
-        """获取工具调用上下文（调试/测试用）。"""
+        """获取工具调用上下文（生产权威读取口）。
+
+        生产消费方：tool_call_aggregation.aggregate_tool_entry（seq/position
+        权威补全）、research/views 快照重建、research/adapter 参数兜底与
+        PENDING 补发防护。只读，不写 Redis。
+        """
         return cache.get(f"{_TC_CTX_PREFIX}:{tool_call_id}")
 
     def enrich_entry_seq(self, entry: dict, tool_call_id: str) -> dict:

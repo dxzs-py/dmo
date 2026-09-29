@@ -6,6 +6,7 @@
 同时定义项目级异常统一基类 BaseAppError，供各 app 异常体系继承。
 
 异常驱动单轨制约定：视图层业务错误一律 ``raise``，禁止手动构造错误响应。
+响应统一交由 common/responses.api_response 构建，保证与成功响应同构。
 """
 
 import logging
@@ -26,6 +27,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.exceptions import InvalidToken
 
 from .error_codes import ErrorCode, infer_error_code_from_http_status
+from .responses import api_response
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +59,7 @@ class BaseAppError(Exception):
     ):
         if message is None and business_code is not None:
             message = business_code.message
-        super().__init__(message)
+        super().__init__(message)  # 如果message不为空则输出为对应的内容
         self.business_code = business_code
         self.data = data
 
@@ -91,6 +93,8 @@ def custom_exception_handler(exc, context):
     将所有异常转换为统一格式:
     - 成功: { code: 200, message: "操作成功", data: {...} }
     - 错误: { code: 错误码, message: "错误信息", data: {...} }
+
+    所有响应统一通过 api_response 构建，与成功响应同构。
     """
     if isinstance(exc, BaseAppError):
         return _handle_agent_error(exc)
@@ -101,12 +105,10 @@ def custom_exception_handler(exc, context):
     # MethodNotAllowed 必须在 APIException 通用分支前显式捕获，
     # 否则会被通用 APIException 分支以 500 返回，丢失 405 语义
     if isinstance(exc, MethodNotAllowed):
-        return Response(
-            {
-                "code": int(ErrorCode.METHOD_NOT_ALLOWED),
-                "message": str(exc.detail) if hasattr(exc, "detail") else "请求方法不允许",
-            },
-            status=http_status.HTTP_405_METHOD_NOT_ALLOWED,
+        return api_response(
+            code=ErrorCode.METHOD_NOT_ALLOWED,
+            message=str(exc.detail) if hasattr(exc, "detail") else "请求方法不允许",
+            http_status=http_status.HTTP_405_METHOD_NOT_ALLOWED,
         )
 
     if isinstance(exc, (AuthenticationFailed, NotAuthenticated)):
@@ -114,41 +116,33 @@ def custom_exception_handler(exc, context):
 
     # DRF PermissionDenied 是 APIException 子类，先于 Django PermissionDenied 匹配
     if isinstance(exc, PermissionDenied):
-        return Response(
-            {
-                "code": int(ErrorCode.PERMISSION_DENIED),
-                "message": str(exc.detail) if hasattr(exc, "detail") else "权限不足",
-            },
-            status=http_status.HTTP_403_FORBIDDEN,
+        return api_response(
+            code=ErrorCode.PERMISSION_DENIED,
+            message=str(exc.detail) if hasattr(exc, "detail") else "权限不足",
+            http_status=http_status.HTTP_403_FORBIDDEN,
         )
 
     # Django 核心 PermissionDenied（视图中 raise PermissionDenied 时抛出），
     # 非 APIException 子类，需显式捕获避免落到通用 500 分支
     if isinstance(exc, DjangoPermissionDenied):
-        return Response(
-            {
-                "code": int(ErrorCode.PERMISSION_DENIED),
-                "message": str(exc) or "权限不足",
-            },
-            status=http_status.HTTP_403_FORBIDDEN,
+        return api_response(
+            code=ErrorCode.PERMISSION_DENIED,
+            message=str(exc) or "权限不足",
+            http_status=http_status.HTTP_403_FORBIDDEN,
         )
 
     if isinstance(exc, Throttled):
-        return Response(
-            {
-                "code": int(ErrorCode.RATE_LIMITED),
-                "message": f"请求过于频繁，请{exc.wait}秒后再试",
-            },
-            status=http_status.HTTP_429_TOO_MANY_REQUESTS,
+        return api_response(
+            code=ErrorCode.RATE_LIMITED,
+            message=f"请求过于频繁，请{exc.wait}秒后再试",
+            http_status=http_status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
     if isinstance(exc, Http404):
-        return Response(
-            {
-                "code": int(ErrorCode.NOT_FOUND),
-                "message": "请求的资源不存在",
-            },
-            status=http_status.HTTP_404_NOT_FOUND,
+        return api_response(
+            code=ErrorCode.NOT_FOUND,
+            message="请求的资源不存在",
+            http_status=http_status.HTTP_404_NOT_FOUND,
         )
 
     if isinstance(exc, APIException):
@@ -156,21 +150,17 @@ def custom_exception_handler(exc, context):
         # 按 HTTP 状态码反推业务错误码（如 NotFound→40401），保持
         # body code 与 HTTP 语义一致，避免 HTTP 404 携带 50001 的错位
         error_code = infer_error_code_from_http_status(exc.status_code)
-        return Response(
-            {
-                "code": int(error_code),
-                "message": str(exc.detail) if hasattr(exc, "detail") else "服务器内部错误",
-            },
-            status=exc.status_code,
+        return api_response(
+            code=error_code,
+            message=str(exc.detail) if hasattr(exc, "detail") else "服务器内部错误",
+            http_status=exc.status_code,
         )
 
     logger.error(f"未预期的异常: {type(exc).__name__}: {exc!s}", exc_info=True)
-    return Response(
-        {
-            "code": int(ErrorCode.INTERNAL_ERROR),
-            "message": "服务器内部错误，请稍后重试",
-        },
-        status=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+    return api_response(
+        code=ErrorCode.INTERNAL_ERROR,
+        message="服务器内部错误，请稍后重试",
+        http_status=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
     )
 
 
@@ -185,13 +175,11 @@ def _handle_validation_error(exc: ValidationError) -> Response:
                 else:
                     errors[field] = str(messages)
 
-            return Response(
-                {
-                    "code": int(ErrorCode.VALIDATION_FAILED),
-                    "message": "数据验证失败",
-                    "data": errors,
-                },
-                status=http_status.HTTP_400_BAD_REQUEST,
+            return api_response(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="数据验证失败",
+                data=errors,
+                http_status=http_status.HTTP_400_BAD_REQUEST,
             )
         elif isinstance(detail, (list, tuple)):
             message = str(detail[0]) if detail else "数据验证失败"
@@ -200,12 +188,10 @@ def _handle_validation_error(exc: ValidationError) -> Response:
     else:
         message = str(exc)
 
-    return Response(
-        {
-            "code": int(ErrorCode.VALIDATION_FAILED),
-            "message": message,
-        },
-        status=http_status.HTTP_400_BAD_REQUEST,
+    return api_response(
+        code=ErrorCode.VALIDATION_FAILED,
+        message=message,
+        http_status=http_status.HTTP_400_BAD_REQUEST,
     )
 
 
@@ -243,12 +229,10 @@ def _handle_auth_error(exc) -> Response:
         code = ErrorCode.UNAUTHORIZED
         message = error_message or "未登录或登录已过期"
 
-    return Response(
-        {
-            "code": int(code),
-            "message": message,
-        },
-        status=http_status.HTTP_401_UNAUTHORIZED,
+    return api_response(
+        code=code,
+        message=message,
+        http_status=http_status.HTTP_401_UNAUTHORIZED,
     )
 
 
@@ -264,13 +248,11 @@ def _handle_agent_error(exc: BaseAppError) -> Response:
     """
     # 视图层业务错误：直接按显式 business_code 生成响应
     if exc.business_code is not None:
-        return Response(
-            {
-                "code": int(exc.business_code),
-                "message": str(exc) or exc.business_code.message,
-                "data": exc.data or None,
-            },
-            status=exc.business_code.http_status,
+        return api_response(
+            code=exc.business_code,
+            message=str(exc) or exc.business_code.message,
+            data=exc.data or None,
+            http_status=exc.business_code.http_status,
         )
 
     error_data = exc.to_dict()
@@ -278,28 +260,26 @@ def _handle_agent_error(exc: BaseAppError) -> Response:
 
     # HTTP 状态码：根据业务错误码的 http_status 与 recoverable 综合判定
     if not exc.recoverable:
-        status_code = http_status.HTTP_503_SERVICE_UNAVAILABLE
+        status_code = http_status.HTTP_503_SERVICE_UNAVAILABLE  # 不可重试 → 503 服务不可用
     elif business_code == ErrorCode.AGENT_RATE_LIMITED:
-        status_code = http_status.HTTP_429_TOO_MANY_REQUESTS
+        status_code = http_status.HTTP_429_TOO_MANY_REQUESTS  # 限流
     elif business_code == ErrorCode.VALIDATION_FAILED:
-        status_code = http_status.HTTP_400_BAD_REQUEST
+        status_code = http_status.HTTP_400_BAD_REQUEST  # 参数错
     elif business_code == ErrorCode.SERVICE_UNAVAILABLE:
         status_code = http_status.HTTP_503_SERVICE_UNAVAILABLE
     else:
-        status_code = http_status.HTTP_500_INTERNAL_SERVER_ERROR
+        status_code = http_status.HTTP_500_INTERNAL_SERVER_ERROR  # 兜底内部错误
 
-    return Response(
-        {
-            "code": int(business_code),
-            # user_message 为 LCAgentException 及部分子类的扩展属性，
-            # 其余 BaseAppError 子类缺失时回退到 to_dict() 的 message
-            "message": getattr(exc, "user_message", None)
-            or error_data.get("message", "服务器内部错误"),
-            "data": {
-                "error_code": error_data.get("error_code"),
-                "recoverable": error_data.get("recoverable", True),
-                **error_data.get("details", {}),
-            },
+    return api_response(
+        code=business_code,
+        # user_message 为 LCAgentException 及部分子类的扩展属性，
+        # 其余 BaseAppError 子类缺失时回退到 to_dict() 的 message
+        message=getattr(exc, "user_message", None)
+        or error_data.get("message", "服务器内部错误"),
+        data={
+            "error_code": error_data.get("error_code"),
+            "recoverable": error_data.get("recoverable", True),
+            **error_data.get("details", {}),
         },
-        status=status_code,
+        http_status=status_code,
     )

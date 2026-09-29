@@ -27,7 +27,6 @@ backend/Django_xm/logs/
 # 运行时数据目录：忽略全部内容，但保留 RAG 评测资产（语料 / 评测集 / 报告）以支持复现。
 # 注意：必须写成 data/* 而非 data/，否则 Git 无法重新包含其子目录。
 backend/Django_xm/data/*
-!backend/Django_xm/data/eval/
 
 # 本地运行时记忆
 memory/
@@ -51,5 +50,5 @@ performance_benchmark.py
 # AI 工具与本地文档（不进入仓库）
 .codebuddy/
 docs/
-.trae/
+.codebuddy/
 trae/

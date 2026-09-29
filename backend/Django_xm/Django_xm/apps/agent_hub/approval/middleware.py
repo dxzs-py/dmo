@@ -791,8 +791,8 @@ class ApprovalMiddleware(AgentMiddleware):
                 continue
 
             # CONTROLLED / HIGH 级：构建审批请求
+            # （_approval 标识只在外层 interrupt 值上，单个 request 无需内嵌）
             request = {
-                "_approval": True,
                 "tool_name": tool_name,
                 "tool_call_id": tc_id,
                 "graph_interrupt_id": graph_interrupt_id,

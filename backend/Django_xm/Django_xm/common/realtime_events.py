@@ -23,8 +23,11 @@
 所有实时事件必须通过此函数发布。事件类型由 ``EventType`` 枚举指定，
 payload 必须符合 ``event_schema.py`` 中的 TypedDict 定义。
 
-- ``publish_event``：统一事件发布入口（async），按 ``EventType`` 路由到对应 WebSocket 频道。
-  payload 由 ``validate_payload`` 强制校验，不允许 ``**extra`` 开放透传。
+- ``publish_event``：统一事件发布入口（async）。频道由调用方传入的 ``session_id`` /
+  ``task_id`` / ``user_id`` 决定（业务场景的频道解析由上游 ``realtime_sync._resolve_channels``
+  统一完成，本模块不做路由决策）；``EventType`` 仅决定 WebSocket 事件名
+  （ws_event_name），不参与频道路由。payload 由 ``validate_payload`` 强制校验，
+  不允许 ``**extra`` 开放透传。
 - ``publish_event_sync``：同步版本，用于 Celery worker 等同步上下文。
 
 底层实现函数（模块内部使用，不对外暴露）：
@@ -69,7 +72,7 @@ from Django_xm.common.redis_utils import get_redis_client
 logger = logging.getLogger(__name__)
 
 
-EVENT_HISTORY_LIMIT = 500
+EVENT_HISTORY_LIMIT = 500  # 每频道最多存 500 条历史。
 
 # 历史事件 key TTL：24 小时，避免 Redis 内存无限增长
 HISTORY_TTL_SECONDS = 24 * 60 * 60
@@ -228,6 +231,7 @@ async def _publish_to_session_async(session_id, event_type, payload, subagent_th
     """异步实际发布会话事件到 WebSocket + Redis 持久化。
 
     底层实现函数，由 publish_event（异步路径）调用。
+    先把 event 经直接 Redis 客户端存进历史 List（Lua 脚本生成 seq 一并存储）→ 拿到 seq 补回 event（此时与 Redis 内容一致）→ group_send 广播同组 Consumer → 前端收到同步渲染。
 
     Args:
         session_id: 会话 ID
@@ -261,8 +265,12 @@ async def _publish_to_session_async(session_id, event_type, payload, subagent_th
 
         # group_send 失败不回滚 seq（已持久化），仅记录日志
         try:
+            """
+            用法 A（你的 _atomic_publish_event）：操作 realtime:history:* 和 realtime:seq:*，目的是存档/回放。这是显式写的。
+用法 B（Channel Layer）：channels_redis 自己管理一套内部结构（频道收件箱 + 群组集合），目的是实时投递。你从不直接碰这些 key。
+            """
             channel_layer = _get_loop_channel_layer()
-            await channel_layer.group_send(
+            await channel_layer.group_send(  # 把这个消息，发给当前正在监听这个群的所有 Consumer 实例。
                 group_name("session", session_id),
                 {"type": "broadcast_event", "event": event},
             )
@@ -571,6 +579,10 @@ def _ordered_ensure_future(coro, channel_key):
         _publish_chains[channel_key] = new_task
 
     _pending_publish_tasks.add(new_task)
+    """
+    `add_done_callback(func)`：当这个 Task **执行完毕（成功 / 抛异常 / 取消）** 时，自动调用 `func(task)`，回调函数会把任务对象作为参数传进去。
+    `set.discard(item)`：如果集合里存在 item，就删掉；不存在也不会报错（区别于 `remove`，`remove` 找不到会抛 KeyError）
+    """
     new_task.add_done_callback(_pending_publish_tasks.discard)
 
     def _cleanup_chain(t):
@@ -669,7 +681,7 @@ def get_event_history(channel_type, channel_id, last_seq=None, limit=100):
     try:
         redis_client = get_redis_client()
         key = _history_key(channel_type, channel_id)
-        raw_items = redis_client.lrange(key, 0, -1)
+        raw_items = redis_client.lrange(key, 0, -1) # 取 List 全部元素（RPUSH 追加，天然按时间正序）
 
         events = []
         for item in raw_items:

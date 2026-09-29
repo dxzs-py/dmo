@@ -12,6 +12,11 @@
     DEEP_RESEARCH + cross_module_id → session:{cross_module_id} + task:{module_id}（双频道）
     DEEP_RESEARCH 无 cross_module_id → task:{module_id}
 
+注意：chat 子代理审批路由到主会话频道，由审批归属逻辑保证（审批创建时
+source_id 写入根会话 ID 而非子代理线程，见
+langgraph_adapter._create_approvals_from_interrupts 的 root_session_id 兜底链），
+本文件不做任何频道路由覆盖。
+
 跨模块场景（chat 模块的深度研究模式）：
     模块 = DEEP_RESEARCH, module_id = task_id, cross_module_id = chat_session_id
     → 同时广播到 session:{chat_session_id} 和 task:{task_id}
@@ -50,6 +55,7 @@
 
 import asyncio
 import logging
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any
 
@@ -66,6 +72,60 @@ from Django_xm.common.realtime_events import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _fire_and_forget(coro: Coroutine[Any, Any, None], **context: Any) -> None:
+    """在当前事件循环中调度协程（fire-and-forget），失败经 done_callback 记录。
+
+    - 任务引用加入 _pending_publish_tasks 防 GC 回收，完成后自动清出；
+    - done_callback 中 retrieve 并记录异常（含上下文），消除 fire-and-forget
+      路径下发布失败调用方无感知的黑洞（与 sync 分支的日志行为对齐）；
+    - 串行化与 seq 顺序由 publish_event 内部 _ordered_ensure_future 按 channel
+      统一负责，本层不再外层串行化（避免与内层共用 channel_key 导致 task 链死锁）。
+
+    Args:
+        coro: 待调度协程（调用方负责构造，如 publish_tool_call(**kwargs)）
+        **context: 日志上下文（event_type / tool_call_id 等标识字段）
+    """
+    task = asyncio.ensure_future(coro)
+    _pending_publish_tasks.add(task)
+
+    def _done(t: asyncio.Task) -> None:
+        _pending_publish_tasks.discard(t)
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc is not None:
+            logger.error(
+                f"[RealtimeSync] 异步发布失败（fire-and-forget）: {context}",
+                exc_info=exc,
+            )
+
+    task.add_done_callback(_done)
+
+
+def _run_sync_publish(
+    publish_fn: Callable[..., Coroutine[Any, Any, None]],
+    context: dict[str, Any],
+    **kwargs: Any,
+) -> None:
+    """sync 上下文阻塞发布（async_to_sync，跑完才返回）。
+
+    - PayloadValidationError 原样重抛（publish_* 内部已记录 ERROR，
+      数据错误不可补偿，调用方决定降级策略）；
+    - 其余异常记录 ERROR 后吞掉——通知类发布失败不拖垮业务主流程。
+
+    Args:
+        publish_fn: 目标协程函数（publish_tool_call / publish_approval / publish_task_status）
+        context: 日志上下文（event_type / tool_call_id 等标识字段）
+        **kwargs: 透传给 publish_fn 的发布参数
+    """
+    try:
+        async_to_sync(publish_fn)(**kwargs)
+    except PayloadValidationError:
+        raise
+    except Exception:
+        logger.exception(f"[RealtimeSync] 同步发布失败: {context}")
 
 
 def _resolve_channels(
@@ -130,7 +190,6 @@ async def publish_tool_call(
     agent_name: str | None = None,
     risk_ceiling: str | None = None,
     risk_level: str | None = None,
-    _index: int | None = None,
     seq: int | None = None,
     description: str | None = None,
     position: int | None = None,
@@ -168,8 +227,9 @@ async def publish_tool_call(
                     计算）。根因修复：注入到 tool_call_* 事件 payload，让前端从工具
                     事件直接获取风险等级，不再单一依赖 approval_pending 事件路径，
                     避免跨浏览器风险等级显示不一致。
-        seq: (module, module_id) 内跨 LLM 轮次全局递增序号（register 分配）。
-            前端据此跨浏览器统一排序（替代跨轮重复的 _index）；非空才注入 payload。
+        seq: (module, module_id) 内跨 LLM 轮次全局递增序号（register 唯一分配点，
+            Redis INCR 分配恒 ≥1，0 视为未分配）。前端据此跨浏览器统一排序
+            （替代跨轮重复的 _index）；非空才注入 payload。
         description: 子 agent 角色描述（任务目标，取自 deep_builder SubAgent 静态
             description，仅子 agent 工具事件携带；主 agent 不传）。
         position: 工具调用在该图层自身正文中的字符偏移（该图层已输出 content 长度）。
@@ -180,6 +240,12 @@ async def publish_tool_call(
         PayloadValidationError: payload 校验失败时抛出
     """
     # 构造符合 schema 的 payload（parameters/message_id 必填）
+    # parameters 非 dict 时回退空 dict（schema 必填兜底），但记录告警暴露调用方类型错误
+    if parameters is not None and not isinstance(parameters, dict):
+        logger.warning(
+            f"[RealtimeSync] publish_tool_call parameters 应为 dict，"
+            f"收到 {type(parameters).__name__}，已回退为空 dict: tool_call_id={tool_call_id}"
+        )
     payload = {
         "tool_call_id": tool_call_id,
         "tool_name": tool_name,
@@ -213,8 +279,6 @@ async def publish_tool_call(
     # 事件获取风险等级，事件丢失时前端 riskLevel 缺失导致跨浏览器显示不一致
     if risk_level:
         payload["risk_level"] = risk_level
-    if _index is not None:
-        payload["_index"] = _index
     # seq：跨 LLM 轮次全局递增序号（register 分配），仅非空时注入
     # 前端据此跨浏览器统一排序（替代跨轮重复的 _index）
     if seq is not None and seq > 0:
@@ -269,7 +333,8 @@ def publish_tool_call_sync(**kwargs) -> None:
     - async 上下文：使用 fire-and-forget 模式调度 ``publish_tool_call`` 协程。
       串行化与 seq 顺序保证由 ``publish_event`` 内部的 ``_ordered_ensure_future``
       按 channel 统一负责，本函数不再外层串行化（避免与内层共用 channel_key
-      导致 task 链死锁）。任务引用由 ``_pending_publish_tasks`` 持有，完成后自动清理。
+      导致 task 链死锁）。任务引用由 ``_pending_publish_tasks`` 持有，完成后自动
+      清理；异常经 done_callback 记录 ERROR（fire-and-forget 失败不再无感知）。
     - sync 上下文：使用 async_to_sync 同步调用
 
     seq 顺序保证：同一 channel 的事件按调用顺序发布，seq 顺序与调用顺序一致，
@@ -279,22 +344,21 @@ def publish_tool_call_sync(**kwargs) -> None:
         asyncio.get_running_loop()
         # 在 async 事件循环中，fire-and-forget publish_tool_call
         # 串行化由 publish_event 内部的 _ordered_ensure_future 按 channel 保证
-        task = asyncio.ensure_future(publish_tool_call(**kwargs))
-        _pending_publish_tasks.add(task)
-        task.add_done_callback(_pending_publish_tasks.discard)
+        _fire_and_forget(
+            publish_tool_call(**kwargs),
+            event_type=kwargs.get("event_type"),
+            tool_call_id=kwargs.get("tool_call_id"),
+        )
     except RuntimeError:
         # 不在 async 事件循环中，使用 async_to_sync 同步调用
-        try:
-            async_to_sync(publish_tool_call)(**kwargs)
-        except PayloadValidationError:
-            # payload 校验失败：已由 publish_tool_call 内部记录 ERROR，这里仅重抛
-            raise
-        except Exception:
-            logger.exception(
-                f"[RealtimeSync] publish_tool_call_sync 失败: "
-                f"event_type={kwargs.get('event_type')}, "
-                f"tool_call_id={kwargs.get('tool_call_id')}"
-            )
+        _run_sync_publish(
+            publish_tool_call,
+            {
+                "event_type": kwargs.get("event_type"),
+                "tool_call_id": kwargs.get("tool_call_id"),
+            },
+            **kwargs,
+        )
 
 
 async def publish_approval(
@@ -335,6 +399,11 @@ async def publish_approval(
     Raises:
         PayloadValidationError: payload 校验失败时抛出
     """
+    if parameters is not None and not isinstance(parameters, dict):
+        logger.warning(
+            f"[RealtimeSync] publish_approval parameters 应为 dict，"
+            f"收到 {type(parameters).__name__}，已回退为空 dict: interrupt_id={interrupt_id}"
+        )
     payload = {
         "interrupt_id": interrupt_id,
         "tool_call_id": tool_call_id,
@@ -353,16 +422,9 @@ async def publish_approval(
     if extra_fields:
         payload.update(extra_fields)
 
-    # 解析频道路由（三模块统一）
+    # 解析频道路由（三模块统一）。chat 子代理审批路由到主会话频道由审批
+    # 归属逻辑保证（source_id=根会话 ID），本层无频道路由覆盖。
     session_id, task_id = _resolve_channels(module, module_id, cross_module_id)
-    # chat 子代理审批频道修正：source_id 可能是 subagent_xxx（子代理归属），
-    # _resolve_channels 会把事件发到 session:subagent_xxx，前端仅订阅主会话频道
-    # 而收不到（嵌套审批按钮不渲染的根因）。approval.broadcast payload 注入的
-    # chat_session_id 是权威会话路由，覆盖 session 频道（task 频道不受影响）。
-    if module == EventSource.CHAT:
-        chat_session_id = (extra_fields or {}).get("chat_session_id")
-        if chat_session_id:
-            session_id = chat_session_id
 
     try:
         await publish_event(
@@ -387,7 +449,8 @@ def publish_approval_sync(**kwargs) -> None:
     - async 上下文：使用 fire-and-forget 模式调度 ``publish_approval`` 协程。
       串行化与 seq 顺序保证由 ``publish_event`` 内部的 ``_ordered_ensure_future``
       按 channel 统一负责，本函数不再外层串行化（避免与内层共用 channel_key
-      导致 task 链死锁）。任务引用由 ``_pending_publish_tasks`` 持有，完成后自动清理。
+      导致 task 链死锁）。任务引用由 ``_pending_publish_tasks`` 持有，完成后自动
+      清理；异常经 done_callback 记录 ERROR（fire-and-forget 失败不再无感知）。
     - sync 上下文：使用 async_to_sync 同步调用
 
     seq 顺序保证：与 publish_tool_call_sync 同理，审批事件按 channel 串行化，
@@ -397,20 +460,20 @@ def publish_approval_sync(**kwargs) -> None:
         asyncio.get_running_loop()
         # 在 async 事件循环中，fire-and-forget publish_approval
         # 串行化由 publish_event 内部的 _ordered_ensure_future 按 channel 保证
-        task = asyncio.ensure_future(publish_approval(**kwargs))
-        _pending_publish_tasks.add(task)
-        task.add_done_callback(_pending_publish_tasks.discard)
+        _fire_and_forget(
+            publish_approval(**kwargs),
+            event_type=kwargs.get("event_type"),
+            interrupt_id=kwargs.get("interrupt_id"),
+        )
     except RuntimeError:
-        try:
-            async_to_sync(publish_approval)(**kwargs)
-        except PayloadValidationError:
-            raise
-        except Exception:
-            logger.exception(
-                f"[RealtimeSync] publish_approval_sync 失败: "
-                f"event_type={kwargs.get('event_type')}, "
-                f"interrupt_id={kwargs.get('interrupt_id')}"
-            )
+        _run_sync_publish(
+            publish_approval,
+            {
+                "event_type": kwargs.get("event_type"),
+                "interrupt_id": kwargs.get("interrupt_id"),
+            },
+            **kwargs,
+        )
 
 
 async def publish_task_status(
@@ -429,7 +492,9 @@ async def publish_task_status(
     多浏览器状态一致（刷新后由 DeepResearchStatusView API 兜底拉取）。
 
     Payload:
-        task_id/status/current_step/final_report/error/updated_at（+ source/source_id）
+        task_id/status/current_step/final_report/error/updated_at（+ source/source_id）。
+        updated_at 为 ISO 8601 字符串（与工具事件 created_at/completed_at 协议一致，
+        前端 toCamelCase 后为 updatedAt）。
 
     频道路由（复用 _resolve_channels）：
         - 独立深度研究（无 cross_module_id）→ 仅 task 频道
@@ -444,8 +509,6 @@ async def publish_task_status(
         cross_module_id: 跨模块同步目标 ID（聊天关联场景传 chat_session_id）
         extra: 追加字段（透传到 payload）
     """
-    import time
-
     payload = {
         "source": EventSource.DEEP_RESEARCH,
         "source_id": task_id,
@@ -453,7 +516,9 @@ async def publish_task_status(
         "current_step": current_step or "",
         "final_report": final_report or "",
         "error": error or "",
-        "updated_at": time.time(),
+        # ISO 8601（与工具事件 created_at/completed_at 统一协议）；
+        # 历史为 epoch 浮点（time.time()），前端无消费方（已核实），安全迁移
+        "updated_at": datetime.now(UTC).isoformat(),
     }
     if cross_module_id:
         payload["cross_module_id"] = cross_module_id
@@ -479,19 +544,23 @@ async def publish_task_status(
 
 
 def publish_task_status_sync(**kwargs) -> None:
-    """publish_task_status 的同步版本。智能适配 async/sync 上下文（同 publish_*_sync）。"""
+    """publish_task_status 的同步版本。智能适配 async/sync 上下文（同 publish_*_sync）。
+
+    async 上下文 fire-and-forget：异常经 done_callback 记录 ERROR（失败不再无感知）。
+    """
     try:
         asyncio.get_running_loop()
-        task = asyncio.ensure_future(publish_task_status(**kwargs))
-        _pending_publish_tasks.add(task)
-        task.add_done_callback(_pending_publish_tasks.discard)
+        _fire_and_forget(
+            publish_task_status(**kwargs),
+            task_id=kwargs.get("task_id"),
+            status=kwargs.get("status"),
+        )
     except RuntimeError:
-        try:
-            async_to_sync(publish_task_status)(**kwargs)
-        except PayloadValidationError:
-            raise
-        except Exception:
-            logger.exception(
-                f"[RealtimeSync] publish_task_status_sync 失败: "
-                f"task_id={kwargs.get('task_id')}, status={kwargs.get('status')}"
-            )
+        _run_sync_publish(
+            publish_task_status,
+            {
+                "task_id": kwargs.get("task_id"),
+                "status": kwargs.get("status"),
+            },
+            **kwargs,
+        )

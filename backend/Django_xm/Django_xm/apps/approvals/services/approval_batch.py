@@ -189,7 +189,9 @@ async def create_approvals_for_interrupts(
             "description": interrupt_data.get("description", ""),
             "operation": interrupt_data.get("operation", ""),
             "danger_level": interrupt_data.get("danger_level", "medium"),
-            "parameters": interrupt_data.get("parameters", {}) or interrupt_data.get("args", {}) or {},
+            # 输入恒为 approval_parser 产物：字段名为 parameters（值源自生产者 args），
+            # 不再重复实现 args 兼容（原 parameters or args 双份兼容已收敛到 parser）
+            "parameters": interrupt_data.get("parameters") or {},
             "action": interrupt_data.get("action", Approval.ACTION_CONFIRM),
             "session_id": chat_session_id,
             "message_id": message_id,

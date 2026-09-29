@@ -188,9 +188,11 @@ def build_approval_payload(
             payload["cross_module_id"] = cross_module_id
         if extra:
             payload.update(extra)
-        # chat_session_id 顶层注入：审批事件的权威会话路由（chat 子代理审批的
-        # source_id 可能是 subagent_xxx，但事件必须发到前端订阅的主会话频道，
-        # publish_approval 据此覆盖 _resolve_channels 的 session 路由）。
+        # chat_session_id 顶层注入：仅供快照/恢复链路还原审批归属会话。
+        # 注意：WS 事件路由不经过本字段——broadcast scope 的 extra_fields 不含
+        # chat_session_id；chat 审批（含子代理）的 session 频道由归属逻辑保证
+        # （审批创建时 source_id 写入根会话 ID，见
+        # langgraph_adapter._create_approvals_from_interrupts 的 root_session_id 兜底链）。
         if approval.chat_session_id:
             payload.setdefault("chat_session_id", approval.chat_session_id)
         # 顶层提取 message_id / graph_interrupt_id / tool_config 展开（setdefault 语义）

@@ -469,7 +469,7 @@ const summaryLine = computed(() =>
           <div v-if="isConfirmWithInput && !isWaitingForSiblings && !isProcessingApproval" class="approval-panel__input">
             <el-input
               v-model="approvalInputValue"
-              :placeholder="approvalData.inputPlaceholder || '请输入值...'"
+              placeholder="请输入值..."
               size="small"
               clearable
               @keyup.enter="emit('approve', { ...toolCall, _userInput: approvalInputValue })"
