@@ -106,7 +106,7 @@ def _run_web_search(query: str) -> list[str]:
     """调用 web_search 工具执行联网搜索，返回搜索结果文本列表。
 
     复用聊天模块的 web_search 工具（apps/tools._get_web_search_tools），
-    未配置 TAVILY_API_KEY / 无 duckduckgo-search 时静默降级返回空列表。
+    未配置 TAVILY_API_KEY / 无 ddgs 时静默降级返回空列表。
     """
     try:
         from Django_xm.apps.tools import _get_web_search_tools

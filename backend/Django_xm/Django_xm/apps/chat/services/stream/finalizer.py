@@ -3,16 +3,18 @@
 两种模式（普通 / 深度思考）共用此模块，保证循环成功后行为完全一致：
 
 1. update_usage_and_tokens + LLM fallback 检测
-2. tool_usage 统计
+2. tool_usage 统计（统一容器 data["_tool_entries"]）
 3. 审批中断收尾（调用 finalize_interrupt）
 4. 深度思考兜底（content 为空时用 reasoning）
 5. strategy.on_loop_success（reasoning 完成事件）
-6. finalize_tool_calls（正常路径）
-7. _finalize_stream_response（补发 + 补全检查 + 建议生成）
+6. _finalize_stream_response（补发 + 补全检查 + 建议生成）
 
 修复的 bug：
 - 深度思考模式原不调用 _finalize_stream_response（无建议生成、无补全检查）
 - 工具结果补发原使用硬编码工具名，现改为工具元数据（output_to_chat / raw_content）驱动
+
+工具调用事件的补发已由单一管线（ToolEventExtractor + publish_tool_lifecycle_event）
+在流式过程中实时发布，finalize 不再补发工具事件。
 """
 
 import logging
@@ -24,7 +26,6 @@ from langchain_core.messages import AIMessage
 from Django_xm.apps.ai_engine.models import SystemConfig
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
 from Django_xm.apps.chat.services.stream_helpers import (
-    finalize_tool_calls,
     update_usage_and_tokens,
 )
 from Django_xm.apps.chat.utils import _needs_completion, extract_suggestions
@@ -81,12 +82,14 @@ async def finalize_stream(
                 # 持久化 fallback 配置失败不影响当前会话，运行时已切换
                 logger.debug("持久化模型 fallback 配置到 SystemConfig 失败")
 
-    # 3. tool_usage 统计
-    for tc_info in ctx.tool_calls_map.values():
+    # 3. tool_usage 统计（统一容器：主/子代理工具条目）
+    for tc_info in (data.get("_tool_entries") or {}).values():
+        if not isinstance(tc_info, dict):
+            continue
         tool_name = tc_info.get("name", "unknown")
         token_detail_tracker.track_tool_usage(tool_name)
 
-    # 4. 审批中断收尾（finalize_tool_calls + interrupted 事件 + stream_state 快照）
+    # 4. 审批中断收尾（interrupted 事件 + stream_state 快照）
     if ctx.interrupt_info is not None:
         async for event in finalize_interrupt(ctx, data):
             yield event
@@ -107,15 +110,7 @@ async def finalize_stream(
 
         _sync_pending_to_stream_state(ctx.accumulated_reasoning)
 
-    # 6. finalize_tool_calls（正常路径）
-    for tool_update_event in finalize_tool_calls(
-        ctx.all_messages,
-        ctx.tool_calls_map,
-        ctx.tool_args_accumulator,
-    ):
-        yield tool_update_event
-
-    # 7. 深度思考兜底：content 为空时用推理内容作为主内容（仅深度思考模式）
+    # 6. 深度思考兜底：content 为空时用推理内容作为主内容（仅深度思考模式）
     if (
         strategy.enable_deep_thinking
         and not ctx.current_message_content.strip()
@@ -128,11 +123,11 @@ async def finalize_stream(
         yield {"type": "chunk", "content": reasoning_text}
         ctx.current_message_content = reasoning_text
 
-    # 8. strategy.on_loop_success（reasoning 完成事件）
+    # 7. strategy.on_loop_success（reasoning 完成事件）
     async for event in strategy.on_loop_success(ctx, data):
         yield event
 
-    # 9. _finalize_stream_response（补发 + 补全检查 + 建议生成）
+    # 8. _finalize_stream_response（补发 + 补全检查 + 建议生成）
     async for event in _finalize_stream_response(
         ctx,
         data,
@@ -174,8 +169,8 @@ async def _finalize_stream_response(
     # AI 回复过短时，用工具结果补发（元数据驱动）
     if (
         not final_ai_message or not final_ai_message.content or len(final_ai_message.content.strip()) < 10
-    ) and ctx.tool_calls_map:
-        for tool_info in ctx.tool_calls_map.values():
+    ) and data.get("_tool_entries"):
+        for tool_info in (data.get("_tool_entries") or {}).values():
             tool_name = tool_info.get("name", "")
             meta = get_tool_metadata(tool_name, tools)
 

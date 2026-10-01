@@ -555,11 +555,11 @@ class TestResearchResumeBaseline(unittest.TestCase):
         with mock.patch("Django_xm.apps.research.models.ResearchTask.objects", qs):
             baseline = SessionExecutor._load_research_resume_baseline("t1")
 
-        self.assertEqual(set(baseline["subagent_tool_entries"].keys()), {"c1", "c3"})
-        self.assertEqual(baseline["subagent_tool_entries"]["c1"]["subagent_thread_id"], "sa1")
-        self.assertEqual(baseline["subagent_tool_entries"]["c1"]["position"], 3)
-        self.assertEqual(baseline["subagent_tool_entries"]["c1"]["status"], "completed")
-        self.assertEqual(baseline["subagent_tool_entries"]["c1"]["result"], {"output": "ok"})
+        self.assertEqual(set(baseline["tool_entries"].keys()), {"c1", "c3"})
+        self.assertEqual(baseline["tool_entries"]["c1"]["subagent_thread_id"], "sa1")
+        self.assertEqual(baseline["tool_entries"]["c1"]["position"], 3)
+        self.assertEqual(baseline["tool_entries"]["c1"]["status"], "completed")
+        self.assertEqual(baseline["tool_entries"]["c1"]["result"], {"output": "ok"})
         self.assertEqual(
             baseline["subagent_contents"],
             {"sa1": {"content": "a", "reasoning_content": "r"}, "sa2": {"content": "b"}},
@@ -580,11 +580,11 @@ class TestResearchResumeBaseline(unittest.TestCase):
             ex = _make_executor()
             agent = mock.Mock()
             agent.subagent_contents = {}
-            agent._subagent_tool_entries = {}
+            agent._tool_entries = {}
             ex._agent = agent
             baseline = {
                 "subagent_contents": {"sa1": {"content": "a"}},
-                "subagent_tool_entries": {
+                "tool_entries": {
                     "c1": {"id": "c1", "subagent_thread_id": "sa1", "position": 3}
                 },
             }
@@ -593,7 +593,7 @@ class TestResearchResumeBaseline(unittest.TestCase):
 
             self.assertEqual(agent.subagent_contents, {"sa1": {"content": "a"}})
             self.assertEqual(
-                agent._subagent_tool_entries,
+                agent._tool_entries,
                 {"c1": {"id": "c1", "subagent_thread_id": "sa1", "position": 3}},
             )
 
@@ -605,13 +605,13 @@ class TestResearchResumeBaseline(unittest.TestCase):
             ex = _make_executor()
             agent = mock.Mock()
             agent.subagent_contents = {"sa2": {"content": "new"}}
-            agent._subagent_tool_entries = {
+            agent._tool_entries = {
                 "c9": {"id": "c9", "subagent_thread_id": "sa2", "position": 0}
             }
             ex._agent = agent
             baseline = {
                 "subagent_contents": {"sa1": {"content": "a"}},
-                "subagent_tool_entries": {
+                "tool_entries": {
                     "c1": {"id": "c1", "subagent_thread_id": "sa1", "position": 3}
                 },
             }
@@ -620,7 +620,7 @@ class TestResearchResumeBaseline(unittest.TestCase):
 
             self.assertEqual(agent.subagent_contents, {"sa2": {"content": "new"}, "sa1": {"content": "a"}})
             self.assertEqual(
-                set(agent._subagent_tool_entries.keys()), {"c9", "c1"}
+                set(agent._tool_entries.keys()), {"c9", "c1"}
             )
 
         asyncio.run(_case())
@@ -635,7 +635,7 @@ class TestResearchResumeBaseline(unittest.TestCase):
                 "_load_research_resume_baseline",
                 return_value={
                     "subagent_contents": {},
-                    "subagent_tool_entries": {},
+                    "tool_entries": {},
                 },
             ):
                 await ex._inject_research_resume_baseline()  # 不应抛异常

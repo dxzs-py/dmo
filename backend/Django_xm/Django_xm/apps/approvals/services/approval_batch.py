@@ -54,8 +54,22 @@ def collect_batch_decisions(
 
     for approval in batch_approvals:
         extra = approval.extra if isinstance(approval.extra, dict) else {}
-        tc_id = extra.get("tool_call_id", approval.interrupt_id)
-        langgraph_id = extra.get("langgraph_resume_id", graph_interrupt_id)
+        # tool_call_id 缺失时以 approval.interrupt_id 等价回退：parser 恒写二者同值，
+        # 等价无害，保留（spec approval-id-fallback-refactor A4）。
+        tc_id = extra.get("tool_call_id") or approval.interrupt_id
+        # F-C（spec A5）：extra 缺 langgraph_resume_id 不再回退批次 uuid——批次 uuid
+        # 不是合法 resume key（LangGraph 按 Interrupt.id 匹配 Command(resume) 键），
+        # 会静默发起注定失败的恢复。跳过该行并告警，批次完整性由 300 秒超时自愈收尾。
+        langgraph_id = extra.get("langgraph_resume_id")
+        if not langgraph_id:
+            logger.warning(
+                "[ApprovalBatch] 审批行缺失 extra.langgraph_resume_id"
+                "（interrupt_id=%s, batch=%s），跳过收集（批次将由超时自愈收尾）",
+                approval.interrupt_id,
+                graph_interrupt_id,
+            )
+            all_resolved = False
+            continue
 
         if approval.state == Approval.State.APPROVED:
             resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = True

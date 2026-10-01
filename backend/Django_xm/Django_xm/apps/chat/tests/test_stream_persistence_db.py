@@ -421,10 +421,10 @@ class SaveMessageAndTouchSessionTests(unittest.TestCase):
 class CollectToolCallsWithSubagentsTests(unittest.TestCase):
     """_collect_tool_calls_with_subagents tool_calls 构造阶段测试。"""
 
-    def test_builds_whitelist_entries_from_map(self):
-        """主代理条目按白名单构建（含内部字段过滤与默认值兜底）。"""
-        tool_calls_map = {
-            "k1": {
+    def test_builds_whitelist_entries_from_container(self):
+        """统一容器条目按白名单构建（含内部字段过滤与默认值兜底）。"""
+        tool_entries = {
+            "call_1": {
                 "id": "call_1",
                 "name": "shell_exec",
                 "type": "tool-call-shell_exec",
@@ -438,7 +438,7 @@ class CollectToolCallsWithSubagentsTests(unittest.TestCase):
             },
         }
 
-        collected = _collect_tool_calls_with_subagents(tool_calls_map, None)
+        collected = _collect_tool_calls_with_subagents(tool_entries)
 
         self.assertEqual(len(collected), 1)
         entry = collected[0]
@@ -446,9 +446,9 @@ class CollectToolCallsWithSubagentsTests(unittest.TestCase):
         self.assertEqual(entry["seq"], 5)
         self.assertNotIn("_index", entry)
 
-    def test_subagent_entries_appended_with_layer_fields(self):
-        """子代理条目（含图层字段）按 id 去重后追加到主条目之后。"""
-        subagent_entries = {
+    def test_subagent_entries_keep_layer_fields(self):
+        """子代理条目（含图层字段）保留图层字段。"""
+        tool_entries = {
             "sub_call_1": {
                 "id": "sub_call_1",
                 "name": "shell_exec",
@@ -459,49 +459,59 @@ class CollectToolCallsWithSubagentsTests(unittest.TestCase):
             },
         }
 
-        collected = _collect_tool_calls_with_subagents({}, subagent_entries)
+        collected = _collect_tool_calls_with_subagents(tool_entries)
 
         self.assertEqual(len(collected), 1)
         self.assertEqual(collected[0]["id"], "sub_call_1")
         self.assertEqual(collected[0]["subagent_thread_id"], "thread_1")
+        self.assertEqual(collected[0]["agent_name"], "researcher")
+        self.assertEqual(collected[0]["depth"], 1)
 
-    def test_subagent_entry_with_existing_id_skipped(self):
-        """子代理条目 id 与主条目重复 → 跳过（按 id 天然去重）。"""
-        tool_calls_map = {"k1": {"id": "call_1", "name": "main_tool", "status": "completed"}}
-        subagent_entries = {"call_1": {"id": "call_1", "name": "main_tool", "status": "completed"}}
+    def test_duplicate_effective_id_skipped(self):
+        """两个容器键指向同一有效 id → 仅保留首条（按 id 去重）。"""
+        tool_entries = {
+            "k1": {"id": "call_1", "name": "main_tool", "status": "completed"},
+            "k2": {"id": "call_1", "name": "main_tool", "status": "completed"},
+        }
 
-        collected = _collect_tool_calls_with_subagents(tool_calls_map, subagent_entries)
+        collected = _collect_tool_calls_with_subagents(tool_entries)
 
         self.assertEqual(len(collected), 1)
         self.assertEqual(collected[0]["name"], "main_tool")
 
-    def test_subagent_entry_with_empty_id_skipped(self):
-        """子代理条目 id 为空串/None key → 跳过。"""
-        subagent_entries = {
+    def test_entry_without_id_uses_container_key(self):
+        """条目缺 id 时以容器键兜底为 id。"""
+        tool_entries = {"call_2": {"name": "valid", "status": "pending"}}
+
+        collected = _collect_tool_calls_with_subagents(tool_entries)
+
+        self.assertEqual([tc["id"] for tc in collected], ["call_2"])
+
+    def test_entry_with_empty_id_and_key_skipped(self):
+        """条目 id 与容器键均为空 → 跳过。"""
+        tool_entries = {
             "": {"id": "", "name": "orphan", "status": "pending"},
             "call_2": {"id": "call_2", "name": "valid", "status": "pending"},
         }
 
-        collected = _collect_tool_calls_with_subagents({}, subagent_entries)
+        collected = _collect_tool_calls_with_subagents(tool_entries)
 
         self.assertEqual([tc["id"] for tc in collected], ["call_2"])
 
-    def test_subagent_entry_appended_as_copy(self):
-        """追加的子代理条目为副本（修改收集结果不影响入参）。"""
-        subagent_entries = {"call_1": {"id": "call_1", "name": "x", "status": "pending"}}
+    def test_entry_appended_as_copy(self):
+        """构建的条目为副本（修改收集结果不影响入参）。"""
+        tool_entries = {"call_1": {"id": "call_1", "name": "x", "status": "pending"}}
 
-        collected = _collect_tool_calls_with_subagents({}, subagent_entries)
+        collected = _collect_tool_calls_with_subagents(tool_entries)
         collected[0]["status"] = "completed"
 
-        self.assertEqual(subagent_entries["call_1"]["status"], "pending")
+        self.assertEqual(tool_entries["call_1"]["status"], "pending")
 
-    def test_none_entries_returns_main_only(self):
-        """subagent_tool_entries=None → 仅返回主条目构建结果。"""
-        tool_calls_map = {"k1": {"id": "call_1", "name": "x", "status": "pending"}}
+    def test_none_entries_returns_empty(self):
+        """tool_entries=None → 返回空列表。"""
+        collected = _collect_tool_calls_with_subagents(None)
 
-        collected = _collect_tool_calls_with_subagents(tool_calls_map, None)
-
-        self.assertEqual(len(collected), 1)
+        self.assertEqual(collected, [])
 
 
 class PersistStreamResultOrchestrationTests(unittest.TestCase):
@@ -552,11 +562,10 @@ class PersistStreamResultOrchestrationTests(unittest.TestCase):
                     session_id=persist_kwargs.get("session_id", "sess-1"),
                     user_id=None,
                     content=persist_kwargs.get("content", ""),
-                    tool_calls_map=persist_kwargs.get("tool_calls_map", {}),
+                    tool_entries=persist_kwargs.get("tool_entries", {}),
                     message_id=persist_kwargs.get("message_id"),
                     reasoning=persist_kwargs.get("reasoning"),
                     subagent_contents=persist_kwargs.get("subagent_contents"),
-                    subagent_tool_entries=persist_kwargs.get("subagent_tool_entries"),
                 )
             )
         return result, publish_mock
@@ -633,7 +642,7 @@ class PersistStreamResultOrchestrationTests(unittest.TestCase):
     def test_subagent_entries_persisted_end_to_end(self):
         """子代理工具条目经编排端到端落库（图层字段保留、触发 save）。"""
         message_fake = _build_message_fake()
-        subagent_entries = {
+        tool_entries = {
             "sub_call_1": {
                 "id": "sub_call_1",
                 "name": "shell_exec",
@@ -645,7 +654,7 @@ class PersistStreamResultOrchestrationTests(unittest.TestCase):
         }
 
         result, publish_mock = self._run_persist(
-            message_fake, content="", subagent_tool_entries=subagent_entries
+            message_fake, content="", tool_entries=tool_entries
         )
 
         self.assertEqual(result, "1")

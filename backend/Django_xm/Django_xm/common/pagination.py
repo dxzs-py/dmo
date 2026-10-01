@@ -17,19 +17,19 @@ class ProjectPagination(PageNumberPagination):
     查询参数：page（页码，默认 1）、page_size（每页条数，默认 20，上限 100）。
     """
 
-    page_size = 20
-    page_size_query_param = "page_size"
-    max_page_size = 100
+    page_size = 20  # 默认每页20条
+    page_size_query_param = "page_size"  # 前端可以传 ?page_size=50 自定义页大小
+    max_page_size = 100  # 前端最大只能请求每页100条，防止恶意拉大量数据
 
     def get_paginated_response(self, data):
         """返回统一 {code, message, data} 包裹的分页响应。"""
         return success_response(
             data={
-                "items": data,
-                "total": self.page.paginator.count,
-                "page": self.page.number,
-                "page_size": self.get_page_size(self.request),
-                "total_pages": self.page.paginator.num_pages,
+                "items": data,  # 当前页数据列表
+                "total": self.page.paginator.count,  # 总记录数
+                "page": self.page.number,  # 当前页码
+                "page_size": self.get_page_size(self.request),  # 当前实际页大小
+                "total_pages": self.page.paginator.num_pages,  # 总页数
             }
         )
 

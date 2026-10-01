@@ -21,6 +21,7 @@ from Django_xm.apps.approvals.models import Approval
 from Django_xm.apps.approvals.services.approval_service import (
     clean_extra_temp_keys,
     persist_and_broadcast,
+    publish_tool_call_rejected_event,
     publish_tool_call_timeout_event,
     release_lock,
 )
@@ -140,6 +141,10 @@ class ApprovalLifecycleService:
         # 让前端 ToolCallCard 显示"已超时"（审批事件与工具事件分离）
         if final_state == Approval.State.TIMEOUT:
             publish_tool_call_timeout_event(approval)
+        # 终态为 rejected 时，额外发布 TOOL_CALL_REJECTED 事件（与 timeout 对称）
+        # 让前端 ToolCallCard 显示"已拒绝"
+        elif final_state == Approval.State.REJECTED:
+            publish_tool_call_rejected_event(approval)
         # 锁 key 与 approval_service.resume_approval 对称：批次维度（graph_interrupt_id）
         # 或单审批维度（interrupt_id），保证批次锁在终态化时被正确释放
         graph_interrupt_id = ""

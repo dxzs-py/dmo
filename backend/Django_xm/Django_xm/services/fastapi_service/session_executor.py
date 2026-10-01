@@ -212,7 +212,7 @@ class SessionExecutor:
         与 chat 链路 ``_inject_chat_resume_baseline`` 同构——业务等待/审批挂起
         期间已由 ``_persist_research_progress`` 落库到 ``ResearchTask.tool_calls`` /
         ``subagent_contents``，重启后新建 adapter 从空开始，据此重建
-        ``subagent_contents`` / ``_subagent_tool_entries``（key=tool_call_id），
+        ``subagent_contents`` / ``_tool_entries``（key=tool_call_id），
         保证恢复轮 position 注入（子代理图层正文长度依据）与最终 writeback
         （merge_source 聚合）不丢失挂起前的子代理工具条目。
         """
@@ -227,7 +227,7 @@ class SessionExecutor:
             )
             return
         subagent_contents = baseline.get("subagent_contents") or {}
-        subagent_tool_entries = baseline.get("subagent_tool_entries") or {}
+        tool_entries = baseline.get("tool_entries") or {}
         main_content = baseline.get("content") or ""
         if main_content and hasattr(agent, "_main_content"):
             # 主代理累计正文恢复：position 注入依据（len(_main_content)）+ 最终写回权威源。
@@ -248,12 +248,12 @@ class SessionExecutor:
                 f"[SessionExecutor] 恢复基线注入 subagent_contents: thread_id={self.thread_id}, "
                 f"entries={len(merged)}"
             )
-        if subagent_tool_entries and hasattr(agent, "_subagent_tool_entries"):
-            merged = dict(getattr(agent, "_subagent_tool_entries", {}) or {})
-            merged.update(subagent_tool_entries)
-            agent._subagent_tool_entries = merged
+        if tool_entries and hasattr(agent, "_tool_entries"):
+            merged = dict(getattr(agent, "_tool_entries", {}) or {})
+            merged.update(tool_entries)
+            agent._tool_entries = merged
             logger.info(
-                f"[SessionExecutor] 恢复基线注入 subagent_tool_entries: thread_id={self.thread_id}, "
+                f"[SessionExecutor] 恢复基线注入 tool_entries: thread_id={self.thread_id}, "
                 f"entries={len(merged)}"
             )
 
@@ -262,7 +262,7 @@ class SessionExecutor:
         """同步读取研究恢复基线（subagent_contents / 子代理工具条目）。
 
         子代理工具条目从 ``ResearchTask.tool_calls`` 中筛选 ``subagent_thread_id``
-        非空的条目重建（key=tool_call_id），与 adapter ``_subagent_tool_entries``
+        非空的条目重建（key=tool_call_id），与 adapter ``_tool_entries``
         结构一致（含 subagent_thread_id/agent_name/depth/position/seq/status/result）。
         """
         from Django_xm.apps.research.models import ResearchTask
@@ -271,7 +271,7 @@ class SessionExecutor:
         if task is None:
             return {}
 
-        subagent_tool_entries: dict[str, dict] = {}
+        tool_entries: dict[str, dict] = {}
         for tc in task.tool_calls or []:
             if not isinstance(tc, dict):
                 continue
@@ -279,7 +279,7 @@ class SessionExecutor:
                 continue
             key = tc.get("id") or tc.get("name") or ""
             if key:
-                subagent_tool_entries[key] = dict(tc)
+                tool_entries[key] = dict(tc)
 
         subagent_contents = task.subagent_contents or {}
         if not isinstance(subagent_contents, dict):
@@ -287,7 +287,7 @@ class SessionExecutor:
 
         return {
             "subagent_contents": dict(subagent_contents),
-            "subagent_tool_entries": subagent_tool_entries,
+            "tool_entries": tool_entries,
             "content": task.content or "",
         }
 
@@ -342,7 +342,7 @@ class SessionExecutor:
     async def _persist_research_progress(
         self,
         subagent_contents: dict | None = None,
-        subagent_tool_entries: dict | None = None,
+        tool_entries: dict | None = None,
         main_content: str | None = None,
     ) -> None:
         """挂起前落库研究内存态（子代理工具条目 + 图层正文 + 主代理累计正文）到 DB。
@@ -352,7 +352,7 @@ class SessionExecutor:
         保证挂起期间刷新浏览器、服务重启恢复后可还原子代理工具卡、图层正文
         与主代理累计正文（adapter 内存态随协程/实例销毁而丢失，DB 是唯一可还原源）。
         """
-        if not subagent_contents and not subagent_tool_entries and not main_content:
+        if not subagent_contents and not tool_entries and not main_content:
             return
         try:
             from Django_xm.apps.research.services.writeback import persist_research_progress
@@ -360,7 +360,7 @@ class SessionExecutor:
             await sync_to_async(persist_research_progress)(
                 self.thread_id,
                 subagent_contents=subagent_contents,
-                subagent_tool_entries=subagent_tool_entries,
+                tool_entries=tool_entries,
                 main_content=main_content,
             )
         except Exception:
@@ -392,7 +392,7 @@ class SessionExecutor:
         # getattr 兜底：部分执行路径（测试桩）可能无 subagent 字段。
         await self._persist_research_progress(
             getattr(result, "subagent_contents", None),
-            getattr(result, "subagent_tool_entries", None),
+            getattr(result, "tool_entries", None),
             getattr(result, "main_content", "") or None,
         )
 
@@ -540,7 +540,7 @@ class SessionExecutor:
                 # 后跳过 pending interrupt 清理，从 checkpoint 续跑）。
                 self.params["resume_command"] = resume_command
                 # 业务等待挂起恢复（wait_for_subagent，spec D4）：挂起时父协程退出，
-                # content_state / _subagent_tool_entries / _subagent_contents 随协程销毁。
+                # content_state / _tool_entries / _subagent_contents 随协程销毁。
                 # 恢复前从 DB 读取挂起前已持久化的消息状态作为执行基线注入 params，
                 # 使恢复在基线之上继续累积（避免总结正文覆盖历史段、position 注入为 0、
                 # 子代理工具图层字段 subagent_thread_id 丢失）。
@@ -595,7 +595,7 @@ class SessionExecutor:
         """读取挂起前已持久化的消息状态，注入 params 作为 chat 恢复基线。
 
         业务等待挂起（wait_for_subagent）时父协程退出，content_state /
-        _subagent_tool_entries / _subagent_contents 随协程销毁。恢复前从 DB
+        _tool_entries / _subagent_contents 随协程销毁。恢复前从 DB
         读取挂起前已落库的 content / tool_calls / subagent_contents，注入
         params，使恢复轮在此基线之上继续累积（而非从空重建）。
         """
@@ -610,15 +610,15 @@ class SessionExecutor:
             return
         self.params["resume_content"] = baseline.get("resume_content") or ""
         self.params["resume_subagent_contents"] = baseline.get("resume_subagent_contents") or {}
-        self.params["resume_subagent_tool_entries"] = baseline.get("resume_subagent_tool_entries") or {}
+        self.params["resume_tool_entries"] = baseline.get("resume_tool_entries") or {}
 
     @staticmethod
     def _load_chat_resume_baseline(session_id: str, message_id: str) -> dict:
         """同步读取 chat 恢复基线（content / subagent_contents / 子代理工具条目）。
 
         子代理工具条目基线从 ``tool_calls`` 中筛选 ``subagent_thread_id`` 非空的
-        条目重建（key=tool_call_id），与 chat_service 恢复轮的 ``_subagent_tool_entries``
-        结构一致（含 subagent_thread_id/position/seq/status/result 等图层字段）。
+        条目重建（key=tool_call_id），与 chat 恢复轮的工具条目容器结构一致
+        （含 subagent_thread_id/position/seq/status/result 等图层字段）。
         """
         from Django_xm.apps.chat.models import ChatMessage, ChatSession
 
@@ -643,7 +643,7 @@ class SessionExecutor:
         if assistant_msg is None:
             return {}
 
-        subagent_tool_entries: dict[str, dict] = {}
+        tool_entries: dict[str, dict] = {}
         for tc in assistant_msg.tool_calls:
             if not isinstance(tc, dict):
                 continue
@@ -651,7 +651,7 @@ class SessionExecutor:
                 continue
             key = tc.get("id") or tc.get("name") or ""
             if key:
-                subagent_tool_entries[key] = dict(tc)
+                tool_entries[key] = dict(tc)
 
         subagent_contents = assistant_msg.subagent_contents
         if not isinstance(subagent_contents, dict):
@@ -660,7 +660,7 @@ class SessionExecutor:
         return {
             "resume_content": assistant_msg.content or "",
             "resume_subagent_contents": dict(subagent_contents),
-            "resume_subagent_tool_entries": subagent_tool_entries,
+            "resume_tool_entries": tool_entries,
         }
 
     async def _run_chat(self) -> None:
@@ -749,7 +749,7 @@ class SessionExecutor:
         if agent is not None:
             await self._persist_research_progress(
                 getattr(agent, "subagent_contents", None),
-                getattr(agent, "_subagent_tool_entries", None),
+                getattr(agent, "_tool_entries", None),
                 getattr(agent, "_main_content", "") or None,
             )
         # 状态标签实时同步：进入"等待审批"
@@ -861,7 +861,7 @@ class SessionExecutor:
                 success=True,
                 reasoning_content=result.reasoning,
                 subagent_contents=result.subagent_contents,
-                subagent_tool_entries=result.subagent_tool_entries,
+                tool_entries=result.tool_entries,
                 final_report=result.final_report,
             )
             await self._schedule_sandbox_cleanup()
@@ -901,7 +901,7 @@ class SessionExecutor:
         success: bool,
         reasoning_content: str = "",
         subagent_contents: dict | None = None,
-        subagent_tool_entries: dict | None = None,
+        tool_entries: dict | None = None,
         final_report: str = "",
     ) -> None:
         """回写 ChatMessage + 广播 stream_completed（聊天深度研究场景）。"""
@@ -926,7 +926,7 @@ class SessionExecutor:
                 chat_session_id=self.session_id,
                 reasoning_content=reasoning_content,
                 subagent_contents=subagent_contents,
-                subagent_tool_entries=subagent_tool_entries,
+                tool_entries=tool_entries,
             )
             await sync_to_async(broadcast_stream_completed)(
                 self.session_id,

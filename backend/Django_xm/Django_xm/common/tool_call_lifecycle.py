@@ -66,11 +66,18 @@ _PUBLISHED_KEY_PREFIX = "tool_call:published"
 # RUNNING 允许从 None/PENDING/WAITING 转换，自循环（无需审批直接执行 / 审批通过后执行 / 并发重发）
 # 终态（COMPLETED/FAILED/TIMEOUT/REJECTED）允许从任意非终态 + None 转换
 # REJECTED 不包括 RUNNING（执行中的工具不可被拒绝，只能取消）
-# 终态事件集合（COMPLETED/FAILED/TIMEOUT/REJECTED）以
-# event_schema.TERMINAL_TOOL_CALL_EVENTS 为唯一声明源。
+# 本表为状态机终态语义的唯一声明源；event_schema.TERMINAL_TOOL_CALL_EVENTS
+# 是聚合层（tool_call_aggregation）的平行声明，二者需同步：新增终态事件须同时改两处。
 _VALID_TRANSITIONS: dict[EventType, set[EventType | None]] = {
-    EventType.TOOL_CALL_PENDING: {None, EventType.TOOL_CALL_PENDING},
-    EventType.TOOL_CALL_WAITING: {None, EventType.TOOL_CALL_PENDING, EventType.TOOL_CALL_WAITING},
+    EventType.TOOL_CALL_PENDING: {
+        None,
+        EventType.TOOL_CALL_PENDING
+    },
+    EventType.TOOL_CALL_WAITING: {
+        None,
+        EventType.TOOL_CALL_PENDING,
+        EventType.TOOL_CALL_WAITING
+    },
     EventType.TOOL_CALL_RUNNING: {
         None,
         EventType.TOOL_CALL_PENDING,
@@ -103,59 +110,36 @@ _VALID_TRANSITIONS: dict[EventType, set[EventType | None]] = {
 }
 
 
-def _normalize_risk_ceiling(risk_ceiling: Any) -> str | None:
-    """将 risk_ceiling 统一为字符串（供 publish_tool_call payload 使用）。
+def _normalize_risk_value(value: Any, field_name: str) -> str | None:
+    """将 risk_ceiling / risk_level 统一为合法 RiskLevel 字符串（供 publish_tool_call payload 使用）。
+
+    risk_ceiling（子 agent 角色风险上限）与 risk_level（工具调用实际风险等级）
+    当前校验域相同（同一 RiskLevel 枚举），合并为单一实现避免双维护；
+    未来二者校验域分化（如 risk_level 扩展更多等级）时，再按 field_name
+    分支或拆回独立函数。
 
     Args:
-        risk_ceiling: RiskLevel 枚举值 / 枚举字符串 / None
+        value: RiskLevel 枚举值 / 枚举字符串 / None
+        field_name: 字段名（仅用于日志定位，如 'risk_ceiling' / 'risk_level'）
 
     Returns:
         RiskLevel 枚举的 .value 字符串（如 'safe'/'controlled'/'high'），
         或 None（None/空值/未知值，不写入 payload）
     """
-    if risk_ceiling is None:
+    if value is None:
         return None
     # RiskLevel 枚举（继承 str，但 .value 显式取字符串更安全）
-    if hasattr(risk_ceiling, "value"):
-        return str(risk_ceiling.value)
-    if isinstance(risk_ceiling, str) and risk_ceiling:
+    if hasattr(value, "value"):
+        return str(value.value)
+    if isinstance(value, str) and value:
         # 已是字符串，校验是否合法 RiskLevel（非法值返回 None，避免前端误解）
         from Django_xm.common.risk_levels import RiskLevel
 
         try:
-            RiskLevel(risk_ceiling)
-            return risk_ceiling
+            RiskLevel(value)
+            return value
         except ValueError:
-            logger.warning(f"[ToolCallLifecycle] 非法 risk_ceiling 值: {risk_ceiling!r}, 忽略")
-            return None
-    return None
-
-
-def _normalize_risk_level(risk_level: Any) -> str | None:
-    """将 risk_level 统一为合法 RiskLevel 字符串（供 publish_tool_call payload 使用）。
-
-    与 _normalize_risk_ceiling 逻辑一致，独立函数以便后续语义分化（risk_level
-    可能扩展更多等级，risk_ceiling 仅限子 agent 角色上限场景）。
-
-    Args:
-        risk_level: RiskLevel 枚举值 / 枚举字符串 / None
-
-    Returns:
-        RiskLevel 枚举的 .value 字符串（如 'safe'/'controlled'/'high'），
-        或 None（None/空值/未知值，不写入 payload）
-    """
-    if risk_level is None:
-        return None
-    if hasattr(risk_level, "value"):
-        return str(risk_level.value)
-    if isinstance(risk_level, str) and risk_level:
-        from Django_xm.common.risk_levels import RiskLevel
-
-        try:
-            RiskLevel(risk_level)
-            return risk_level
-        except ValueError:
-            logger.warning(f"[ToolCallLifecycle] 非法 risk_level 值: {risk_level!r}, 忽略")
+            logger.warning(f"[ToolCallLifecycle] 非法 {field_name} 值: {value!r}, 忽略")
             return None
     return None
 
@@ -341,7 +325,10 @@ class ToolCallLifecycleService:
     """工具调用生命周期服务（模块级单例，chat / deep_research 两模块共享）。
 
     通过 Redis 持久化上下文，确保：
-    - 跨请求/跨 worker 状态一致（Celery worker 重启后仍可恢复）
+    - 跨进程/跨 worker 状态一致：tool_call 主事件（PENDING/WAITING/RUNNING/
+      COMPLETED/FAILED/REJECTED）由 FastAPI(uvicorn) 异步 worker 经 run_astream_loop
+      / adapter 发布；仅 TOOL_CALL_TIMEOUT 由 Celery 任务 cleanup_expired_approvals
+      发布。二者通过同一份 Redis context 衔接，worker（uvicorn / celery）重启后不丢状态
     - 跨模块共享同一份状态机代码
     - parameters/message_id 从 context 透传，杜绝字段缺失
     """
@@ -403,7 +390,7 @@ class ToolCallLifecycleService:
                 注册并 log warning（说明重复发布来源），不覆盖已推进状态。
                 None 表示仅补全上下文（不触发防护）。
         """
-        key = f"{_TC_CTX_PREFIX}:{ctx.tool_call_id}"
+        key = f"{_TC_CTX_PREFIX}:{ctx.tool_call_id}"  # existing 和 ctx 之所以是"同一条记录"，所以需要同步信息
         existing = cache.get(key)
         if existing:
             # last_event_type 防护：状态已推进到非 PENDING 状态时拒绝重复 PENDING 注册
@@ -453,7 +440,7 @@ class ToolCallLifecycleService:
             cache.set(key, ctx_dict, _TC_CTX_TTL)
 
     def bind_parameters(self, tool_call_id: str, parameters: dict) -> None:
-        """补全工具参数（finalize_tool_calls 参数恢复后调用）。"""
+        """补全工具参数（transition 携带非空参数时写入 ctx，供条目参数权威兜底）。"""
         if not isinstance(parameters, dict) or not parameters:
             return
         key = f"{_TC_CTX_PREFIX}:{tool_call_id}"
@@ -627,10 +614,10 @@ class ToolCallLifecycleService:
                     else None
                 ),
                 agent_name=ctx_dict.get("agent_name") or None,
-                risk_ceiling=_normalize_risk_ceiling(ctx_dict.get("risk_ceiling")),
+                risk_ceiling=_normalize_risk_value(ctx_dict.get("risk_ceiling"), "risk_ceiling"),
                 # risk_level 透传：从 context 读取，注入到 tool_call_* 事件 payload
                 # 根因修复：让前端从工具事件直接获取风险等级，不再单一依赖 approval_pending 事件
-                risk_level=_normalize_risk_level(ctx_dict.get("risk_level")),
+                risk_level=_normalize_risk_value(ctx_dict.get("risk_level"), "risk_level"),
                 # description 透传：子 agent 角色描述（任务目标），仅子 agent 事件携带
                 description=ctx_dict.get("description") or None,
                 # seq 透传：从 context 读取，注入到 tool_call_* 事件 payload
@@ -706,10 +693,10 @@ class ToolCallLifecycleService:
                     else None
                 ),
                 agent_name=ctx_dict.get("agent_name") or None,
-                risk_ceiling=_normalize_risk_ceiling(ctx_dict.get("risk_ceiling")),
+                risk_ceiling=_normalize_risk_value(ctx_dict.get("risk_ceiling"), "risk_ceiling"),
                 # risk_level 透传：从 context 读取，注入到 tool_call_* 事件 payload
                 # 根因修复：让前端从工具事件直接获取风险等级，不再单一依赖 approval_pending 事件
-                risk_level=_normalize_risk_level(ctx_dict.get("risk_level")),
+                risk_level=_normalize_risk_value(ctx_dict.get("risk_level"), "risk_level"),
                 # description 透传：子 agent 角色描述（任务目标），仅子 agent 事件携带
                 description=ctx_dict.get("description") or None,
                 # seq 透传：从 context 读取，注入到 tool_call_* 事件 payload
@@ -745,7 +732,7 @@ class ToolCallLifecycleService:
 
         从 ToolCallContext 读取 register 分配的全局递增序号（与 WebSocket
         tool_call_* 事件透传同一来源），写入 ``entry["seq"]``。所有构建 tool_call
-        条目的出口（stream_broadcast tool_calls_map、stream_persistence 持久化、
+        条目的出口（统一容器 _tool_entries 聚合、stream_persistence 持久化、
         approval_service 审批重建与 Approval.extra）统一调用本方法，杜绝各消费点
         重复内联逻辑导致漏补。context 缺失或 seq 非正整数时保持 entry 不变
         （由调用方数组顺序兜底）。
@@ -768,9 +755,9 @@ class ToolCallLifecycleService:
     def enrich_entry_parameters(self, entry: dict, tool_call_id: str) -> dict:
         """为工具调用条目补全参数（流式 extractor 参数缺失时从 ctx 权威源兜底）。
 
-        流式 extractor（process_stream_chunk）依赖 tool_call_chunks 携带完整 args
-        才能将参数写入 tool_calls_map；部分模型（如 DeepSeek）流式返回工具调用时
-        args 为空串（实证 args_str=''），map 条目 parameters 恒为 {}。而
+        流式提取器（ToolEventExtractor）依赖 tool_call_chunks 携带完整 args 才能
+        聚合出完整参数；部分模型（如 DeepSeek）流式返回工具调用时 args 为空串
+        （实证 args_str=''），聚合出的条目 parameters 恒为 {}。而
         ApprovalMiddleware（aafter_model）注册 ToolCallContext 时已持有完整参数
         （实证 "参数完整"），此处从 context 读取补全——仅当 entry 参数为空时补全，
         避免覆盖 extractor 已解析的参数。
@@ -822,3 +809,104 @@ class ToolCallLifecycleService:
 
 # 模块级单例
 service = ToolCallLifecycleService()
+"""
+                         LLM 产出 AIMessage(tool_calls) / ToolMessage
+                                    │
+        ┌───────────────────────────┴───────────────────────────┐
+        │  chat: stream/loop.py _process_chunk [主代理]          │
+        │  chat: chat_service._handle_subagent_tool_event[子代理]│
+        │  research: adapter.py 执行循环 [深度研究]              │
+        └───────────────────────────┬───────────────────────────┘
+                                     │ ⓪ 归一化（分路径）
+                                     │   chat 主代理 / research：
+                                     │     ToolEventExtractor.feed(message) → list[evt]
+                                     │     （唯一提取器，跨 chunk/resume 有状态：
+                                     │      无 id 暂存 / args 分片聚合 / ToolMessage
+                                     │      阶段参数聚合后补发 PENDING）
+                                     │   chat 子代理：SubAgentToolEventMiddleware
+                                     │     内联提取（逻辑与 extractor 同源，尚未收敛），
+                                     │     经 _on_tool_event 回调进入统一编排
+                                     ▼
+        ┌────────────────────────────────────────────────────────┐
+        │  唯一发布编排：publish_tool_lifecycle_event(evt, ...)   │
+        │   register → bind_position → transition_async →         │
+        │   aggregate_tool_entry（chat 主/子代理 + research 共用）│
+        │   （PENDING 补发防护内置：状态已推进则跳过 transition，  │
+        │     register/position/聚合仍执行；参数空时从 ctx 兜底）  │
+        └───────────────────────────┬────────────────────────────┘
+                                     │ ① register(ToolCallContext)
+                                     ▼
+        ┌────────────────────────────────────────────────────────┐
+        │  tool_call_lifecycle.register → Redis: tool_call:ctx:{id}│
+        │  （分配 seq；publisher 内置 / middleware /               │
+        │   approval_service / adapter / chat_service 各阶段       │
+        │   幂等补全 risk/depth/parent/...）                       │
+        └───────────────────────────┬────────────────────────────┘
+                                     │ ② 审批链路（两处发布方，勿混淆）
+                                     ▼
+        ┌────────────────────────────────────────────────────────┐
+        │  agent_hub/approval/middleware.py:                      │
+        │    register(补全 risk/depth/parent_tool_call_id)         │
+        │    SAFE 自动通过 → transition_async(RUNNING)            │
+        │    无策略工具     → transition_async(PENDING)           │
+        │  approvals/services/approval_service.py（审批决策侧）:   │
+        │    审批挂起/批量等待 → transition(WAITING)               │
+        │    审批通过         → transition(RUNNING)                │
+        │    用户拒绝         → transition(REJECTED)               │
+        │    （注：EventType 无 TOOL_CALL_APPROVED）               │
+        └───────────────────────────┬────────────────────────────┘
+                                     │ ③ PENDING 发布（extractor 提取 / middleware 补发）
+                                     ▼
+        ┌────────────────────────────────────────────────────────┐
+        │  状态机 transition_async 发布 PENDING                   │
+        │  （AIMessageChunk 提取；updates 模式工具由 middleware   │
+        │   补发；状态已推进则跳过，防重复与非法转换）             │
+        └───────────────────────────┬────────────────────────────┘
+                                     │ ④ 执行（编排层调用执行器）
+                                     ▼
+        ┌────────────────────────────────────────────────────────┐
+        │  编排层(chat_service.py / adapter.py / loop.py)         │
+        │   调用 apps/tools/* (shell/mcp) + sandbox/executor.py    │
+        │   ⚠ 执行器只跑工具、返回 result/error，不调 lifecycle    │
+        └───────────────────────────┬────────────────────────────┘
+                                     │ ⑤ 结果回来后，extractor 提取终态事件
+                                     ▼
+        ┌────────────────────────────────────────────────────────┐
+        │  extractor.feed(ToolMessage) → COMPLETED / FAILED       │
+        │   → publish_tool_lifecycle_event → transition_async     │
+        │  （调用方：loop.py / 子代理回调 / adapter.py）           │
+        └───────────────────────────┬────────────────────────────┘
+                                     │ ⑥ 每次 transition → 发布
+                                     ▼
+        ┌────────────────────────────────────────────────────────┐
+        │  lifecycle.transition/_async                            │
+        │   _prepare_transition(读ctx/去重/状态校验/补参)           │
+        │   → publish_tool_call[_sync]  ★realtime_sync             │
+        │   → _finalize_transition(更 last_event_type/写去重)       │
+        └───────────────────────────┬────────────────────────────┘
+                                     │ ⑦ 传输
+                                     ▼
+        ┌────────────────────────────────────────────────────────┐
+        │  realtime_sync.publish_tool_call → _resolve_channels →  │
+        │  realtime_events.publish_event → Redis 事件历史 + WS      │
+        └───────────────────────────┬────────────────────────────┘
+                                     │ ⑧ 前端消费 + 本端聚合落库
+                                     ▼
+        ┌────────────────────────────────────────────────────────┐
+        │  aggregate_tool_entry（内部 enrich_entry_seq/position）  │
+        │  → 统一容器 _tool_entries（主/子代理同容器：              │
+        │    chat=data["_tool_entries"]、                          │
+        │    research=adapter._tool_entries）                      │
+        │  → chat: stream_persistence 落库；                       │
+        │    research: writeback 合并进 ChatMessage.tool_calls     │
+        │  → 前端 toolCall 卡片 / DB                               │
+        └────────────────────────────────────────────────────────┘
+
+   ╔═════════════════ 异常分支：超时 ═══════════════════╗
+   ║ Celery beat(60s) → cleanup_expired_approvals        ║
+   ║  → approval_service.publish_tool_call_timeout_event ║
+   ║  → service.register + service.transition(TIMEOUT)   ║
+   ║  （唯一走 Celery 的工具事件，余皆 FastAPI worker）   ║
+   ╚═════════════════════════════════════════════════════╝
+
+"""

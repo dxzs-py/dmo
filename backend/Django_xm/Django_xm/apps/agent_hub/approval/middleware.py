@@ -795,7 +795,8 @@ class ApprovalMiddleware(AgentMiddleware):
             request = {
                 "tool_name": tool_name,
                 "tool_call_id": tc_id,
-                "graph_interrupt_id": graph_interrupt_id,
+                # graph_interrupt_id 只写入外层 _meta（批次 id 单一来源，parser 只读
+                # _meta，全链路无 per-request 消费方），request 内不再冗余携带。
                 "session_id": chat_session_id,
                 "title": policy.build_title(args),
                 "description": policy.build_description(args),

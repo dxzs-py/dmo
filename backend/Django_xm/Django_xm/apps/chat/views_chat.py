@@ -24,7 +24,7 @@ from Django_xm.async_utils import run_async
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventSource, EventType
 from Django_xm.common.exceptions import BaseAppError
-from Django_xm.common.pagination import paginate_to_dict
+from Django_xm.common.pagination import ProjectPagination, paginate_to_dict
 from Django_xm.common.realtime_events import publish_event_sync
 from Django_xm.common.redis_utils import get_redis_client
 from Django_xm.common.responses import success_response
@@ -808,7 +808,7 @@ class ChatSessionListView(BaseChatAPIView):
     def get(self, request):
         user_id = request.user.id
         try:
-            page_size = min(int(request.query_params.get("page_size", 20)), 100)
+            page_size = min(int(request.query_params.get("page_size", 20)), ProjectPagination.max_page_size)
         except (ValueError, TypeError):
             page_size = 20
 

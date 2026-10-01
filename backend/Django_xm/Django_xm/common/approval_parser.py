@@ -8,7 +8,9 @@
 
 历史协议说明：旧版工具级 ``interrupt_for_approval()`` 产出的单工具格式
 （``{"_approval": True, "tool_name": ...}``）已随工具内审批机制的移除而删除，
-生产仓库中不存在该格式的生产者。本模块对一切非批量格式一律返回 [] 并记 debug，
+生产仓库中不存在该格式的生产者。本模块对一切非批量格式一律返回 []：
+- 带 ``_approval`` 标记但格式非法 → WARNING（疑似 producer 契约漂移，需排查）；
+- 非审批 dict → debug（正常防御路径）。
 不再静默兼容（避免任意 dict 被误解析为审批条目）。
 
 所有模块（聊天、深度研究、学习工作流、子代理运行时）统一通过此函数解析审批中断值。
@@ -43,8 +45,15 @@ def parse_approval_interrupt(
 
     Args:
         interrupt_value: interrupt 的值（dict，需含 _approval 标识与 requests 列表）
-        graph_interrupt_id: graph 节点的 interrupt id（_meta 缺省时回退）
-        langgraph_resume_id: resume 协议使用的 id
+        graph_interrupt_id: 兜底批次 id。注意：仅当 ``_meta.graph_interrupt_id``
+            缺失时生效；``_meta`` 存在时本参数被忽略（parser L70 以 ``_meta`` 为准）。
+            本项目存在两个 id 空间：LangGraph Interrupt.id（``intr.id``，resume
+            协议合法 key）与 middleware 批次 uuid（``_meta.graph_interrupt_id``，
+            前端分组 + ``Approval.extra`` 查询用），二者同名不同值，勿混淆。
+        langgraph_resume_id: resume 协议使用的 id，**必须是 LangGraph Interrupt.id**。
+            缺省时条目该字段为空串并记 WARNING（旧"回退批次 uuid"行为已删除——
+            批次 uuid 不是合法 resume key，会导致 resume 永不匹配）。调用方
+            （chat / research / subagent）必须显式传入 ``intr.id``。
 
     Returns:
         approval_data 列表（批量格式下为多个元素；非法输入返回 []）
@@ -59,21 +68,60 @@ def parse_approval_interrupt(
     # 批量格式：{_approval: True, requests: [...], _meta: {graph_interrupt_id}}
     if not (interrupt_value.get("_approval") and isinstance(interrupt_value.get("requests"), list)):
         # 不兼容单工具格式（历史协议，生产者已删除）；任意非批量 dict 一律拒绝。
-        logger.debug(
-            "approval interrupt 非批量格式（_approval=%r, requests 类型=%s），返回空",
-            interrupt_value.get("_approval"),
-            type(interrupt_value.get("requests")).__name__,
-        )
+        # 日志分级：带 _approval 标记但 requests 非法 = producer/parser 契约漂移信号
+        # （下游 assert_non_empty_decision 会把空决策变成 RuntimeError 终止任务，
+        # 根因必须默认日志级别可见），升 WARNING；非审批 dict 属正常防御路径
+        # （chat 链路上游 is_approval_interrupt 已过滤大部分），保持 DEBUG 防刷屏。
+        if interrupt_value.get("_approval"):
+            logger.warning(
+                "approval interrupt 带 _approval 标记但非批量格式"
+                "（requests 类型=%s），返回空（疑似 producer 契约漂移）",
+                type(interrupt_value.get("requests")).__name__,
+            )
+        else:
+            logger.debug(
+                "approval interrupt 非批量格式（_approval=%r, requests 类型=%s），返回空",
+                interrupt_value.get("_approval"),
+                type(interrupt_value.get("requests")).__name__,
+            )
         return []
 
     batch_meta = interrupt_value.get("_meta", {})
     resolved_graph_id = batch_meta.get("graph_interrupt_id", graph_interrupt_id)
-    resolved_langgraph_id = langgraph_resume_id or resolved_graph_id
+    # 回退批次 uuid——批次 uuid 不是合法 resume key（LangGraph 按 Interrupt.id
+    # 匹配 Command(resume) 键），写进 extra 会静默发起注定失败的恢复。
+    # 留空 + WARNING；正常路径三个调用方均显式传入 intr.id，不受影响。
+    resolved_langgraph_id = langgraph_resume_id or ""
+    if not resolved_langgraph_id:
+        logger.warning(
+            "approval interrupt 未传 langgraph_resume_id（批次=%s），"
+            "条目 resume key 为空（旧行为回退批次 uuid 会导致 resume 永不匹配）",
+            resolved_graph_id,
+        )
     results = []
+    # 重复 interrupt_id 检测（只告警不去重，保持追加行为）：
+    # producer 重复 tool_call_id 时，多条请求共享同一 interrupt_id，下游
+    # Approval.update_or_create(interrupt_id=...) 会互相覆盖合并成一条，
+    # 且 resume dict {tool_call_id: decision} 键冲突——必须可观测。
+    seen_interrupt_ids: set[str] = set()
     for req in interrupt_value["requests"]:
         if not isinstance(req, dict):
             continue
-        req_interrupt_id = req.get("tool_call_id") or resolved_graph_id
+        # 共享 interrupt_id，记录互相覆盖且恢复键冲突；改为跳过 + WARNING。
+        req_interrupt_id = req.get("tool_call_id") or ""
+        if not req_interrupt_id:
+            logger.warning(
+                "approval interrupt 请求缺失 tool_call_id（tool=%s），跳过该条",
+                req.get("tool_name"),
+            )
+            continue
+        if req_interrupt_id in seen_interrupt_ids:
+            logger.warning(
+                "approval interrupt 同批次出现重复 interrupt_id=%s"
+                "（producer 重复），审批记录将互相覆盖/恢复键冲突",
+                req_interrupt_id,
+            )
+        seen_interrupt_ids.add(req_interrupt_id)
         results.append(
             _build_approval_entry(
                 req=req,

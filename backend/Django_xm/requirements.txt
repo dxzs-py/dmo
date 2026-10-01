@@ -56,7 +56,7 @@ deepagents>=0.7.5
 openai>=2.30.0
 groq>=0.37.1
 tiktoken>=0.12.0
-duckduckgo-search>=8.1.1
+ddgs>=9.16.0
 
 # --- 向量库客户端（直接 import）---
 chromadb>=1.5.9

@@ -3,52 +3,40 @@
 
 从 chat_service.py 拆分出的通用流式处理逻辑：
 - 消息块解析（重导出自 stream_chunk_processors.py）
-- 工具调用生命周期（重导出自 stream_tool_lifecycle.py）
 - 用量/Token 更新
 - 上下文信息构建
 - 审批中断解析
 - 持久化结果合并
 
 架构说明：
-    - **块处理与生命周期事件**：统一由 ``stream_chunk_processors`` / ``stream_tool_lifecycle`` 实现
-      （三模块通用：CHAT / DEEP_RESEARCH / LEARNING）。
+    - **块处理**：统一由 ``stream_chunk_processors`` 实现。
+    - **工具调用生命周期事件**：统一由 ``apps.tools.tool_event_extractor``
+      （归一化）+ ``common.tool_event_publisher``（发布编排）实现，
+      ``stream.loop`` 调用，本模块不再中转工具事件。
     - **本文件仅保留 CHAT 模块特有的聚合与审计逻辑**（用量汇总、审批解析、合并 approval 字段等）。
 """
 
-import json as _json
 import logging
 import time
 from typing import Any
 
-from langchain_core.messages import AIMessage
-
 # ---------------------------------------------------------------------------
-# 重导出：统一块处理（三模块通用，Chat 模块特有的调用方通过本模块导入以保持兼容）
+# 重导出：统一块处理（Chat 模块特有的调用方通过本模块导入以保持兼容）
 # ---------------------------------------------------------------------------
 from .stream_chunk_processors import (
-    _extract_tool_params,
-    _fix_groq_tool_call,
-    _map_state_to_status,
     _sync_pending_to_stream_state,
-    _try_parse_concatenated_json,
     extract_thinking_content,
     process_stream_chunk,
 )
 
-# 重导出契约：外部模块（loop.py / fallback.py / finalizer.py / deep_chat_service.py 等）
+# 重导出契约：外部模块（loop.py / fallback.py / finalizer.py 等）
 # 经本模块导入上述名字，列入 __all__ 防止 F401 误删
 __all__ = [
-    "_extract_tool_params",
-    "_fix_groq_tool_call",
-    "_map_state_to_status",
     "_sync_pending_to_stream_state",
-    "_try_parse_concatenated_json",
     "build_context_info",
     "extract_interrupt_ids",
     "extract_thinking_content",
-    "finalize_tool_calls",
     "merge_existing_approval_fields",
-    "parse_approval_interrupt_for_chat",
     "process_stream_chunk",
     "update_usage_and_tokens",
 ]
@@ -95,100 +83,6 @@ def update_usage_and_tokens(cb, usage_tracker, token_detail_tracker=None):
         token_detail_tracker.finish_record()
 
 
-def finalize_tool_calls(
-    all_messages: list,
-    tool_calls_map: dict[str, dict],
-    tool_args_accumulator: dict[str, str] | None = None,
-) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-
-    if tool_args_accumulator:
-        for key, accumulated_str in tool_args_accumulator.items():
-            if not accumulated_str or not accumulated_str.strip():
-                continue
-            if key not in tool_calls_map:
-                continue
-            existing_params = tool_calls_map[key].get("parameters", {})
-            if isinstance(existing_params, dict) and existing_params and existing_params != {}:
-                continue
-            try:
-                parsed_args = _json.loads(accumulated_str)
-                if isinstance(parsed_args, dict) and parsed_args:
-                    tool_calls_map[key]["parameters"] = parsed_args
-                    tool_info = dict(tool_calls_map[key])
-                    tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
-                    tool_info.pop("_index", None)
-                    tool_info.pop("lifecycle_event", None)
-                    events.append({"type": "tool", "data": tool_info})
-                    logger.debug(f"[FINALIZE-TOOL] 从 accumulator 解析参数成功: key={key}, args={parsed_args}")
-            except (_json.JSONDecodeError, ValueError):
-                recovered = _try_parse_concatenated_json(accumulated_str)
-                if recovered:
-                    tool_calls_map[key]["parameters"] = recovered
-                    tool_info = dict(tool_calls_map[key])
-                    tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
-                    tool_info.pop("_index", None)
-                    tool_info.pop("lifecycle_event", None)
-                    events.append({"type": "tool", "data": tool_info})
-                    logger.info(f"[FINALIZE-TOOL] 从拼接 JSON 中恢复参数成功: key={key}")
-                else:
-                    logger.debug(f"[FINALIZE-TOOL] accumulator JSON 解析失败: key={key}, str={accumulated_str!r}")
-
-    needs_update = any(
-        not tc.get("parameters") or (isinstance(tc.get("parameters"), dict) and tc.get("parameters") == {})
-        for tc in tool_calls_map.values()
-    )
-
-    if needs_update:
-        ai_chunks = [msg for msg in all_messages if isinstance(msg, AIMessage)]
-        if ai_chunks:
-            chunks_by_id: dict[str, Any] = {}
-            chunks_no_id = None
-            for chunk in ai_chunks:
-                msg_id = getattr(chunk, "id", None) or ""
-                if msg_id:
-                    if msg_id in chunks_by_id:
-                        chunks_by_id[msg_id] = chunks_by_id[msg_id] + chunk
-                    else:
-                        chunks_by_id[msg_id] = chunk
-                elif chunks_no_id is not None:
-                    chunks_no_id = chunks_no_id + chunk
-                else:
-                    chunks_no_id = chunk
-
-            complete_messages = list(chunks_by_id.values())
-            if chunks_no_id is not None:
-                complete_messages.append(chunks_no_id)
-
-            for complete_msg in complete_messages:
-                tool_calls = getattr(complete_msg, "tool_calls", [])
-                for tool_call in tool_calls:
-                    args = tool_call.get("args", {})
-                    if not args or not isinstance(args, dict) or args == {}:
-                        continue
-
-                    tool_id = tool_call.get("id", "")
-                    tool_name = tool_call.get("name", "")
-
-                    for _, tc in tool_calls_map.items():
-                        existing_params = tc.get("parameters", {})
-                        if isinstance(existing_params, dict) and existing_params and existing_params != {}:
-                            continue
-                        if (tc.get("id") == tool_id and tool_id) or (
-                            tc.get("name") == tool_name and tool_name and not tc.get("id")
-                        ):
-                            tc["parameters"] = args
-                            tool_info = dict(tc)
-                            tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
-                            tool_info.pop("_index", None)
-                            tool_info.pop("lifecycle_event", None)
-                            events.append({"type": "tool", "data": tool_info})
-                            logger.info(f"[FINALIZE-TOOL] 从累积消息提取参数成功: name={tool_name}, args={args}")
-                            break
-
-    return events
-
-
 def extract_interrupt_ids(intr: Any) -> tuple:
     """从 LangGraph interrupt 对象提取 (value, graph_interrupt_id, langgraph_resume_id)
 
@@ -199,6 +93,12 @@ def extract_interrupt_ids(intr: Any) -> tuple:
 
     返回的 langgraph_resume_id 当前与 graph_interrupt_id 相同，
     保留独立字段以便未来支持 resume 协议的扩展。
+
+    命名澄清（重要）：返回的 ``graph_interrupt_id`` 实为 **LangGraph Interrupt.id**
+    （``intr.id``，resume 协议合法 key），与 ApprovalMiddleware 自造的批次 uuid
+    （``interrupt_value["_meta"]["graph_interrupt_id"]``）**同名不同值**。
+    ``approval_parser.parse_approval_interrupt`` 以 ``_meta`` 为准，本函数返回的
+    graph_interrupt_id 在 _meta 存在时仅作兜底，不会被写入 approval_data。
     """
     try:
         from langgraph.types import Interrupt
@@ -217,101 +117,6 @@ def extract_interrupt_ids(intr: Any) -> tuple:
 
     langgraph_resume_id = graph_interrupt_id
     return interrupt_value, graph_interrupt_id, langgraph_resume_id
-
-
-def parse_approval_interrupt_for_chat(
-    interrupt_value: Any,
-    graph_interrupt_id: str = "",
-    langgraph_resume_id: str = "",
-    tool_calls_map: dict[str, dict] | None = None,
-    tool_args_accumulator: dict[str, str] | None = None,
-    used_tool_call_ids: set | None = None,
-) -> list[dict[str, Any]]:
-    """解析审批中断值为前端 approval 事件数据列表。
-
-    委托 `common.approval_parser.parse_approval_interrupt` 完成核心解析
-    （批量/单工具格式 → approval_data 列表），然后进行聊天模块特有的
-    llm_tool_call_id 匹配（通过 operation 命令匹配流式工具参数）。
-
-    Args:
-        interrupt_value: interrupt 的值
-        graph_interrupt_id: graph 节点的 interrupt id
-        langgraph_resume_id: resume 协议使用的 id
-        tool_calls_map: 工具调用映射（用于匹配 llm_tool_call_id，聊天特性）
-        tool_args_accumulator: 工具参数累积器（流式参数更完整，聊天特性）
-        used_tool_call_ids: 已使用的 tool_call_id 集合（去重，聊天特性）
-
-    Returns:
-        approval_data 列表
-    """
-    from Django_xm.common.approval_parser import parse_approval_interrupt as _base_parse
-
-    parsed_list = _base_parse(interrupt_value, graph_interrupt_id, langgraph_resume_id)
-    if not parsed_list:
-        return []
-
-    tool_calls_map = tool_calls_map or {}
-    tool_args_accumulator = tool_args_accumulator or {}
-    used_tool_call_ids = used_tool_call_ids or set()
-
-    for entry in parsed_list:
-        _match_llm_tool_call_id(
-            entry=entry,
-            tool_calls_map=tool_calls_map,
-            tool_args_accumulator=tool_args_accumulator,
-            used_tool_call_ids=used_tool_call_ids,
-        )
-
-    return parsed_list
-
-
-def _match_llm_tool_call_id(
-    entry: dict[str, Any],
-    tool_calls_map: dict[str, dict],
-    tool_args_accumulator: dict[str, str],
-    used_tool_call_ids: set,
-) -> None:
-    """为 approval_data 条目匹配 llm_tool_call_id。
-
-    通过 operation 命令匹配流式工具参数，找到对应的 LLM 工具调用 ID。
-    匹配逻辑：先检查 tool_args_accumulator（更完整的累积参数），
-    再检查 tool_calls_map 中的 parameters，最后回退到同名工具中最后一个。
-    """
-    tool_name = entry.get("tool_name", "")
-    op = entry.get("operation", "")
-    if not op or not tool_name:
-        return
-
-    # 先检查 tool_args_accumulator 中的累积参数（更完整）
-    for tc_key, tc_info in tool_calls_map.items():
-        if tc_info.get("name") != tool_name:
-            continue
-        if tc_key in used_tool_call_ids or tc_info.get("id") in used_tool_call_ids:
-            continue
-        accumulated_args = tool_args_accumulator.get(tc_key, "")
-        if accumulated_args:
-            try:
-                import json as _json
-                parsed_args = (
-                    _json.loads(accumulated_args) if isinstance(accumulated_args, str) else accumulated_args
-                )
-                if any(str(v) == op for v in (parsed_args or {}).values()):
-                    entry["llm_tool_call_id"] = tc_info.get("id") or tc_key
-                    return
-            except (_json.JSONDecodeError, TypeError):
-                pass
-        tc_params = tc_info.get("parameters", {})
-        if any(str(v) == op for v in tc_params.values()):
-            entry["llm_tool_call_id"] = tc_info.get("id") or tc_key
-            return
-
-    # 回退：同名工具中最后一个（interrupt 总是最新的调用）
-    for tc_key, tc_info in reversed(list(tool_calls_map.items())):
-        if tc_info.get("name") == tool_name:
-            if tc_key in used_tool_call_ids or tc_info.get("id") in used_tool_call_ids:
-                continue
-            entry["llm_tool_call_id"] = tc_info.get("id") or tc_key
-            break
 
 
 def merge_existing_approval_fields(

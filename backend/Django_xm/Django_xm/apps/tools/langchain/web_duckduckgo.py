@@ -12,12 +12,12 @@ try:
     logger.info("✅ langchain-community DuckDuckGo 搜索工具可用")
 except ImportError:
     HAS_DUCKDUCKGO_TOOL = False
-    logger.warning("⚠️ DuckDuckGo 搜索工具未安装，请安装: pip install duckduckgo-search")
+    logger.warning("⚠️ DuckDuckGo 搜索工具未安装，请安装: pip install ddgs")
 
 
 def _search_via_ddgs(query: str, max_results: int = 5) -> str:
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
 
         with DDGS() as ddgs:
             search_results = list(ddgs.text(query, max_results=max_results))
@@ -37,14 +37,14 @@ def _search_via_ddgs(query: str, max_results: int = 5) -> str:
         return output
 
     except ImportError:
-        raise ValueError("DuckDuckGo 搜索需要安装: pip install duckduckgo-search") from None
+        raise ValueError("DuckDuckGo 搜索需要安装: pip install ddgs") from None
     except Exception as e:
         raise RuntimeError(f"DuckDuckGo 搜索失败: {e!s}") from e
 
 
 def _search_via_langchain(query: str, max_results: int = 5) -> str:
     if not HAS_DUCKDUCKGO_TOOL:
-        raise ValueError("DuckDuckGo 搜索工具未安装: pip install duckduckgo-search")
+        raise ValueError("DuckDuckGo 搜索工具未安装: pip install ddgs")
 
     search = DuckDuckGoSearch(max_results=max_results)
     result = search.invoke(query)
@@ -82,7 +82,7 @@ class DuckDuckGoSearchTool(BaseTool):
         "适用场景：需要搜索最新信息、新闻、技术更新，且未配置 Tavily API Key 时使用。"
         "不适用：数学计算、代码执行、本地文件操作、需要高精度搜索结果的场景。"
         "参数：query-搜索关键词（必填），max_results-最大返回结果数（1-10，默认5）。"
-        "边界：依赖 duckduckgo-search 库，搜索频率受限，结果精度可能不如 Tavily。"
+        "边界：依赖 ddgs 库，搜索频率受限，结果精度可能不如 Tavily。"
     )
     args_schema: type[BaseModel] = DuckDuckGoSearchInput
 
@@ -92,14 +92,14 @@ class DuckDuckGoSearchTool(BaseTool):
         try:
             return _search_via_ddgs(query, max_results)
         except ImportError:
-            logger.warning("⚠️ duckduckgo-search 未安装，尝试使用 langchain-community 工具")
+            logger.warning("⚠️ ddgs 未安装，尝试使用 langchain-community 工具")
         except Exception as e:
             logger.warning(f"⚠️ DDGS 搜索失败: {e}，尝试 langchain-community 工具")
 
         try:
             return _search_via_langchain(query, max_results)
         except Exception as e:
-            error_msg = f"搜索失败: {e!s}。请安装 duckduckgo-search: pip install duckduckgo-search"
+            error_msg = f"搜索失败: {e!s}。请安装 ddgs: pip install ddgs"
             logger.exception(error_msg)
             return error_msg
 
@@ -112,7 +112,7 @@ duckduckgo_search = DuckDuckGoSearchTool()
 
 def has_duckduckgo_available() -> bool:
     try:
-        from duckduckgo_search import DDGS  # noqa: F401  # 仅用于可用性检测（ImportError 表示未安装）
+        from ddgs import DDGS  # noqa: F401  # 仅用于可用性检测（ImportError 表示未安装）
 
         return True
     except ImportError:
@@ -122,7 +122,7 @@ def has_duckduckgo_available() -> bool:
 def get_duckduckgo_tools():
     if has_duckduckgo_available():
         return [duckduckgo_search]
-    logger.warning("⚠️ DuckDuckGo 搜索不可用，请安装: pip install duckduckgo-search")
+    logger.warning("⚠️ DuckDuckGo 搜索不可用，请安装: pip install ddgs")
     return []
 
 

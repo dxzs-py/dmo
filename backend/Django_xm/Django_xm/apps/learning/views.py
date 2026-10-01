@@ -28,6 +28,7 @@ from Django_xm.common.event_schema import EventSource, EventType
 from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.realtime_events import publish_event_sync
 from Django_xm.common.responses import success_response
+from Django_xm.common.pagination import paginate_to_dict
 from Django_xm.common.serializers import EmptySerializer
 from Django_xm.common.sse_utils import SSERenderer, sse_error_event, sse_response
 
@@ -904,29 +905,14 @@ class WorkflowListView(APIView):
     def get(self, request):
         status_filter = request.query_params.get("status")
         search_query = request.query_params.get("search")
-        page = int(request.query_params.get("page", 1))
-        page_size = min(int(request.query_params.get("page_size", 20)), 100)
 
         queryset = WorkflowService.list_user_workflows(
             user_id=request.user.id, status=status_filter, search=search_query
         )
 
-        total = queryset.count()
-        start = (page - 1) * page_size
-        end = start + page_size
-        sessions = queryset[start:end]
-
-        serializer = WorkflowSessionSerializer(sessions, many=True)
-
-        return success_response(
-            data={
-                "items": serializer.data,
-                "total": total,
-                "page": page,
-                "page_size": page_size,
-                "total_pages": (total + page_size - 1) // page_size,
-            }
-        )
+        paginated = paginate_to_dict(queryset, request)
+        serializer = WorkflowSessionSerializer(paginated["items"], many=True)
+        return success_response(data={**paginated, "items": serializer.data})
 
 
 class WorkflowFilesListView(APIView):

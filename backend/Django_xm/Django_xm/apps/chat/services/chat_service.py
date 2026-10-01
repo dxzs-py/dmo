@@ -1304,19 +1304,21 @@ class ChatService:
         if data.get("resume_subagent_contents"):
             _subagent_contents = dict(data["resume_subagent_contents"])
         data["_subagent_contents"] = _subagent_contents
-        # 子代理工具条目会话级聚合（tool_call_id → entry）：落库权威来源。
-        # 主 ctx.tool_calls_map 只含主代理工具，子代理工具若仅依赖审批重建
-        # 路径落库会丢失图层字段（subagent_thread_id 等）且无审批的 SAFE 工具
-        # （fs_list_files 等）完全丢失 → 刷新后子代理卡片归集失败（乱序根源）。
+        # 统一工具条目容器（tool_call_id → entry）：主代理与子代理共用同一 dict，
+        # 作为落库权威来源。主代理工具由 loop._process_chunk 经
+        # publish_tool_lifecycle_event 聚合写入；子代理工具由
+        # _handle_subagent_tool_event 写入。若子代理工具仅依赖审批重建路径落库会
+        # 丢失图层字段（subagent_thread_id 等）且无审批的 SAFE 工具（fs_list_files
+        # 等）完全丢失 → 刷新后子代理卡片归集失败（乱序根源）。
         # 与 _subagent_contents 同构：闭包跨审批 resume 持续，挂起前由
         # persist_chat_tool_calls 落库，恢复轮经增量合并（按 id）不丢历史。
-        _subagent_tool_entries: dict[str, dict] = {}
-        # 业务等待恢复模式：以挂起前已持久化的子代理工具条目作为基线，
+        _tool_entries: dict[str, dict] = {}
+        # 业务等待恢复模式：以挂起前已持久化的工具条目作为基线，
         # 恢复轮经增量合并（按 id）继续演进，避免挂起后新增的自动通过工具卡
         # （无审批记录）无数据源可落库、子代理工具图层字段丢失。
-        if data.get("resume_subagent_tool_entries"):
-            _subagent_tool_entries = dict(data["resume_subagent_tool_entries"])
-        data["_subagent_tool_entries"] = _subagent_tool_entries
+        if data.get("resume_tool_entries"):
+            _tool_entries = dict(data["resume_tool_entries"])
+        data["_tool_entries"] = _tool_entries
         # 子代理消息幂等键集合（按 subagent_thread_id 分组）：审批 interrupt
         # 恢复时 LangGraph 重放节点，SubAgentContentMiddleware 会对同一条
         # AIMessage 再次触发回调；跳过已转发的消息，否则子代理卡片内容
@@ -1326,7 +1328,7 @@ class ChatService:
             session_id=data.get("session_id", ""),
             message_id=str(data.get("_assistant_message_id") or data.get("message_id", "")),
             contents=_subagent_contents,
-            tool_entries=_subagent_tool_entries,
+            tool_entries=_tool_entries,
             sent_msg_keys={},
         )
 
@@ -1336,7 +1338,7 @@ class ChatService:
         """子代理数据实时落库（挂起前基线缺失的兜底修复）。
 
         业务等待挂起落库（persist_chat_tool_calls）发生在子代理执行前，
-        _subagent_contents / _subagent_tool_entries 为空；若仅靠挂起/结束
+        _subagent_contents / 统一工具条目容器为空；若仅靠挂起/结束
         落库，子代理正文与图层字段（subagent_thread_id 等）中途丢失，
         恢复轮从 DB 读不到基线 → 刷新后子代理卡归集失败、子代理工具卡
         混入主切段乱序。每次子代理工具/正文事件聚合后调用，增量合并幂等。
@@ -1362,11 +1364,12 @@ class ChatService:
 
         仅接收真子代理事件（SubAgentToolEventMiddleware 按 subagent_thread_id
         非空转发）；主 agent 工具事件不经本回调（主链路唯一发布与持久化）。
+        发布经唯一编排函数 ``publish_tool_lifecycle_event``（register →
+        bind_position → transition_async → 聚合条目），聚合落库统一容器
+        ``data["_tool_entries"]``（主/子代理共享）。
         """
-        from Django_xm.common.event_schema import EventSource
-        from Django_xm.common.event_schema import EventType as _ET
-        from Django_xm.common.tool_call_lifecycle import ToolCallContext as _TCC
-        from Django_xm.common.tool_call_lifecycle import service as _tc_service
+        from Django_xm.common.event_schema import EventSource, EventType as _ET
+        from Django_xm.common.tool_event_publisher import publish_tool_lifecycle_event
 
         if not tool_call_id:
             return
@@ -1377,34 +1380,31 @@ class ChatService:
         if not isinstance(depth, int) or depth < 0:
             depth = 0
         subagent_thread_id = kwargs.get("subagent_thread_id") or ""
+        # position 采集（按图层局部化）：仅真子代理（spec D1：subagent_thread_id
+        # 非空）执行——子代理工具 = 该子代理图层已累计正文长度
+        # （_subagent_contents 按 subagent_thread_id 键累计，spec MODIFIED）
+        position: int | None = None
+        if subagent_thread_id:
+            position = len((state.contents.get(subagent_thread_id) or {}).get("content") or "")
+
         try:
-            _tc_service.register(
-                _TCC(
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    module=EventSource.CHAT,
-                    module_id=state.session_id,
-                    message_id=state.message_id,
-                    parameters=parameters,
-                    parent_tool_call_id=kwargs.get("parent_tool_call_id") or "",
-                    depth=depth,
-                    agent_name=kwargs.get("agent_name") or "",
-                    description=kwargs.get("description") or "",
-                    subagent_thread_id=subagent_thread_id,
-                )
-            )
-            # position 采集（按图层局部化）：仅真子代理（spec D1：subagent_thread_id
-            # 非空）执行——子代理工具 = 该子代理图层已累计正文长度
-            # （_subagent_contents 按 subagent_thread_id 键累计，spec MODIFIED）
-            if subagent_thread_id:
-                _pos = len((state.contents.get(subagent_thread_id) or {}).get("content") or "")
-                _tc_service.bind_position(tool_call_id, _pos)
-            await _tc_service.transition_async(
-                tool_call_id,
-                event_type if isinstance(event_type, _ET) else _ET(event_type),
+            await publish_tool_lifecycle_event(
+                module=EventSource.CHAT,
+                module_id=state.session_id,
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                event_type=event_type if isinstance(event_type, _ET) else _ET(event_type),
+                message_id=state.message_id,
+                parameters=parameters,
                 result=kwargs.get("result"),
                 error=kwargs.get("error"),
-                parameters=parameters if parameters else None,
+                parent_tool_call_id=kwargs.get("parent_tool_call_id") or "",
+                depth=depth,
+                agent_name=kwargs.get("agent_name") or "",
+                description=kwargs.get("description") or "",
+                subagent_thread_id=subagent_thread_id,
+                entries=state.tool_entries,
+                position=position,
             )
         except Exception as _e:
             logger.warning(
@@ -1412,49 +1412,9 @@ class ChatService:
                 f"tc_id={tool_call_id}, err={_e}"
             )
             return
-        await self._aggregate_subagent_tool_event(
-            data, state, tool_call_id, tool_name, event_type, parameters, kwargs, subagent_thread_id, depth
-        )
-
-    async def _aggregate_subagent_tool_event(
-        self,
-        data: dict[str, Any],
-        state: _SubagentStreamState,
-        tool_call_id,
-        tool_name,
-        event_type,
-        parameters: dict,
-        kwargs: dict,
-        subagent_thread_id: str,
-        depth: int,
-    ) -> None:
-        """子代理工具条目聚合与实时落库。
-
-        落库条目聚合（图层字段贯通）：复用公共聚合函数（与 research 同构）。
-        status/parameters/result 随事件演进，终态不可回退（审批 resume
-        重放 PENDING 不降级）；seq/position 由 aggregate_tool_entry 从
-        ToolCallContext 权威源读取。
-        """
-        try:
-            from Django_xm.common.tool_call_aggregation import aggregate_tool_entry
-
-            aggregate_tool_entry(
-                state.tool_entries,
-                tool_call_id,
-                tool_name,
-                event_type,
-                parameters=parameters,
-                result=kwargs.get("result"),
-                error=kwargs.get("error"),
-                subagent_thread_id=subagent_thread_id,
-                agent_name=kwargs.get("agent_name") or "",
-                depth=depth,
-            )
-            # 实时落库：子代理工具条目含图层字段（subagent_thread_id 等），
-            # 挂起/恢复轮需从 DB 读到基线，否则刷新后归集失败（乱序根源）。
-            await self._flush_subagent_snapshot(data, state)
-        except Exception as _e:
-            logger.debug(f"[ChatExec] 子代理工具条目聚合失败: tc_id={tool_call_id}, err={_e}")
+        # 实时落库：子代理工具条目含图层字段（subagent_thread_id 等），
+        # 挂起/恢复轮需从 DB 读到基线，否则刷新后归集失败（乱序根源）。
+        await self._flush_subagent_snapshot(data, state)
 
     async def _handle_subagent_content(
         self,
@@ -1584,7 +1544,7 @@ class ChatService:
         # finalize 阶段：循环后统一处理（由 stream 子包统一实现）
         # 包括：update_usage / LLM fallback 检测 / tool_usage 统计 /
         #       审批中断收尾 / _pending_content 刷新 / 深度思考兜底 /
-        #       reasoning 完成事件 / finalize_tool_calls / 补发 + 补全检查 + 建议生成
+        #       reasoning 完成事件 / 补发 + 补全检查 + 建议生成
         async for event in finalize_stream(
             plan.ctx,
             data,

@@ -219,11 +219,21 @@ class SandboxExecutor:
         self._ensure_docker_checked()
         if not self._docker_available:
             # 开关开启但 Docker 运行时不可用：fail-closed 报错，不静默降级本机
-            return self._fail_closed_error(
+            result = self._fail_closed_error(
                 "Docker 不可用，无法在沙箱中执行命令。请检查 Docker 服务，或关闭沙箱后重试。",
                 command,
             )
-        return self._execute_in_docker(command, working_dir, timeout, thread_id)
+        else:
+            result = self._execute_in_docker(command, working_dir, timeout, thread_id)
+
+        # 沙箱指标统一在 execute 出口记录（单一数据源），避免 fail-closed 路径被
+        # _fail_closed_error 内部与调用方（shell.py）重复计数（双 +1 失真）。
+        try:
+            from Django_xm.common.observability.approval_metrics import approval_metrics
+            approval_metrics.on_sandbox_result(success=(result.return_code == 0))
+        except Exception:
+            logger.debug("记录沙箱执行指标失败")
+        return result
 
     # ------------------------------------------------------------------
     # 长驻容器 + docker exec
@@ -518,18 +528,9 @@ class SandboxExecutor:
     def _fail_closed_error(self, reason: str, command: str) -> SandboxResult:
         """fail-closed：沙箱执行失败返回明确错误（绝不静默降级本机）。
 
-        记录审计告警 + 沙箱失败指标（F2），命令视为执行失败返回给 agent。
+        仅返回失败结果；沙箱指标统一在 execute() 出口按 return_code 记录，避免重复计数。
         """
         logger.error(f"[SandboxExecutor] 沙箱执行失败（fail-closed）: {reason[:200]}")
-
-        # 发布审计事件（F2 沙箱失败指标）
-        try:
-            from Django_xm.common.observability.approval_metrics import approval_metrics
-
-            approval_metrics.on_sandbox_result(success=False)
-        except Exception:
-            # 指标记录失败不影响沙箱失败主流程
-            logger.debug("记录沙箱失败指标失败")
 
         return SandboxResult(
             stdout="",

@@ -2,19 +2,15 @@
 
 两种模式（普通 / 深度思考）共用此模块，保证审批中断后行为完全一致：
 
-1. finalize_tool_calls 补发工具事件
-2. 显式 'interrupted' 事件（修复深度思考模式原缺失的 bug）
-3. stream_state 快照写入（content + tool_calls_map）
+1. 显式 'interrupted' 事件（修复深度思考模式原缺失的 bug）
+2. stream_state 快照写入（content + 统一工具条目容器）
 
-修复的 bug：
-- 深度思考模式原不发送 'interrupted' 事件，导致前端无法正确转 INTERRUPTED 状态
-- 两套 stream_state 写入逻辑现已统一为单一实现
+工具调用事件的补发已由单一管线（ToolEventExtractor + publish_tool_lifecycle_event）
+在流式过程中实时发布，本模块不再补发工具事件。
 """
 
 import logging
 from collections.abc import AsyncGenerator
-
-from Django_xm.apps.chat.services.stream_helpers import finalize_tool_calls
 
 from .context import StreamContext
 
@@ -28,9 +24,8 @@ async def finalize_interrupt(
     """审批中断统一收尾
 
     当 ctx.interrupt_info 非空时执行：
-    1. finalize_tool_calls 补发工具 SSE 事件
-    2. 显式 interrupted 事件通知前端
-    3. stream_state 快照写入（供 views_chat.py finally 块保存到数据库）
+    1. 显式 interrupted 事件通知前端
+    2. stream_state 快照写入（供 views_chat.py finally 块保存到数据库）
 
     Args:
         ctx: 流式可变状态
@@ -39,21 +34,7 @@ async def finalize_interrupt(
     if ctx.interrupt_info is None:
         return
 
-    logger.info(
-        f"审批中断，执行 finalize_tool_calls 补发工具事件: "
-        f"tool={ctx.interrupt_info.get('tool_name')}, "
-        f"graph_interrupt_id={ctx.interrupt_info.get('graph_interrupt_id')}"
-    )
-
-    # 1. finalize_tool_calls 补发工具事件
-    for tool_update_event in finalize_tool_calls(
-        ctx.all_messages,
-        ctx.tool_calls_map,
-        ctx.tool_args_accumulator,
-    ):
-        yield tool_update_event
-
-    # 2. 显式通知前端：本次流因审批中断而结束
+    # 1. 显式通知前端：本次流因审批中断而结束
     # 修复 bug：深度思考模式原缺失此事件，导致前端无法正确转 INTERRUPTED 状态
     interrupted_payload = {
         "interrupt_id": ctx.interrupt_info.get("interrupt_id"),
@@ -69,17 +50,18 @@ async def finalize_interrupt(
         "data": interrupted_payload,
     }
 
-    # 3. stream_state 快照写入
-    _write_stream_state_snapshot(ctx)
+    # 2. stream_state 快照写入
+    _write_stream_state_snapshot(ctx, data)
 
 
-def _write_stream_state_snapshot(ctx: StreamContext) -> None:
-    """将 current_content 和 tool_calls_map 快照写入 stream_state
+def _write_stream_state_snapshot(ctx: StreamContext, data: dict) -> None:
+    """将 current_content 和统一工具条目快照写入 stream_state
 
     供 views_chat.py finally 块保存到数据库并广播给非请求浏览器，
     确保刷新后工具卡片参数不丢失。
 
     仅提取可序列化的必要字段，避免引用 ToolMessage 等不可序列化对象。
+    工具条目源为统一容器 ``data["_tool_entries"]``（主/子代理共享）。
     """
     if not (ctx.accumulated_reasoning and ctx.accumulated_reasoning.get("_stream_state") is not None):
         return
@@ -87,7 +69,7 @@ def _write_stream_state_snapshot(ctx: StreamContext) -> None:
     ctx.accumulated_reasoning["_stream_state"]["current_content"] = ctx.current_message_content
 
     tc_snapshot = {}
-    for tc_key, tc_val in (ctx.tool_calls_map or {}).items():
+    for tc_key, tc_val in (data.get("_tool_entries") or {}).items():
         if not isinstance(tc_val, dict):
             continue
         tc_snapshot[tc_key] = {
@@ -103,7 +85,7 @@ def _write_stream_state_snapshot(ctx: StreamContext) -> None:
         if tc_val.get("error") is not None:
             tc_snapshot[tc_key]["error"] = tc_val.get("error")
 
-    ctx.accumulated_reasoning["_stream_state"]["tool_calls_map"] = tc_snapshot
+    ctx.accumulated_reasoning["_stream_state"]["tool_entries"] = tc_snapshot
 
     logger.info(
         f"[StreamLoop] 审批中断，写入 stream_state 快照: "

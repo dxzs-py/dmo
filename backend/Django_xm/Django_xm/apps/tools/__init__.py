@@ -97,7 +97,7 @@ def _get_web_search_tools() -> list[BaseTool]:
             tools.append(duckduckgo_search)
 
     if not has_tavily and not has_ddg:
-        logger.warning("联网搜索不可用：未配置 Tavily API Key 且未安装 duckduckgo-search")
+        logger.warning("联网搜索不可用：未配置 Tavily API Key 且未安装 ddgs")
 
     return tools
 

@@ -365,8 +365,9 @@ class SubAgentToolEventMiddleware(AgentMiddleware):
         """转发本轮模型产生的工具调用 PENDING 事件。
 
         仅对子代理（``subagent_thread_id`` 非空，spec D1）转发：主 agent 的
-        工具事件由主执行链路（run_stream_loop._publish_input_ready_events /
-        adapter 主循环）统一发布，本中间件若转发主 agent 事件会导致重复发布。
+        工具事件由主执行链路（run_stream_loop 经 ToolEventExtractor +
+        publish_tool_lifecycle_event / adapter 主循环）统一发布，本中间件若转发
+        主 agent 事件会导致重复发布。
         """
         from langchain_core.messages import AIMessage
 

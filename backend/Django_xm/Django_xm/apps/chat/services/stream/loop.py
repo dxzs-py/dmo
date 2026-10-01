@@ -4,8 +4,9 @@ chat_service 共用的唯一 astream 循环实现。
 保证以下行为在普通模式和深度思考模式下完全一致：
 
 - astream stream_mode=["messages", "updates"]
+- messages 模式：ToolEventExtractor 归一化工具事件 + publish_tool_lifecycle_event 发布
+  （唯一管线：与 research 共用），另调用 process_stream_chunk 处理正文/思考
 - updates 模式：审批中断检测（extract_interrupt_ids + parse_approval_interrupt）
-- messages 模式：process_stream_chunk 调用 + 事件分发
 - chunk 累积到 ctx.current_message_content
 - asyncio.sleep(0.01) 让出事件循环
 
@@ -14,26 +15,23 @@ chat_service 共用的唯一 astream 循环实现。
 """
 
 import asyncio
-import json
 import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from langchain_core.messages import AIMessage, AIMessageChunk, SystemMessage
+from langchain_core.messages import SystemMessage
 
 from Django_xm.apps.approvals.services.approval_batch import assert_non_empty_decision
 from Django_xm.apps.chat.services.stream_helpers import (
-    _extract_tool_params,
-    _fix_groq_tool_call,
     extract_interrupt_ids,
-    parse_approval_interrupt_for_chat,
     process_stream_chunk,
 )
 from Django_xm.apps.chat.utils import _lcp_len
 from Django_xm.apps.tools.base import is_approval_interrupt, is_subagent_wait_interrupt
-from Django_xm.common.event_schema import EventSource
+from Django_xm.apps.tools.tool_event_extractor import ToolEventExtractor
+from Django_xm.common.event_schema import EventSource, EventType
 from Django_xm.common.execution_loop import run_astream_loop
-from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
+from Django_xm.common.tool_event_publisher import publish_tool_lifecycle_event
 
 from .context import StreamContext
 from .strategy import BaseStreamStrategy
@@ -49,8 +47,7 @@ def _record_duplicate_tool_call(
 ) -> None:
     """对新检测到的工具调用执行重复调用检测（chat 补齐韧性，spec D8）。
 
-    与 research 侧 ``extract_tool_events_from_message`` 的 TOOL_CALL_PENDING
-    重复检测同构：窗口内相同 tool_name + 相同 parameters 超过阈值时，
+    与 research 侧重复检测同构：窗口内相同 tool_name + 相同 parameters 超过阈值时，
     将警告 SystemMessage 追加到 warnings，由公共循环注入 graph state。
     """
     if duplicate_detector is None or warnings is None:
@@ -63,132 +60,102 @@ def _record_duplicate_tool_call(
         logger.warning(f"重复工具调用检测失败: tool={tool_name}, err={e}")
 
 
-def _publish_input_ready_events(
-    message: Any,
-    *,
-    session_id: str,
-    seen_tool_call_ids: set,
-    duplicate_detector=None,
-    warnings: list | None = None,
-) -> None:
-    """检测 AIMessage.tool_calls 并发布 INPUT_READY 事件。
+def _count_tool_call(tool_name: str, tool_call_count: dict[str, int] | None) -> None:
+    """统计工具调用次数；单工具超过 8 次记录日志（诊断用）。"""
+    if not isinstance(tool_call_count, dict):
+        return
+    tool_call_count[tool_name] = tool_call_count.get(tool_name, 0) + 1
+    if tool_call_count[tool_name] > 8:
+        logger.info(f"工具 {tool_name} 被调用了 {tool_call_count[tool_name]} 次")
 
-    在 process_stream_chunk 处理 AIMessage 之前调用，确保非触发浏览器
-    通过 WebSocket 收到 INPUT_READY 事件（含输入参数）。
 
-    ⚠️ 关键修复（与 tool_event_extractor.py 一致）：
-    AIMessageChunk 是 AIMessage 的子类，其 ``.tool_calls`` 属性内部使用
-    ``parse_partial_json`` 解析 args 字符串，对不完整 JSON 可能返回非空但
-    残缺的 dict（如 ``'{"file_path": "/san'`` 被解析为 ``{"file_path": "/san"}``）。
-    若直接使用 ``.tool_calls`` 发射 INPUT_READY，会携带不完整参数过早发射，
-    导致跨浏览器同步展示残缺参数。
+# 知识库检索工具前缀（返回大量原始文档）：结果超过阈值时统一截断为摘要。
+# 该策略为 chat 侧唯一实现（发布编排共享，禁止下沉共享 extractor）；
+# 命中前缀与 apps/tools/base.py 的 _RAW_CONTENT_TOOL_PREFIXES 语义一致。
+_KB_TOOL_PREFIX = "knowledge_base_"
+# 超过该长度才截断（保留重构前 stream_chunk_processors._handle_tool_message_chunk 阈值）
+_KB_RESULT_TRUNCATE_THRESHOLD = 500
+# 截断后保留的预览长度（前 N 字符 + "..."）
+_KB_RESULT_PREVIEW_LEN = 200
 
-    修复：对 AIMessageChunk，直接从 ``tool_call_chunks`` 读取原始 args 字符串，
-    用严格 ``json.loads`` 解析（仅完整 JSON 才成功），避免 parse_partial_json
-    的宽容解析。完整 AIMessage 的 ``.tool_calls`` 的 args 已是 dict，可直接使用。
 
-    Args:
-        message: chunk 中的消息对象（AIMessage / AIMessageChunk 或 tuple 解构后的 message）
-        session_id: 会话 ID（用于 module_id 字段）
-        seen_tool_call_ids: 整条流中已发布 PENDING 的 tool_call_id 集合，用于去重
+def _summarize_kb_result(tool_name: str, result: Any) -> Any:
+    """知识库工具结果摘要（chat 侧唯一实现）。
+
+    ``knowledge_base_*`` 工具返回大量原始文档，结果超过阈值时截断为
+    ``前 200 字符 + "..."``，避免海量原文进入 WS 事件 payload 与落库条目
+    （恢复重构前 ``_handle_tool_message_chunk`` 的摘要行为）。非知识库工具
+    或短结果原样返回。
     """
-    if not isinstance(message, AIMessage):
-        return
+    if (
+        isinstance(tool_name, str)
+        and tool_name.startswith(_KB_TOOL_PREFIX)
+        and isinstance(result, str)
+        and len(result) > _KB_RESULT_TRUNCATE_THRESHOLD
+    ):
+        return result[:_KB_RESULT_PREVIEW_LEN].rstrip() + "..."
+    return result
 
-    # AIMessageChunk：从 tool_call_chunks 用严格 JSON 解析 args
-    if isinstance(message, AIMessageChunk):
-        tccs = getattr(message, "tool_call_chunks", None) or []
-        for tcc in tccs:
-            if isinstance(tcc, dict):
-                tc_id = tcc.get("id") or ""
-                tc_name = tcc.get("name") or ""
-                tc_args_str = tcc.get("args") or ""
-            else:
-                tc_id = getattr(tcc, "id", "") or ""
-                tc_name = getattr(tcc, "name", "") or ""
-                tc_args_str = getattr(tcc, "args", "") or ""
-            if not tc_id:
-                continue
-            # 严格 JSON 解析：仅完整 JSON 才发布 INPUT_READY。
-            # args 为空或不完整时跳过，等后续 chunk 补全参数。
-            if not tc_args_str or not tc_args_str.strip():
-                continue
-            try:
-                parsed_args = json.loads(tc_args_str)
-            except (json.JSONDecodeError, ValueError):
-                continue  # args 不完整，等后续 chunk 补全
-            if isinstance(parsed_args, dict) and parsed_args:
-                parameters = parsed_args
-            elif isinstance(parsed_args, list) and parsed_args:
-                parameters = {"items": parsed_args}
-            else:
-                continue
-            # 语义完整性检查：所有 string 值均为空串 → LLM 流式占位，跳过
-            # 避免发布 {"relative_path": "", "content": ""} 等空参数工具事件
-            if isinstance(parsed_args, dict):
-                string_values = [v for v in parsed_args.values() if isinstance(v, str)]
-                if string_values and all(v == '' for v in string_values):
-                    continue
-            # 去重：同一流式生命周期中每个 tool_call_id 仅发布一次 PENDING
-            if tc_id in seen_tool_call_ids:
-                continue
-            try:
-                service.register(
-                    ToolCallContext(
-                        tool_call_id=tc_id,
-                        tool_name=tc_name,
-                        module=EventSource.CHAT,
-                        module_id=session_id,
-                        parameters=parameters,
-                    )
-                )
-                # PENDING 事件由 publish_stream_event 统一发布（P-BE-1 根因修复）：
-                # 原在此处 sync transition（fire-and-forget）立即设置 dedup_key，
-                # 导致后续 publish_stream_event 的 async transition_async 被 dedup 跳过，
-                # 事件可能延迟或丢失。register 已注册上下文（含 parameters），
-                # publish_stream_event 处理 SSE tool 事件时会复用并 await 发布。
-                seen_tool_call_ids.add(tc_id)
-                _record_duplicate_tool_call(tc_name, parameters, duplicate_detector, warnings)
-            except Exception as e:
-                logger.warning(f"发布 PENDING 事件失败: tool_call_id={tc_id}, err={e}")
-        return
 
-    # 完整 AIMessage（非 chunk）：tool_calls 的 args 已是完整 dict，直接使用
-    tool_calls = getattr(message, "tool_calls", []) or []
-    if not tool_calls:
-        return
+def _evaluate_tool_usage_guard(
+    tool_name: str,
+    tool_id: str,
+    parameters: dict | None,
+) -> tuple[list[dict], bool]:
+    """ToolUsageGuard 检查（唯一实现，从 stream_chunk_processors 迁移）。
 
-    for raw_tool_call in tool_calls:
-        if not isinstance(raw_tool_call, dict):
-            continue
-        tool_call = _fix_groq_tool_call(raw_tool_call)
-        tool_call_id = tool_call.get("id") or ""
-        tool_name = tool_call.get("name") or ""
-        if not tool_call_id:
-            continue
+    返回 ``(events, skip_publish)``：
+    - events: 需产出的事件列表（tool_usage_dedup / tool_usage_blocked / 软警告）
+    - skip_publish: True 表示命中 dedup/block 短路，应跳过该工具的生命周期发布
+    """
+    events: list[dict] = []
+    try:
+        from Django_xm.apps.ai_engine.services.tool_usage_guard import (
+            ToolUsageDecision,
+            ToolUsageStatus,
+            get_tool_usage_guard,
+        )
 
-        parameters = _extract_tool_params(tool_call)
-        # 去重：同一流式生命周期中每个 tool_call_id 仅发布一次 PENDING
-        if tool_call_id in seen_tool_call_ids:
-            continue
-        try:
-            service.register(
-                ToolCallContext(
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    module=EventSource.CHAT,
-                    module_id=session_id,
-                    parameters=parameters,
-                )
+        if parameters:
+            decision = get_tool_usage_guard().check(
+                tool_name=tool_name,
+                args=parameters,
+                thread_id="default",  # 流式上下文不直接拿 thread_id，使用 default
             )
-            # PENDING 事件由 publish_stream_event 统一发布（P-BE-1 根因修复）：
-            # 原在此处 sync transition（fire-and-forget）立即设置 dedup_key，
-            # 导致后续 publish_stream_event 的 async transition_async 被 dedup 跳过。
-            # register 已注册上下文（含 parameters），publish_stream_event 会复用。
-            seen_tool_call_ids.add(tool_call_id)
-            _record_duplicate_tool_call(tool_name, parameters, duplicate_detector, warnings)
-        except Exception as e:
-            logger.warning(f"发布 PENDING 事件失败: tool_call_id={tool_call_id}, err={e}")
+        else:
+            decision = ToolUsageDecision(
+                status=ToolUsageStatus.ALLOW, reason="params not yet available"
+            )
+        # 抽取通用事件字段（所有工具都有 resource_key / payload_preview）
+        sse_data = decision.sse_event.get("data", {}) if decision.sse_event else {}
+        common_data = {
+            "tool_name": tool_name,
+            "tool_id": tool_id,
+            "resource_key": sse_data.get("resource_key", ""),
+            "payload_preview": sse_data.get("payload_preview", ""),
+            "reason": sse_data.get("reason", ""),
+            "message": sse_data.get("message", ""),
+        }
+        if decision.status.value == "dedup" and decision.short_circuit_response:
+            # 短时相同内容：直接以 DEDUP 状态传递，由 chat_service 注入 ToolMessage
+            common_data["short_circuit_response"] = decision.short_circuit_response
+            events.append({"type": "tool_usage_dedup", "data": common_data})
+            if decision.sse_event:
+                events.append(decision.sse_event)
+            return events, True
+        if decision.status.value == "block" and decision.short_circuit_response:
+            # 渐进式阻断：返回阻断原因，仍由模型决定是否继续
+            common_data["short_circuit_response"] = decision.short_circuit_response
+            events.append({"type": "tool_usage_blocked", "data": common_data})
+            if decision.sse_event:
+                events.append(decision.sse_event)
+            return events, True
+        if decision.sse_event:
+            # 软警告
+            events.append(decision.sse_event)
+    except Exception as guard_err:
+        logger.debug(f"ToolUsageGuard 检查失败（不影响工具执行）: {guard_err}")
+    return events, False
 
 
 async def run_stream_loop(
@@ -231,49 +198,97 @@ async def run_stream_loop(
         timeout_mgr: 执行超时管理器（None 表示不启用超时暂停）。
         duplicate_detector: 重复工具调用检测器（None 表示不检测）。
     """
-    # 去重：整条流中每个 tool_call_id 最多发布一次 PENDING（避免与 ApprovalMiddleware 竞态）
-    seen_tool_call_ids = set()
+    session_id = data.get("session_id", "")
+    message_id = str(data.get("_assistant_message_id") or data.get("message_id", ""))
+    # 统一工具条目容器（主/子代理共享，data["_tool_entries"] 由
+    # chat_service._init_subagent_stream_state 创建）；发布编排聚合落库此容器。
+    tool_entries = data.get("_tool_entries")
+    # 主代理 position 采集依据：content_state["content"]（已输出正文长度，
+    # 与收敛前 stream_broadcast 的 position 语义一致）；缺失时回退 ctx 累积正文。
+    content_state = data.get("_content_state_ref")
+
+    # 归一化工具事件的唯一提取器（长生命周期，跨 chunk / resume 复用）
+    extractor = ToolEventExtractor()
 
     # 策略钩子：循环开始前的事件（深度思考发送"正在深度思考中..."）
     async for event in strategy.on_loop_start(ctx, data):
         yield event
+
+    def _main_position() -> int:
+        if isinstance(content_state, dict):
+            return len(content_state.get("content") or "")
+        return len(ctx.current_message_content or "")
 
     # messages 模式 chunk 处理器（公共循环注入）
     async def _process_chunk(mode_data, control, resume_values):
         message = mode_data[0] if isinstance(mode_data, tuple) and len(mode_data) == 2 else mode_data
         ctx.all_messages.append(message)
 
-        # 在 process_stream_chunk 之前发布 INPUT_READY 事件（非触发浏览器可见）
-        # 仅对 AIMessage.tool_calls 发布；其他消息类型函数内部会跳过。
-        # 同时对新工具调用执行重复调用检测（chat 补齐韧性，spec D8）。
-        _publish_input_ready_events(
-            message,
-            session_id=data.get("session_id", ""),
-            seen_tool_call_ids=seen_tool_call_ids,
-            duplicate_detector=duplicate_detector,
-            warnings=control.warnings,
-        )
+        # 1. 归一化工具事件（唯一提取器：严格 JSON / 无 id 暂存 / ToolMessage 补发）
+        try:
+            tool_events = extractor.feed(message)
+        except Exception as e:
+            logger.warning(f"工具事件提取失败: {e}")
+            tool_events = []
 
+        # 2. 事件分发：PENDING 做重复检测 / 计数 / Guard；全类型统一发布编排
+        for evt in tool_events:
+            event_type = evt.get("event_type")
+            tool_call_id = evt.get("tool_call_id", "") or ""
+            if not tool_call_id:
+                continue
+            tool_name = evt.get("tool_name") or "unknown"
+            parameters = evt.get("parameters") or {}
+
+            if event_type == EventType.TOOL_CALL_PENDING:
+                # 重复调用检测（注入警告到 graph state）
+                _record_duplicate_tool_call(tool_name, parameters, duplicate_detector, control.warnings)
+                # 调用计数（诊断）
+                _count_tool_call(tool_name, ctx.tool_call_count)
+                # ToolUsageGuard：命中 dedup/block 时产出事件并跳过发布
+                guard_events, skip_publish = _evaluate_tool_usage_guard(tool_name, tool_call_id, parameters)
+                for guard_event in guard_events:
+                    replacement = strategy.handle_special_event(guard_event, ctx)
+                    if replacement is None:
+                        yield guard_event
+                    else:
+                        for replacement_event in replacement:
+                            yield replacement_event
+                if skip_publish:
+                    continue
+
+            # 统一发布编排：register → bind_position → transition_async → 聚合条目
+            # 知识库工具结果摘要：在发布入口统一截断，同时作用于 WS 事件 payload 与
+            # 落库条目（聚合容器 entries），避免海量 KB 原文进入实时通道与 DB。
+            await publish_tool_lifecycle_event(
+                module=EventSource.CHAT,
+                module_id=session_id,
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                event_type=event_type,
+                parameters=parameters,
+                result=_summarize_kb_result(tool_name, evt.get("result")),
+                error=evt.get("error"),
+                message_id=message_id,
+                entries=tool_entries,
+                position=_main_position(),
+            )
+
+        # 3. 正文流式 / 思考内容（已瘦身，不含工具事件）
         try:
             for event in process_stream_chunk(
                 mode_data,
-                ctx.tool_calls_map,
                 ctx.current_message_content,
-                tool_call_count=ctx.tool_call_count,
                 lcp_func=_lcp_len,
                 accumulated_reasoning=ctx.accumulated_reasoning,
-                tool_args_accumulator=ctx.tool_args_accumulator,
                 mode=data.get("mode", "agent"),
                 enable_deep_thinking=strategy.enable_deep_thinking,
-                session_id=data.get("session_id", ""),
-                message_id=str(data.get("_assistant_message_id") or data.get("message_id", "")),
-                module_id=data.get("session_id", ""),
             ):
                 # chunk 事件：累积内容
                 if event.get("type") == "chunk":
                     ctx.current_message_content += event.get("content", "")
 
-                # 策略钩子：处理 tool_usage_dedup/blocked/reasoning 等特殊事件
+                # 策略钩子：处理 reasoning 等特殊事件
                 replacement = strategy.handle_special_event(event, ctx)
                 if replacement is not None:
                     for replacement_event in replacement:
@@ -407,6 +422,10 @@ async def _collect_chat_approvals(
     chat 复用 request_approval_async）。返回按 interrupt 分组的列表，供
     _handle_updates_chunk（SSE 模式）与 run_stream_loop 挂起模式共用。
 
+    审批解析直接委托 ``common.approval_parser.parse_approval_interrupt``
+    （中断 request 已携带 LLM tool_call_id，前端按其精确匹配，不再依赖流式
+    工具映射匹配 llm_tool_call_id）。
+
     返回元素结构：
         {
             "graph_interrupt_id": str,
@@ -421,6 +440,8 @@ async def _collect_chat_approvals(
     if not interrupts:
         return []
 
+    from Django_xm.common.approval_parser import parse_approval_interrupt
+
     groups: list[dict] = []
     for intr in interrupts:
         interrupt_value, graph_interrupt_id, langgraph_resume_id = extract_interrupt_ids(intr)
@@ -428,13 +449,10 @@ async def _collect_chat_approvals(
         if not is_approval_interrupt(interrupt_value):
             continue
 
-        approval_data_list = parse_approval_interrupt_for_chat(
+        approval_data_list = parse_approval_interrupt(
             interrupt_value,
-            graph_interrupt_id=graph_interrupt_id,
-            langgraph_resume_id=langgraph_resume_id,
-            tool_calls_map=ctx.tool_calls_map,
-            tool_args_accumulator=ctx.tool_args_accumulator,
-            used_tool_call_ids=ctx.used_tool_call_ids,
+            graph_interrupt_id,
+            langgraph_resume_id,
         )
 
         approval_events: list[dict] = []

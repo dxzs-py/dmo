@@ -433,6 +433,53 @@ def publish_tool_call_timeout_event(approval: Approval):
         )
 
 
+def publish_tool_call_rejected_event(approval: Approval):
+    """发布 TOOL_CALL_REJECTED 事件（通过 tool_call_lifecycle.service.transition 状态机入口）。
+
+    用户拒绝工具时，除了发布 APPROVAL_REJECTED 更新审批面板，
+    还需发布 TOOL_CALL_REJECTED 让前端 ToolCallCard 显示"已拒绝"状态
+    （非触发浏览器依赖该工具终态事件，不依赖审批面板事件）。
+
+    与 ``publish_tool_call_timeout_event`` 对称，是该终态事件的唯一发布出口：
+    - register：幂等注册上下文（chat 模块可能已注册，不覆盖非空字段）
+    - transition：状态机校验 + 去重 + 内部调用 publish_tool_call_sync（底层传输不变）
+    """
+    kwargs = build_approval_payload(approval, None, "tool")
+    tool_call_id = kwargs["tool_call_id"]
+    try:
+        service.register(
+            ToolCallContext(
+                tool_call_id=tool_call_id,
+                tool_name=kwargs["tool_name"],
+                module=kwargs["module"],
+                module_id=kwargs["module_id"],
+                message_id=kwargs["message_id"],
+                parameters=kwargs["parameters"],
+                cross_module_id=kwargs["cross_module_id"],
+                graph_interrupt_id=kwargs["graph_interrupt_id"],
+                risk_level=kwargs.get("risk_level", ""),
+                subagent_thread_id=kwargs.get("subagent_thread_id") or "",
+            )
+        )
+        _bind_approval_position(approval, tool_call_id)
+        # 状态机转换并发布事件（内部调用 publish_tool_call_sync）
+        service.transition(
+            tool_call_id,
+            EventType.TOOL_CALL_REJECTED,
+            parameters=kwargs["parameters"] if isinstance(kwargs["parameters"], dict) else None,
+        )
+    except PayloadValidationError:
+        logger.exception(
+            f"[ApprovalService] TOOL_CALL_REJECTED payload 校验失败，终止审批流程: "
+            f"interrupt_id={approval.interrupt_id}, tool_name={approval.tool_name}",
+        )
+        raise  # 审批事件丢失是严重问题，让上层感知
+    except Exception as e:
+        logger.warning(
+            f"[ApprovalService] 发布 TOOL_CALL_REJECTED 事件失败: interrupt_id={approval.interrupt_id}, error={e}"
+        )
+
+
 def _publish_tool_call_waiting_event(approval: Approval):
     """发布 TOOL_CALL_WAITING 事件（通过 tool_call_lifecycle.service.transition 状态机入口）。
 
@@ -1702,6 +1749,10 @@ def complete_approval(
     approval.save(update_fields=["state", "resolved_at", "extra"])
 
     persist_and_broadcast(approval, state, extra)
+    # 工具卡片显示"已拒绝"状态（与审批面板分离）：拒绝终态需额外发布
+    # TOOL_CALL_REJECTED，供非触发浏览器经工具终态事件同步（与 timeout 对称）。
+    if state == Approval.State.REJECTED:
+        publish_tool_call_rejected_event(approval)
     # 锁 key 与 resume_approval 对称：批次维度（graph_interrupt_id）或单审批维度
     graph_interrupt_id = ""
     if isinstance(approval.extra, dict):

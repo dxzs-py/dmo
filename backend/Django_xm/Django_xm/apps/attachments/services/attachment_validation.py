@@ -17,6 +17,7 @@ from django.db import models
 from django.utils import timezone
 
 from ..models import AttachmentCleanupLog, AttachmentStatus, ChatAttachment, StorageAlert
+from Django_xm.common.pagination import ProjectPagination
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +255,7 @@ def build_admin_list(params: dict[str, Any]) -> dict[str, Any]:
     from .attachment_lifecycle import AttachmentLifecycleService
 
     page = int(params.get("page", 1))
-    page_size = int(params.get("page_size", 20))
+    page_size = min(int(params.get("page_size", 20)), ProjectPagination.max_page_size)
     status_filter = params.get("status", "")
     search = params.get("search", "")
     sort_by = params.get("sort_by", "-created_at")

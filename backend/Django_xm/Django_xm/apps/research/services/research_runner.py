@@ -36,10 +36,10 @@ class ResearchResult:
     reasoning: str = ""
     # 子代理图层正文/思考累计（Agent 图层嵌套规范 Task 1.5，来自 adapter.subagent_contents）
     subagent_contents: dict[str, dict[str, str]] | None = None
-    # 子代理工具条目会话级聚合（tool_call_id → entry，来自 adapter._subagent_tool_entries）：
+    # 主/子代理统一工具条目会话级聚合（tool_call_id → entry，来自 adapter._tool_entries）：
     # 图层字段贯通（subagent_thread_id/agent_name/depth + seq/position），
     # 由 writeback 合并进 ChatMessage.tool_calls（乱序根源修复，与 chat 链路同构）
-    subagent_tool_entries: dict[str, dict] | None = None
+    tool_entries: dict[str, dict] | None = None
     # 主 agent 累计正文（来自 adapter._main_content）：过程信息展示权威源，
     # 由 writeback 落库到 ChatMessage.content / ResearchTask.content。
     main_content: str = ""
@@ -192,7 +192,7 @@ async def execute_research_async(
             error_message=error_message,
             reasoning=getattr(agent, "accumulated_reasoning", ""),
             subagent_contents=result.get("subagent_contents"),
-            subagent_tool_entries=result.get("subagent_tool_entries"),
+            tool_entries=result.get("tool_entries"),
             main_content=result.get("main_content") or "",
             raw_result=result,
             suspended=suspended,

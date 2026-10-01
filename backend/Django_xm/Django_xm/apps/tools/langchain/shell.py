@@ -463,14 +463,8 @@ def _execute_command(
                 enable_sandbox=enable_sandbox,
                 thread_id=thread_id,
             )
-            # 记录沙箱执行指标（F2）
-            try:
-                from Django_xm.common.observability.approval_metrics import approval_metrics
-
-                approval_metrics.on_sandbox_result(success=(sandbox_result.return_code == 0))
-            except Exception:
-                # 指标记录失败不影响沙箱执行主流程
-                logger.debug("记录沙箱执行指标失败")
+            # 沙箱执行指标已在 SandboxExecutor.execute() 出口统一记录（单一数据源），
+            # 此处不再重复记录，避免 fail-closed 路径被重复计数。
             # fail-closed：沙箱执行失败（容器二次失败/不可用）时返回明确错误，
             # 绝不静默降级本机执行
             return _sandbox_result_to_standard(sandbox_result, command)

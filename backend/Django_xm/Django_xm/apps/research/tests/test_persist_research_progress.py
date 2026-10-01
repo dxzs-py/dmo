@@ -84,7 +84,7 @@ class PersistResearchProgressTests(unittest.TestCase):
             }
         }
         self._patch_deps(task, msg=None)
-        persist_research_progress("t1", subagent_tool_entries=entries)
+        persist_research_progress("t1", tool_entries=entries)
 
         self.assertEqual(len(task.tool_calls), 1)
         merged = task.tool_calls[0]
@@ -101,11 +101,11 @@ class PersistResearchProgressTests(unittest.TestCase):
         task = _make_task()
         entries = {"c1": {"id": "c1", "name": "shell_exec", "subagent_thread_id": "sa1", "position": 0}}
         self._patch_deps(task, msg=None)
-        persist_research_progress("t1", subagent_tool_entries=entries)
+        persist_research_progress("t1", tool_entries=entries)
         task.save.assert_called_once()
 
         task.save.reset_mock()
-        persist_research_progress("t1", subagent_tool_entries=entries)
+        persist_research_progress("t1", tool_entries=entries)
         task.save.assert_not_called()
 
     def test_persists_subagent_contents(self):
@@ -136,7 +136,7 @@ class PersistResearchProgressTests(unittest.TestCase):
         persist_research_progress(
             "t1",
             subagent_contents={"sa1": {"content": "a"}},
-            subagent_tool_entries=entries,
+            tool_entries=entries,
         )
 
         self.assertEqual(len(msg.tool_calls), 1)

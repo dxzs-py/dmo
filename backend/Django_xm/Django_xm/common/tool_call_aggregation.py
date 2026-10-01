@@ -1,8 +1,10 @@
-"""工具调用条目聚合与子代理正文累计（chat / research 双链路唯一实现）。
+"""工具调用条目聚合与子代理正文累计（chat 主/子代理 + research 三链路唯一实现）。
 
-将原 chat（``chat_service._on_subagent_tool_event``）与 research
+将原 chat 子代理（``chat_service._handle_subagent_tool_event``，经 configurable
+回调 ``_on_subagent_tool_event``）、chat 主链路（``stream/loop.py``）与 research
 （``adapter._publish_tool_event``）各自内联的「事件 → 落库条目聚合」逻辑收敛为
-本模块唯一实现；子代理正文累计 + msg_id 幂等去重同样收敛于此。
+本模块唯一实现；当前唯一调用入口为 ``common.tool_event_publisher``
+``publish_tool_lifecycle_event`` 第 4 步。子代理正文累计 + msg_id 幂等去重同样收敛于此。
 
 设计边界：
 - ``aggregate_tool_entry`` 只负责单条 entry 的字段演进（默认结构、终态保护、
@@ -20,7 +22,8 @@ from typing import Any
 from Django_xm.common.event_schema import TERMINAL_TOOL_CALL_EVENTS
 
 # 工具事件类型 → 落库条目 status（与前端 toolCallTransition 语义一致）。
-# 消费方为子代理落库聚合链路（chat 子代理回调 / research extractor），事件集
+# 消费方为 aggregate_tool_entry（唯一发布编排 publish_tool_lifecycle_event 第 4 步
+# 调用，覆盖 chat 主/子代理 + research 全部工具事件），事件集
 # 与状态机（lifecycle._VALID_TRANSITIONS）对齐；终态事件以
 # event_schema.TERMINAL_TOOL_CALL_EVENTS 为唯一声明源。
 EVENT_STATUS_MAP: dict[str, str] = {
@@ -34,9 +37,11 @@ EVENT_STATUS_MAP: dict[str, str] = {
 }
 
 # 审批状态 / 工具内部状态 → 展示 status（唯一权威）。
-# 收敛历史四套本地映射（stream_chunk_processors._STATE_TO_STATUS /
-# approval_service.status_mapping / approval_helpers 的审批状态提升逻辑），
-# 各引用方统一 import 本常量，禁止再定义本地映射。
+# 收敛历史多套本地映射（approval_service.status_mapping / approval_helpers 的
+# 审批状态提升逻辑 / 已移除的 stream_chunk_processors._STATE_TO_STATUS——该文件
+# 已随流式工具状态收敛至 ToolEventExtractor 而不再处理工具状态）。
+# 现存消费方：approval_service（快照状态注入）/ approval_helpers（审批重建与
+# status 提升）。各引用方统一 import 本常量，禁止再定义本地映射。
 # 值域与前端 toolCallTransition 语义一致，展示状态字符串为前端契约，不可变更。
 STATE_TO_STATUS: dict[str, str] = {
     # 审批状态（Approval.state）
@@ -69,6 +74,8 @@ def _build_default_entry(tool_call_id: str, tool_name: str) -> dict:
         "state": "input-available",
         "status": "pending",
         "parameters": {},
+        "result": None,
+        "error": None,
     }
 
 
@@ -176,6 +183,7 @@ def merge_subagent_content(
         return True
 
     seen = seen_keys.setdefault(subagent_thread_id, set())
+    # `seen` 和 `seen_keys[subagent_thread_id]` 指向**同一个集合对象**，后续对 `seen.add(xxx)` 的修改，会直接体现在字典里。
     if msg_id and msg_id in seen:
         return True
     if msg_id:

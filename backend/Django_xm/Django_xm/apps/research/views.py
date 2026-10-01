@@ -15,6 +15,7 @@ from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventType
 from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.responses import success_response
+from Django_xm.common.pagination import paginate_to_dict
 from Django_xm.common.serializers import EmptySerializer
 from Django_xm.common.signal_bus import (
     SESSION_TYPE_RESEARCH,
@@ -492,8 +493,6 @@ class DeepResearchTaskListView(APIView):
     def get(self, request):
         status_filter = request.query_params.get("status")
         search_query = request.query_params.get("search")
-        page = int(request.query_params.get("page", 1))
-        page_size = min(int(request.query_params.get("page_size", 20)), 100)
 
         queryset = ResearchTask.objects.filter(
             created_by=request.user,
@@ -508,22 +507,9 @@ class DeepResearchTaskListView(APIView):
 
         queryset = queryset.order_by("-created_at")
 
-        total = queryset.count()
-        start = (page - 1) * page_size
-        end = start + page_size
-        tasks = queryset[start:end]
-
-        serializer = ResearchTaskSerializer(tasks, many=True)
-
-        return success_response(
-            data={
-                "items": serializer.data,
-                "total": total,
-                "page": page,
-                "page_size": page_size,
-                "total_pages": (total + page_size - 1) // page_size,
-            }
-        )
+        paginated = paginate_to_dict(queryset, request)
+        serializer = ResearchTaskSerializer(paginated["items"], many=True)
+        return success_response(data={**paginated, "items": serializer.data})
 
 
 class DeepResearchRetrySubagentView(APIView):

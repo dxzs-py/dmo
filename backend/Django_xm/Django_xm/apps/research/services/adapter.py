@@ -103,15 +103,23 @@ class OfficialDeepAgentAdapter:
         # 图层 position。跨审批 resume / 业务等待挂起持续累计（同一 adapter 复用），
         # 挂起/完成时随结果落库，供前端刷新后恢复主 agent 过程正文。
         self._main_content = ""
-        # 子代理工具条目会话级聚合（tool_call_id → entry）：落库权威来源。
-        # 与 chat 模块 chat_service._subagent_tool_entries 同构——ResearchTask.tool_calls
-        # 无写入点、ChatMessage.tool_calls 仅依赖审批重建路径落库会丢失图层字段
-        # （subagent_thread_id/agent_name/depth）且无审批的 SAFE 工具完全丢失
-        # → 刷新后子代理卡片归集失败（乱序根源）。由 _publish_tool_event
+        # 主/子代理统一工具条目会话级聚合（tool_call_id → entry）：落库权威来源。
+        # 条目同时含主代理（depth=0）与子代理（含 subagent_thread_id/agent_name/depth
+        # 图层字段）——ResearchTask.tool_calls 无写入点、ChatMessage.tool_calls 仅依赖
+        # 审批重建路径落库会丢失图层字段且无审批的 SAFE 工具完全丢失
+        # → 刷新后工具卡归集失败（乱序根源）。由 _publish_tool_event
         # （主/子 agent 工具事件统一入口）聚合，任务完成/挂起时经 research_runner
         # 携带到 writeback 合并进 ChatMessage.tool_calls。闭包跨审批 resume 持续
         # （同一 adapter 实例复用），增量合并（按 id）不丢历史。
-        self._subagent_tool_entries: dict[str, dict] = {}
+        self._tool_entries: dict[str, dict] = {}
+        # 工具事件唯一提取器（ToolEventExtractor，有状态）：跨 chunk / 跨审批 resume
+        # 复用同一实例，内部持有 accumulated_messages / seen_tool_call_ids / 无 id
+        # 暂存缓冲，保证同一 tool_call_id 的 PENDING 只发射一次（含 ToolMessage 阶段
+        # 参数聚合后的补发语义）。恢复模式（服务重启/业务等待续跑）时向 seen 集合
+        # 注入 checkpoint 已注册的 tool_call_id，避免 resume 后重复发射 PENDING。
+        from Django_xm.apps.tools.tool_event_extractor import ToolEventExtractor
+
+        self._tool_event_extractor = ToolEventExtractor()
 
     def research(
         self, query: str, config: dict[str, Any] | None = None, callbacks: list | None = None
@@ -275,9 +283,9 @@ class OfficialDeepAgentAdapter:
         from Django_xm.apps.tools.base import is_approval_interrupt, is_subagent_wait_interrupt
 
         # 工具事件提取与发布（与子 agent 事件转发路径一致）
-        # 注意：工具事件的实际发布由 _publish_tool_event 内部通过
-        # service.transition_async 完成（状态机统一入口），此处仅需 EventType
-        from Django_xm.apps.tools.tool_event_extractor import extract_tool_events_from_message
+        # - 提取：复用实例级 self._tool_event_extractor（有状态，跨 chunk/resume）
+        # - 发布：由 _publish_tool_event 内部经 publish_tool_lifecycle_event 编排
+        #   （状态机 transition + 条目聚合统一入口），此处仅需 EventType
         from Django_xm.common.event_schema import EventType
         from Django_xm.common.execution_loop import run_astream_loop
 
@@ -560,32 +568,33 @@ class OfficialDeepAgentAdapter:
             else:
                 graph_input = {"messages": [HumanMessage(content=query or "")]}
             accumulated_result = None
-            # 工具事件追踪状态：整个流期间持续累积（含 interrupt 恢复后的续流）
-            # - seen_tool_call_ids: 已发射 INPUT_READY 的 tool_call_id 集合，避免流式 chunk 重复发射
-            # - accumulated_messages: 累积的 AIMessage/AIMessageChunk/ToolMessage 列表，
-            #   供 ToolMessage 阶段从 tool_call_chunks 聚合完整参数
-            seen_tool_call_ids: set = set()
-            # B7: 恢复模式预热 seen_tool_call_ids —— 从 checkpoint state 中提取已注册的
-            # tool_call_id 集合，避免 ToolMessage 阶段触发 PENDING 补发导致非法状态转换 WARNING。
+            # 工具事件提取状态由实例级 self._tool_event_extractor 持有
+            # （跨 chunk / 跨审批 resume 复用）；此处不再维护局部 seen/accumulated 容器。
+            # 恢复模式预热已见集合（B7）：新建 adapter（服务重启/业务等待续跑）内存态从空
+            # 开始，从 checkpoint state 提取已注册的 tool_call_id 注入 extractor.seen，
+            # 避免 ToolMessage 阶段触发 PENDING 补发导致非法状态转换 WARNING
+            # （同一 adapter 续跑时幂等，无副作用）。
             if resume_command is not None:
                 try:
                     state = await self.graph.aget_state(config)
                     if state and hasattr(state, "values") and state.values:
                         from langchain_core.messages import AIMessage
 
+                        _seen = self._tool_event_extractor.seen_tool_call_ids
+                        _preheat_new = 0
                         for msg in state.values.get("messages", []) or []:
                             if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
                                 for tc in msg.tool_calls:
                                     tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
-                                    if tc_id:
-                                        seen_tool_call_ids.add(tc_id)
+                                    if tc_id and tc_id not in _seen:
+                                        _seen.add(tc_id)
+                                        _preheat_new += 1
                         logger.info(
                             f"[OfficialDeepAgent] 恢复模式预热 seen_tool_call_ids: "
-                            f"count={len(seen_tool_call_ids)}, ids={list(seen_tool_call_ids)[:5]}..."
+                            f"count={len(_seen)}, new={_preheat_new}"
                         )
                 except Exception as e:
                     logger.warning(f"[OfficialDeepAgent] 预热 seen_tool_call_ids 失败(非致命): {e}")
-            accumulated_messages: list = []
             # 在循环外定义，避免 loop_fn 闭包捕获每次迭代的重新赋值（B023）
             all_resume_values: dict = {}
             # 业务等待挂起（spec D4）：loop_fn 检测到 _subagent_wait interrupt 时写入，
@@ -623,11 +632,9 @@ class OfficialDeepAgentAdapter:
                             mode_data[0] if isinstance(mode_data, tuple) and len(mode_data) == 2 else mode_data
                         )
                         try:
-                            tool_events = extract_tool_events_from_message(
-                                msg_obj,
-                                seen_tool_call_ids,
-                                accumulated_messages,
-                            )
+                            # 实例级有状态提取器：跨 chunk 聚合 args、跨审批 resume 共享
+                            # seen 集合，行为与原局部容器提取完全一致（含无 id 暂存）。
+                            tool_events = self._tool_event_extractor.feed(msg_obj)
                         except Exception as e:
                             logger.warning(f"[OfficialDeepAgent] 工具事件提取失败: {e}")
                             tool_events = []
@@ -970,10 +977,10 @@ class OfficialDeepAgentAdapter:
             # 由 research_runner 透传到 writeback_to_chat_message 落库
             if self.subagent_contents:
                 result["subagent_contents"] = self.subagent_contents
-            # 子代理工具条目聚合携带到结果：由 research_runner 透传到
+            # 主/子代理统一工具条目聚合携带到结果：由 research_runner 透传到
             # writeback 合并进 ChatMessage.tool_calls（图层字段贯通，乱序根源修复）
-            if self._subagent_tool_entries:
-                result["subagent_tool_entries"] = self._subagent_tool_entries
+            if self._tool_entries:
+                result["tool_entries"] = self._tool_entries
             return result
 
         except Exception as e:
@@ -1046,59 +1053,44 @@ class OfficialDeepAgentAdapter:
         return SystemMessage(content=content)
 
     async def _publish_tool_event(self, evt: dict[str, Any]) -> None:
-        """发布单个工具调用生命周期事件到实时频道。
+        """发布单个工具调用生命周期事件到实时频道（唯一编排入口调用方）。
 
-        通过状态机统一入口 ``service.transition_async`` 发布事件：
-        - 先 ``service.register`` 注册上下文（幂等，已存在则仅补全空字段）
-        - 再 ``await service.transition_async`` 完成状态转换并发布事件
+        收敛历史内联四步（register → bind_position → transition_async →
+        aggregate_tool_entry）为单次 ``publish_tool_lifecycle_event(...)`` 调用，
+        与 chat 主链路 / chat 子代理共享同一编排实现（参数兜底、PENDING 补发
+        防护、position 绑定、条目聚合均由编排函数内置）。
 
         路由策略（与 writeback.broadcast_stream_completed 一致）：
         - chat 关联场景（self.chat_session_id 非空）：session + task 双频道
-          由 register 时设置的 cross_module_id 触发，transition_async 从
-          context 透传 cross_module_id 给底层 publish_tool_call
+          由 cross_module_id 触发，transition 从 context 透传给底层 publish_tool_call
         - 独立深度研究场景：仅 task 频道
 
         子 agent 嵌套层级字段（Phase E3）：
-        evt 中的 parent_tool_call_id / depth / agent_name / risk_ceiling
-        （由 _on_tool_event 从 SubAgentToolEventMiddleware 透传）注册到 ToolCallContext，
-        transition_async 从 context 透传到事件 payload，前端 ToolCallCard 可展示
-        嵌套层级。主 agent 直接调用的工具不携带这些字段（evt 中无对应 key）。
-        agent_path 不再注册/透传（spec REMOVED：agent_path 从事件 payload 与
-        转发链中删除，路由唯一依据 subagent_thread_id）。
+        evt 中的 parent_tool_call_id / depth / agent_name / risk_ceiling / description /
+        subagent_thread_id（由 _on_tool_event 从 SubAgentToolEventMiddleware 透传）
+        注册到 ToolCallContext 并经 transition 透传到事件 payload；主 agent 工具不携带
+        （evt 中无对应 key）。agent_path 不再注册/透传（spec REMOVED：路由唯一依据
+        subagent_thread_id）。
 
         Args:
-            evt: extract_tool_events_from_message 返回的事件 dict，字段：
+            evt: ToolEventExtractor.feed 返回的事件 dict（或 _on_tool_event 构造），字段：
                 - event_type: EventType (TOOL_CALL_PENDING / TOOL_CALL_COMPLETED / TOOL_CALL_FAILED)
                 - tool_call_id: str
                 - tool_name: str
                 - parameters: dict
                 - result: str (仅 COMPLETED)
                 - error: str (仅 FAILED)
-                - parent_tool_call_id/depth/agent_name/risk_ceiling/description:
-                  子 agent 嵌套字段（可选，description 为任务目标描述）
+                - parent_tool_call_id/depth/agent_name/risk_ceiling/description/
+                  subagent_thread_id: 子 agent 嵌套字段（可选）
         """
         from Django_xm.common.approval_utils import derive_cross_module_id_from_source
         from Django_xm.common.event_schema import EventSource, EventType
-        from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
+        from Django_xm.common.tool_event_publisher import publish_tool_lifecycle_event
 
         event_type = evt.get("event_type")
         tool_call_id = evt.get("tool_call_id", "") or ""
         tool_name = evt.get("tool_name") or "unknown"
         parameters = evt.get("parameters") or {}
-        # 3.4 参数权威源兜底：extractor 参数聚合失败（parameters 为空）时，
-        # 从 ctx（middleware SAFE/审批/无策略注册路径已写入完整 AIMessage 参数）兜底，
-        # 避免前端显示参数为空 []（write_todos/web_search 等工具实测复现）。
-        if not parameters:
-            try:
-                _ctx = service.get_context(tool_call_id)
-                _ctx_params = _ctx.get("parameters") if _ctx else None
-                if isinstance(_ctx_params, dict) and _ctx_params:
-                    parameters = _ctx_params
-            except Exception as e:
-                logger.warning(
-                    f"[OfficialDeepAgent] 读取 tool_call 参数兜底失败: "
-                    f"tc_id={tool_call_id}, err={e}"
-                )
 
         logger.info(
             f"[OfficialDeepAgent] _publish_tool_event 入口: event_type={event_type}, "
@@ -1106,7 +1098,7 @@ class OfficialDeepAgentAdapter:
             f"params_keys={list(parameters.keys()) if isinstance(parameters, dict) else type(parameters).__name__}"
         )
 
-        # event_type 必须为 EventType 枚举（extract_tool_events_from_message 保证）
+        # event_type 必须为 EventType 枚举（提取器保证）
         # 防御性校验：跳过非法事件类型，避免 transition_async 内部抛 KeyError
         if not isinstance(event_type, EventType):
             logger.warning(
@@ -1114,34 +1106,13 @@ class OfficialDeepAgentAdapter:
             )
             return
 
-        # PENDING 补发防护（P13）：ToolMessage 阶段 extractor 会对 AIMessage 阶段
-        # args 不完整（未发射）的工具补发 PENDING。若 lifecycle context 已推进到
-        # 非 PENDING 状态（SAFE 自动通过场景：ApprovalMiddleware 直接发布 RUNNING；
-        # 审批场景：WAITING/RUNNING），补发 PENDING 会导致状态机
-        # `running → pending` 非法转换 WARNING。此时 RUNNING/WAITING 事件已携带
-        # 完整 parameters，前端无需重复 PENDING，直接跳过（debug 记录）。
-        # 子 agent 事件经 _on_tool_event 统一走本函数，主/子 agent 均覆盖。
-        if event_type == EventType.TOOL_CALL_PENDING:
-            _existing_ctx = service.get_context(tool_call_id)
-            _last_event = _existing_ctx.get("last_event_type") if _existing_ctx else None
-            if _last_event and _last_event != EventType.TOOL_CALL_PENDING.value:
-                logger.debug(
-                    f"[OfficialDeepAgent] 跳过 PENDING 补发（状态已推进）: "
-                    f"tool_call_id={tool_call_id}, last_event_type={_last_event}"
-                )
-                return
-
-        # 1. 注册工具调用上下文（幂等）
-        #    - module_id = task_id（深度研究任务 ID）
-        #    - cross_module_id = chat_session_id（关联 chat 场景触发双频道广播）
-        #    - message_id：chat 关联场景从当前 config 读取 assistant_message_id，
-        #      使工具事件 payload 携带归属消息 ID。前端 toolCallsMap → message.toolCalls
-        #      的归属依赖 messageBackendId，缺失时聊天深度研究模式的工具卡片会消失（根因修复）
-        #    - 子 agent 嵌套层级字段：从 evt 提取（仅子 agent 工具事件携带）
+        # 跨模块同步目标：chat 关联场景非空 → session + task 双频道
         cross_module_id = derive_cross_module_id_from_source("deep_research", self.chat_session_id)
 
-        # 从当前 langgraph 运行上下文读取 assistant_message_id（research_runner
-        # 在 config.configurable 中注入；聊天关联场景非空，独立深度研究为空）
+        # message_id：chat 关联场景优先从当前 langgraph 运行上下文读取
+        # assistant_message_id（research_runner 在 config.configurable 中注入），
+        # 回退实例属性。前端工具卡归属依赖 messageBackendId，缺失时聊天深度研究
+        # 模式的工具卡片会消失（根因修复）。
         _assistant_message_id = ""
         if self.chat_session_id:
             try:
@@ -1157,9 +1128,7 @@ class OfficialDeepAgentAdapter:
         if not _assistant_message_id:
             _assistant_message_id = getattr(self, "_assistant_message_id", "")
 
-        # 提取子 agent 嵌套层级字段（Phase E3）
-        # evt 中无对应 key 时使用默认空值（主 agent 场景）
-        # agent_path 不再提取/注册（spec REMOVED：路由与累计唯一依据 subagent_thread_id）
+        # 提取子 agent 嵌套层级字段（Phase E3）：evt 无对应 key 时取默认空值（主 agent）
         sub_parent_tool_call_id = evt.get("parent_tool_call_id", "") or ""
         sub_depth = evt.get("depth", 0)
         if not isinstance(sub_depth, int) or sub_depth < 0:
@@ -1175,106 +1144,42 @@ class OfficialDeepAgentAdapter:
             sub_risk_ceiling = sub_risk_ceiling_raw or ""
         # description：子 agent 角色描述（任务目标，Task 2.4），仅子 agent 事件携带
         sub_description = evt.get("description", "") or ""
-        # subagent_thread_id：子代理 SSE 定向推送路由标识符（spec D10），
-        # 由 SubAgentToolEventMiddleware 从 configurable 透传，仅子代理事件携带
+        # subagent_thread_id：子代理 SSE 定向推送路由标识符（spec D10），仅子代理事件携带
         sub_subagent_thread_id = evt.get("subagent_thread_id", "") or ""
 
-        try:
-            service.register(
-                ToolCallContext(
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    module=EventSource.DEEP_RESEARCH,
-                    module_id=self.thread_id,
-                    message_id=_assistant_message_id,
-                    parameters=parameters,
-                    cross_module_id=cross_module_id,
-                    # 子 agent 嵌套层级字段（Phase E3）
-                    parent_tool_call_id=sub_parent_tool_call_id,
-                    depth=sub_depth,
-                    agent_name=sub_agent_name,
-                    risk_ceiling=sub_risk_ceiling,
-                    description=sub_description,
-                    # 子代理 SSE 定向推送路由标识符（spec D10）
-                    subagent_thread_id=sub_subagent_thread_id,
-                )
-            )
-        except Exception as e:
-            logger.warning(f"[OfficialDeepAgent] 注册工具调用上下文失败 (tool={tool_name}, tc_id={tool_call_id}): {e}")
-
-        # position 采集（按图层局部化，单一权威来源）：
-        # - 子代理（subagent_thread_id 非空，spec D1）：position = len(该子代理图层
-        #   已转发正文 content 长度；subagent_contents 按 subagent_thread_id 键累计)
-        # - 主 agent：position = len(主 agent 已输出累计正文 _main_content)
-        # 经 service.bind_position 写入 context（仅补全空字段），后续状态事件不覆盖
-        # （keep_existing + bind_position 双保险，D3 硬约束）。
-        _position: int | None = None
+        # position 采集（按图层局部化，单一权威来源，D3）：
+        # - 子代理（subagent_thread_id 非空）：该子代理图层已转发正文 content 长度
+        # - 主 agent：主 agent 已输出累计正文 _main_content 长度
+        # 传入编排函数经 service.bind_position 写入 context（仅补全空字段，永久不变）。
         if sub_subagent_thread_id:
             _sub_entry = self.subagent_contents.get(sub_subagent_thread_id) or {}
-            _position = len(_sub_entry.get("content") or "")
+            _position: int | None = len(_sub_entry.get("content") or "")
         else:
             _position = len(self._main_content)
-        if _position is not None:
-            try:
-                service.bind_position(tool_call_id, _position)
-            except Exception as e:
-                logger.warning(
-                    f"[OfficialDeepAgent] 绑定 position 失败: tc_id={tool_call_id}, "
-                    f"position={_position}, err={e}"
-                )
 
-        # 2. 状态机转换：transition_async 内部 await publish_tool_call，
-        #    parameters / message_id / cross_module_id / graph_interrupt_id
-        #    / 子 agent 嵌套层级字段 从 context 透传，底层传输逻辑不变
-        # must-use is-not-None: empty dict {} 是有效占位 → 保留为 {} 而非 None，
-        # 后续 middleware SAFE 工具路径通过 is_non_empty_params 保护不会覆盖已有非空参数
-        transition_kwargs: dict[str, Any] = {
-            "parameters": parameters
-            if (isinstance(parameters, dict) and parameters)
-            else ({} if isinstance(parameters, dict) else None),
-        }
-        if "result" in evt:
-            transition_kwargs["result"] = evt["result"]
-        if "error" in evt:
-            transition_kwargs["error"] = evt["error"]
-
-        try:
-            await service.transition_async(
-                tool_call_id,
-                event_type,
-                **transition_kwargs,
-            )
-        except Exception as e:
-            logger.warning(
-                f"[OfficialDeepAgent] 发布工具事件失败 "
-                f"(event={event_type.value}, "
-                f"tool={tool_name}, tc_id={tool_call_id}): {e}"
-            )
-
-        # 落库条目聚合：复用公共聚合函数（与 chat 同构）。status/parameters/result/
-        # error 随事件演进，终态不可回退；图层字段（subagent_thread_id/agent_name/
-        # depth）随事件透传，seq/position 由 aggregate_tool_entry 从 ToolCallContext
-        # 权威源读取（register/bind_position 已写入）。独立 try：transition_async
-        # 失败不阻断聚合，聚合失败仅 debug（非关键路径）。
-        try:
-            from Django_xm.common.tool_call_aggregation import aggregate_tool_entry
-
-            aggregate_tool_entry(
-                self._subagent_tool_entries,
-                tool_call_id,
-                tool_name,
-                event_type,
-                parameters=parameters,
-                result=evt.get("result"),
-                error=evt.get("error"),
-                subagent_thread_id=sub_subagent_thread_id,
-                agent_name=sub_agent_name,
-                depth=sub_depth,
-            )
-        except Exception as _e:
-            logger.debug(
-                f"[OfficialDeepAgent] 子代理工具条目聚合失败: tc_id={tool_call_id}, err={_e}"
-            )
+        # 唯一编排入口：register → bind_position → transition_async → aggregate_tool_entry
+        # （参数权威源兜底、PENDING 补发防护、position 绑定、条目聚合均内置；
+        #  entries 传 self._tool_entries → 主/子代理统一落库条目聚合）。
+        await publish_tool_lifecycle_event(
+            module=EventSource.DEEP_RESEARCH,
+            module_id=self.thread_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            event_type=event_type,
+            message_id=_assistant_message_id,
+            parameters=parameters,
+            result=evt.get("result"),
+            error=evt.get("error"),
+            cross_module_id=cross_module_id,
+            parent_tool_call_id=sub_parent_tool_call_id,
+            depth=sub_depth,
+            agent_name=sub_agent_name,
+            risk_ceiling=sub_risk_ceiling,
+            description=sub_description,
+            subagent_thread_id=sub_subagent_thread_id,
+            entries=self._tool_entries,
+            position=_position,
+        )
 
     async def _rebuild_with_degraded_tools(self, degraded_tools: list[Any]) -> Any | None:
         """使用降级工具集重建 graph

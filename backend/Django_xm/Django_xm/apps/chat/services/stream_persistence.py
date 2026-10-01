@@ -1,7 +1,7 @@
 """流式结果持久化（Task 15.2 从 stream_helpers.py 拆分）。
 
 集中处理流结束后 AI 回复内容与工具调用到 ``ChatMessage`` 的持久化：
-- ``_build_persisted_tool_calls``：从 tool_calls_map 构建可持久化列表（清理内部字段）
+- ``_build_entry_from_container``：从统一容器条目构建单条可持久化 tool_call（清理内部键）
 - ``merge_tool_calls_incremental``：增量合并工具调用列表（字段级状态演进，P3-R2）
 - ``_persist_to_db_sync``：同步执行所有 DB 操作（编排，供 sync_to_async 调用）：
     - ``_locate_session_and_message``：定位会话与助手消息（含最新 assistant 回退）
@@ -11,7 +11,7 @@
       reasoning / 子代理图层正文按需覆盖
     - ``_save_message_and_touch_session``：变更检测保存 + 会话 updated_at 刷新
 - ``persist_stream_result``：流结束时持久化并广播 MESSAGE_UPDATED 事件（编排）：
-    - ``_collect_tool_calls_with_subagents``：构建 tool_calls 并合并子代理条目
+    - ``_collect_tool_calls_with_subagents``：从统一容器构建 tool_calls
     - ``_execute_db_persist``：经 sync_to_async 执行 DB 持久化
     - ``_broadcast_message_updated``：广播 MESSAGE_UPDATED 事件
 - ``persist_chat_tool_calls``：挂起前/流结束时的复用持久化入口
@@ -45,73 +45,64 @@ _TOOL_CALL_STATUS_PRIORITY: dict[str, int] = {
 # （全项目唯一权威，值域 completed/failed/timeout/rejected，与前端一致）。
 
 
-def _build_persisted_tool_calls(
-    tool_calls_map: dict[str, dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """从 tool_calls_map 构建可持久化到 ``Message.tool_calls`` 的列表。
+def _build_entry_from_container(entry: dict[str, Any], key: str = "") -> dict[str, Any] | None:
+    """从统一容器条目构建单条可持久化 tool_call（过滤内部键）。
 
-    过滤内部辅助字段（``_index`` / ``_summarized``），仅保留可序列化字段：
-        - id / name / type / state / status / parameters / result / error / seq
-
-    seq（register 分配的全局递增序号）必须保留：前端跨浏览器统一排序的唯一权威
-    依据。若持久化丢弃 seq，API 快照与 WebSocket 事件（透传 seq）的排序依据
-    不一致，刷新后工具调用乱序（fs_write_file 等后发工具因缺 seq 被排到最前）。
-    seq 由 ``stream_broadcast`` 构建 tool_calls_map 时从 ToolCallContext 补齐。
+    统一容器 ``data["_tool_entries"]``（tool_call_id → entry，主/子代理共享）
+    的条目已由 ``aggregate_tool_entry`` 聚合，含
+    id/name/type/state/status/parameters/result/error + depth/图层字段 +
+    seq/position + approval 等。此处仅做白名单过滤与默认值兜底：
+        - 保留 id/name/type/state/status/parameters/result/error
+        - 保留图层字段（subagent_thread_id/agent_name/depth）与 approval
+        - seq/position 经 enrich_entry_* 从 ToolCallContext 权威源补全
 
     Args:
-        tool_calls_map: 流式累积的 tool_calls_map（key=dedup_key，value=tool_info）
+        entry: 统一容器中的工具条目
+        key: 容器键（tool_call_id），条目缺 id 时兜底
 
     Returns:
-        list[dict]: 可持久化的 tool_calls 列表（按 tool_call_id 去重）
+        dict | None: 可持久化条目；无有效 tool_call_id 时返回 None（跳过）
     """
-    persisted: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
-    for tool_info in tool_calls_map.values():
-        if not isinstance(tool_info, dict):
-            continue
-        tool_call_id = tool_info.get("id") or ""
-        tool_name = tool_info.get("name") or ""
-        if not tool_call_id and not tool_name:
-            continue
-        # 按 tool_call_id 去重（保留最后一条，参数最完整）
-        dedup_key = tool_call_id or tool_name
-        if dedup_key in seen_ids:
-            continue
-        seen_ids.add(dedup_key)
-        persisted_entry: dict[str, Any] = {
-            "id": tool_call_id,
-            "name": tool_name,
-            "type": tool_info.get("type", "") or f"tool-call-{tool_name}",
-            "state": tool_info.get("state", "") or "input-available",
-            "status": tool_info.get("status", "") or "pending",
-            "parameters": tool_info.get("parameters") or {},
-            "result": tool_info.get("result"),
-            "error": tool_info.get("error"),
-        }
-        # 参数兜底（与 seq/position 同模式）：流式 extractor 参数不流式时
-        # （tool_call_chunks args 为空串）map 条目 parameters 恒为 {}，而
-        # ApprovalMiddleware 注册 ToolCallContext 时已持有完整参数，此处从
-        # ctx 权威源补全（仅当条目参数为空时，不覆盖 extractor 已解析参数）。
-        tool_call_service.enrich_entry_parameters(persisted_entry, tool_call_id)
-        # 保留 seq（register 全局递增序号，前端排序权威依据）：
-        # 1) 快照优先——tool_calls_map 已补过 seq（stream_broadcast）则直接透传；
-        # 2) 统一兜底——map 未补过的场景（context 过期或非 SSE 构建路径）经
-        #    enrich_entry_seq 从 ToolCallContext 权威源补全，所有持久化出口收敛
-        #    到同一函数，杜绝漏补。
-        _seq = tool_info.get("seq")
-        if isinstance(_seq, int) and _seq > 0:
-            persisted_entry["seq"] = _seq
-        tool_call_service.enrich_entry_seq(persisted_entry, tool_call_id)
-        # 保留 position（Agent 图层嵌套规范 D3，图层内联布局恢复依据）：
-        # 与 seq 同策略——tool_calls_map 已含则透传，否则经 enrich_entry_position
-        # 从 ToolCallContext 权威源补全。刷新后前端依据 position 恢复工具卡
-        # 内联位置；缺 position 的工具卡会确定性排在图层末尾（视觉乱序）。
-        _position = tool_info.get("position")
-        if isinstance(_position, int) and _position >= 0:
-            persisted_entry["position"] = _position
-        tool_call_service.enrich_entry_position(persisted_entry, tool_call_id)
-        persisted.append(persisted_entry)
-    return persisted
+    if not isinstance(entry, dict):
+        return None
+    tool_call_id = entry.get("id") or key or ""
+    tool_name = entry.get("name") or ""
+    if not tool_call_id:
+        return None
+
+    persisted_entry: dict[str, Any] = {
+        "id": tool_call_id,
+        "name": tool_name,
+        "type": entry.get("type") or f"tool-call-{tool_name}",
+        "state": entry.get("state") or "input-available",
+        "status": entry.get("status") or "pending",
+        "parameters": entry.get("parameters") or {},
+        "result": entry.get("result"),
+        "error": entry.get("error"),
+    }
+    # 审批字段（审批服务单独写入，LLM 输出不含）：容器含则透传
+    if isinstance(entry.get("approval"), dict):
+        persisted_entry["approval"] = entry["approval"]
+    # 图层字段（Agent 图层嵌套规范）：subagent_thread_id/agent_name 非空才写，
+    # depth 恒写入（主代理为 0，与容器一致）
+    if entry.get("subagent_thread_id"):
+        persisted_entry["subagent_thread_id"] = entry["subagent_thread_id"]
+    if entry.get("agent_name"):
+        persisted_entry["agent_name"] = entry["agent_name"]
+    if entry.get("depth") is not None:
+        persisted_entry["depth"] = entry["depth"]
+    # seq（register 全局递增序号，前端排序权威依据）：容器已含则透传，
+    # 统一经 enrich_entry_seq 从 ToolCallContext 权威源兜底补全。
+    if isinstance(entry.get("seq"), int) and entry["seq"] > 0:
+        persisted_entry["seq"] = entry["seq"]
+    tool_call_service.enrich_entry_seq(persisted_entry, tool_call_id)
+    # position（Agent 图层嵌套规范 D3，图层内联布局恢复依据）：同 seq 策略。
+    if isinstance(entry.get("position"), int) and entry["position"] >= 0:
+        persisted_entry["position"] = entry["position"]
+    tool_call_service.enrich_entry_position(persisted_entry, tool_call_id)
+    # 参数兜底：容器参数为空时从 ctx 权威源补全（不覆盖已解析参数）。
+    tool_call_service.enrich_entry_parameters(persisted_entry, tool_call_id)
+    return persisted_entry
 
 
 def _apply_immutable_tool_call_fields(evolved: dict[str, Any], new_tc: dict[str, Any]) -> None:
@@ -575,35 +566,33 @@ def _persist_to_db_sync(
 
 
 def _collect_tool_calls_with_subagents(
-    tool_calls_map: dict[str, dict[str, Any]],
-    subagent_tool_entries: dict[str, dict[str, Any]] | None,
+    tool_entries: dict[str, dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
-    """构建可持久化 tool_calls 列表并合并子代理工具条目（tool_calls 构造阶段）。
+    """从统一容器构建可持久化 tool_calls 列表（tool_calls 构造阶段）。
 
-    - 主代理工具经 ``_build_persisted_tool_calls`` 从 tool_calls_map 构建
-      （清理内部字段、补全 parameters/seq/position）
-    - 子代理工具条目合并（图层字段贯通，刷新后子代理卡片归集依据）：
-      主 ctx.tool_calls_map 只含主代理工具；子代理工具由 chat_service
-      _on_subagent_tool_event 聚合（含 subagent_thread_id/agent_name/depth/
-      position/seq/status/result）。与主条目按 id 天然去重（merge_tool_calls_incremental
-      增量合并），审批重建路径写入的条目经演进保留图层字段不丢失。
+    统一容器 ``data["_tool_entries"]``（tool_call_id → entry）由
+    ``common.tool_call_aggregation.aggregate_tool_entry`` 聚合，主代理与子代理
+    工具条目共用同一 dict（图层字段 subagent_thread_id/agent_name/depth 已在
+    容器内）。逐条白名单过滤（``_build_entry_from_container``）+ 按 id 去重，
+    统一经 enrich_entry_parameters/seq/position 从 ToolCallContext 权威源补全。
 
     Args:
-        tool_calls_map: 流式累积的 tool_calls_map
-        subagent_tool_entries: 子代理工具条目映射（key=tool_call_id）
+        tool_entries: 统一工具条目容器（key=tool_call_id）
 
     Returns:
-        list[dict]: 含子代理条目的可持久化 tool_calls 列表
+        list[dict]: 可持久化 tool_calls 列表（含子代理图层字段）
     """
-    new_tool_calls = _build_persisted_tool_calls(tool_calls_map)
-
-    if subagent_tool_entries:
-        existing_ids = {tc.get("id") for tc in new_tool_calls if tc.get("id")}
-        for _tc_id, _entry in subagent_tool_entries.items():
-            if not _tc_id or _tc_id in existing_ids:
-                continue
-            new_tool_calls.append(dict(_entry))
-
+    new_tool_calls: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for _key, _entry in (tool_entries or {}).items():
+        persisted_entry = _build_entry_from_container(_entry, _key)
+        if persisted_entry is None:
+            continue
+        dedup_key = persisted_entry.get("id") or persisted_entry.get("name") or ""
+        if dedup_key in seen_ids:
+            continue
+        seen_ids.add(dedup_key)
+        new_tool_calls.append(persisted_entry)
     return new_tool_calls
 
 
@@ -678,11 +667,10 @@ async def persist_stream_result(
     session_id: str,
     user_id: int | None,
     content: str,
-    tool_calls_map: dict[str, dict[str, Any]],
+    tool_entries: dict[str, dict[str, Any]] | None = None,
     message_id: str | None = None,
     reasoning: dict[str, Any] | None = None,
     subagent_contents: dict[str, dict[str, Any]] | None = None,
-    subagent_tool_entries: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
     """流结束时持久化 AI 回复内容与工具调用到 ``ChatMessage``。
 
@@ -692,8 +680,8 @@ async def persist_stream_result(
           ``Message.tool_calls``，必须与触发浏览器一致
 
     编排（各阶段策略详见对应拆出函数）：
-        - ``_collect_tool_calls_with_subagents``：构建 tool_calls（含子代理
-          条目合并）
+        - ``_collect_tool_calls_with_subagents``：从统一容器构建 tool_calls
+          （主/子代理条目共用容器，图层字段贯通）
         - ``_execute_db_persist``：经 sync_to_async 执行 DB 持久化（content
           追加保留、tool_calls 增量合并、reasoning/subagent 按需覆盖）
         - ``_broadcast_message_updated``：广播 MESSAGE_UPDATED 事件到同会话
@@ -709,11 +697,10 @@ async def persist_stream_result(
         session_id: 会话 ID（必填）
         user_id: 用户 ID（用于权限校验，None 时跳过权限检查）
         content: AI 回复的最终完整内容
-        tool_calls_map: 流式累积的 tool_calls_map
+        tool_entries: 统一工具条目容器（``data["_tool_entries"]``，key=tool_call_id）
         message_id: 关联的助手消息 ID（None 时尝试查找最新助手消息）
         reasoning: 推理内容（``{"content": "..."}`` 格式），None 时不变更
         subagent_contents: 子代理图层正文映射，None 时不变更
-        subagent_tool_entries: 子代理工具条目映射，None 时不变更
 
     Returns:
         str | None: 持久化的 message_id（成功时）；None 表示跳过持久化
@@ -721,8 +708,8 @@ async def persist_stream_result(
     if not session_id:
         return None
 
-    # 构建持久化的 tool_calls 列表（含子代理条目合并）
-    new_tool_calls = _collect_tool_calls_with_subagents(tool_calls_map, subagent_tool_entries)
+    # 从统一容器构建持久化的 tool_calls 列表
+    new_tool_calls = _collect_tool_calls_with_subagents(tool_entries)
 
     try:
         result = await _execute_db_persist(
@@ -753,19 +740,19 @@ async def persist_stream_result(
 async def persist_chat_tool_calls(
     data: dict, content_state: dict, session_id: str, message_id
 ) -> None:
-    """落库当前 content + tool_calls_map（复用唯一持久化入口 persist_stream_result）。
+    """落库当前 content + 统一工具条目容器（复用唯一持久化入口 persist_stream_result）。
 
     从 services/fastapi_service/chat_executor_core.py 归位（C3第②批依赖方向
     债务清偿：DB 持久化逻辑属 chat 业务层，apps 层禁止反向依赖 services 层）。
 
     供审批中断挂起前（保证已完成工具 result 及时可见）、业务等待挂起前
-    （子代理基线）与会话最终结束（finally）共用。
+    （子代理基线）与会话最终结束（finally）共用。工具条目取自统一容器
+    ``data["_tool_entries"]``（主/子代理共享）。
     """
     if not session_id or not message_id:
         return
     try:
         ctx = data.get("_chat_ctx")
-        tool_calls_map = ctx.tool_calls_map if ctx is not None else {}
         final_content = content_state.get("content", "")
         if ctx is not None and ctx.current_message_content:
             final_content = ctx.current_message_content
@@ -774,10 +761,9 @@ async def persist_chat_tool_calls(
             session_id=session_id,
             user_id=None,
             content=final_content,
-            tool_calls_map=tool_calls_map,
+            tool_entries=data.get("_tool_entries") or None,
             message_id=str(message_id),
             subagent_contents=data.get("_subagent_contents") or None,
-            subagent_tool_entries=data.get("_subagent_tool_entries") or None,
         )
     except Exception:
         logger.warning(

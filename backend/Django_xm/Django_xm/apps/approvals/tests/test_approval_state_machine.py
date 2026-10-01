@@ -11,7 +11,8 @@
 
 mock 策略（与 test_approval_batch_resume.py 一致）：
 - 模块级 patch _acquire_lock_with_retry / _acquire_lock / release_lock /
-  persist_and_broadcast / publish_tool_call_timeout_event，隔离 Redis 与广播副作用
+  persist_and_broadcast / publish_tool_call_timeout_event /
+  publish_tool_call_rejected_event，隔离 Redis 与广播副作用
 - timeout 的恢复路由 gateway.route_timeout 与 complete 的批次终态化
   approval_lifecycle.service.complete_batch 均为函数内延迟导入，
   patch 其源模块单例属性即可拦截
@@ -35,7 +36,7 @@ django.setup()
 from django.test import TestCase
 
 from Django_xm.apps.approvals.models import Approval
-from Django_xm.apps.approvals.services import approval_gateway, approval_service
+from Django_xm.apps.approvals.services import approval_gateway, approval_lifecycle, approval_service
 from Django_xm.apps.approvals.services.approval_service import (
     build_approval_extra,
     complete_approval,
@@ -220,12 +221,14 @@ class CompleteApprovalTests(TestCase):
         patchers = [
             mock.patch.object(approval_service, "release_lock"),
             mock.patch.object(approval_service, "persist_and_broadcast"),
+            mock.patch.object(approval_service, "publish_tool_call_rejected_event"),
         ]
         for p in patchers:
             p.start()
             self.addCleanup(p.stop)
         self.release_lock_mock = approval_service.release_lock
         self.pab_mock = approval_service.persist_and_broadcast
+        self.publish_rejected_mock = approval_service.publish_tool_call_rejected_event
 
     def test_complete_from_processing_lands_terminal_and_cleans_temp_keys(self) -> None:
         """从 processing 完成：状态/resolved_at 落库，临时键清理，extra 合并，批次锁释放。"""
@@ -263,6 +266,8 @@ class CompleteApprovalTests(TestCase):
         self.assertEqual(extra["result"], "ok")
 
         self.pab_mock.assert_called_once_with(approval, Approval.State.APPROVED, {"result": "ok"})
+        # 非拒绝终态不发布 TOOL_CALL_REJECTED
+        self.publish_rejected_mock.assert_not_called()
         # 锁 key 与 resume 对称：批次维度优先
         self.release_lock_mock.assert_called_once_with("gid-c")
         # 同批次 waiting 兄弟终态化委托（graph_interrupt_id, interrupt_id, state）
@@ -281,6 +286,8 @@ class CompleteApprovalTests(TestCase):
         self.assertEqual(approval.state, Approval.State.REJECTED)
         self.assertIsNotNone(approval.resolved_at)
         self.pab_mock.assert_called_once_with(approval, Approval.State.REJECTED, None)
+        # 拒绝终态发布 TOOL_CALL_REJECTED 工具事件（与 timeout 对称）
+        self.publish_rejected_mock.assert_called_once_with(approval)
         self.release_lock_mock.assert_called_once_with("call_c2")
         complete_batch_mock.assert_called_once_with("", "call_c2", Approval.State.REJECTED)
 
@@ -459,3 +466,42 @@ class BuildApprovalExtraTests(TestCase):
         self.assertEqual(extra["tool_config"]["tool_tier"], "standard")
         self.assertIsNone(extra["model_config"]["provider_id"])
         self.assertIsNone(extra["model_config"]["temperature"])
+
+
+class FinalizeOneTerminalToolEventTests(TestCase):
+    """_finalize_one：拒绝/超时终态额外发布对应工具终态事件（与审批事件分离）。
+
+    友好回归：统一重构后 chat 不再由 ToolMessage 路径判定拒绝/超时终态，
+    终态工具事件的唯一出口回到审批链路，故落地本测试锁定该契约。
+    """
+
+    def setUp(self) -> None:
+        patchers = [
+            mock.patch.object(approval_lifecycle, "persist_and_broadcast"),
+            mock.patch.object(approval_lifecycle, "publish_tool_call_timeout_event"),
+            mock.patch.object(approval_lifecycle, "publish_tool_call_rejected_event"),
+            mock.patch.object(approval_lifecycle, "release_lock"),
+        ]
+        for p in patchers:
+            p.start()
+            self.addCleanup(p.stop)
+        self.publish_timeout_mock = approval_lifecycle.publish_tool_call_timeout_event
+        self.publish_rejected_mock = approval_lifecycle.publish_tool_call_rejected_event
+
+    def test_rejected_finalize_publishes_rejected_event(self) -> None:
+        approval = _make_approval("call_f1", graph_interrupt_id="gid-f")
+        approval_lifecycle.service._finalize_one(approval, Approval.State.REJECTED)
+        self.publish_rejected_mock.assert_called_once_with(approval)
+        self.publish_timeout_mock.assert_not_called()
+
+    def test_timeout_finalize_publishes_timeout_event(self) -> None:
+        approval = _make_approval("call_f2", graph_interrupt_id="gid-f2")
+        approval_lifecycle.service._finalize_one(approval, Approval.State.TIMEOUT)
+        self.publish_timeout_mock.assert_called_once_with(approval)
+        self.publish_rejected_mock.assert_not_called()
+
+    def test_approved_finalize_publishes_no_tool_event(self) -> None:
+        approval = _make_approval("call_f3", graph_interrupt_id="gid-f3")
+        approval_lifecycle.service._finalize_one(approval, Approval.State.APPROVED)
+        self.publish_timeout_mock.assert_not_called()
+        self.publish_rejected_mock.assert_not_called()

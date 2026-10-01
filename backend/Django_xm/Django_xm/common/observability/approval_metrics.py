@@ -75,8 +75,8 @@ def _safe_incr(key: str, ttl: int = _COUNTER_TTL) -> None:
         client = get_redis_client()
         if client is None:
             return
-        client.incr(key)
-        client.expire(key, ttl)
+        client.incr(key)  # 对 key 对应的数字值 +1，原子操作
+        client.expire(key, ttl)  # 给 key 设置过期时间
     except Exception as e:
         logger.debug(f"[ApprovalMetrics] INCR 失败 key={key}: {e}")
 
@@ -126,7 +126,10 @@ class ApprovalMetrics:
             auto_approved: 是否为 SAFE 级自动通过
         """
         _safe_incr(_TOTAL_CREATED)
-        _safe_incr(_PENDING_KEY, ttl=_PENDING_TTL)
+        # SAFE 级自动通过不进入人工待审队列，不计入 pending（避免 pending_count 虚高）；
+        # 其"已决议"状态由 total_auto_approved 单独表达。
+        if not auto_approved:
+            _safe_incr(_PENDING_KEY, ttl=_PENDING_TTL)
         if auto_approved:
             _safe_incr(_TOTAL_AUTO_APPROVED)
         # 风险分布
@@ -228,6 +231,32 @@ class ApprovalMetrics:
         except Exception as e:
             logger.debug(f"[ApprovalMetrics] 记录延迟失败: {e}")
 
+    def _aggregate_high_risk_windows(self) -> dict[str, int]:
+        """聚合所有单会话 HIGH 级滑动窗口（供监控端点观察熔断压力）。
+
+        通过 SCAN 枚举 high_risk:* 键，逐键裁剪过期成员后计数。
+        注意：时间复杂度与活跃会话数成正比，仅用于低频监控端点，非热路径。
+        """
+        result = {"active_sessions": 0, "sessions_over_threshold": 0, "total_high_risk_ops": 0}
+        try:
+            client = get_redis_client()
+            if client is None:
+                return result
+            now = time.time()
+            for key in client.scan_iter(match=f"{_HIGH_RISK_WINDOW_PREFIX}*"):
+                try:
+                    client.zremrangebyscore(key, 0, now - HIGH_RISK_WINDOW_SECONDS)
+                    count = client.zcard(key)
+                except Exception:
+                    continue
+                result["active_sessions"] += 1
+                result["total_high_risk_ops"] += count
+                if count > HIGH_RISK_WINDOW_THRESHOLD:
+                    result["sessions_over_threshold"] += 1
+        except Exception as e:
+            logger.debug(f"[ApprovalMetrics] 聚合 HIGH 级窗口失败: {e}")
+        return result
+
     # ================================================================
     # 读取接口：监控端点聚合查询
     # ================================================================
@@ -283,6 +312,7 @@ class ApprovalMetrics:
                 "failure": sandbox_failure,
                 "success_rate": sandbox_success_rate,
             },
+            "high_risk_windows": self._aggregate_high_risk_windows(),
             "latency": {
                 "avg_approval_time_seconds": avg_approval_time,
                 "sample_count": latency_count,
