@@ -5,8 +5,9 @@ Django 信号处理模块 - 核心自定义信号定义
 各应用的模型信号处理已移至各自 apps 的 signals.py 中。
 
 自定义信号:
-  - task_status_changed: 任务状态变更通知
   - ai_data_cleanup_needed: AI 数据（checkpoint/Store）清理通知
+    （原 task_status_changed 因全仓无接收方、场景已被 realtime 事件总线
+     EventType.TASK_STATUS_CHANGED 覆盖，2026-10-01 移除）
 """
 
 import logging
@@ -17,9 +18,7 @@ from django.dispatch import Signal, receiver
 logger = logging.getLogger(__name__)
 
 
-task_status_changed = Signal()
 ai_data_cleanup_needed = Signal()
-
 
 @receiver(post_save, sender="users.User")
 def user_post_save(sender, instance, created, **kwargs):
@@ -50,10 +49,3 @@ def celery_task_record_post_save(sender, instance, created, **kwargs):
             f"Celery 任务完成: {instance.celery_task_id} "
             f"status={instance.status} runtime={instance.runtime_seconds}s"
         )
-
-    task_status_changed.send(
-        sender=sender,
-        task_id=instance.celery_task_id,
-        status=instance.status,
-        created=created,
-    )

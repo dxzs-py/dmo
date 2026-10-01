@@ -7,7 +7,11 @@ from django.db.models.functions import TruncDate
 from django.utils import timezone
 
 from Django_xm.apps.analytics.models import EventCategory, EventType, UserEvent
-from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
+from Django_xm.apps.cache_manager.services.cache_service import (
+    CACHE_PREFIX_DASHBOARD,
+    CacheService,
+    CacheTTL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +30,7 @@ def _import_models():
 class AnalyticsService:
     @classmethod
     def get_dashboard_stats(cls, user) -> dict:
-        cache_key = f"analytics:dashboard:user_{user.id}"
+        cache_key = f"{CACHE_PREFIX_DASHBOARD}:user_{user.id}"
         cached = CacheService.get(cache_key)
         if cached is not None:
             return cached
@@ -429,4 +433,4 @@ class AnalyticsService:
 
     @classmethod
     def invalidate_user_cache(cls, user_id: int):
-        CacheService.delete(f"analytics:dashboard:user_{user_id}")
+        CacheService.delete(f"{CACHE_PREFIX_DASHBOARD}:user_{user_id}")

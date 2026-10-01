@@ -25,9 +25,14 @@ class ChatCommandsView(APIView):
 
     @extend_schema(exclude=True)
     def get(self, request):
-        from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
+        from Django_xm.apps.cache_manager.services.cache_service import (
+            CACHE_PREFIX_CHAT,
+            CACHE_PREFIX_PROJECT_CONTEXT,
+            CacheService,
+            CacheTTL,
+        )
 
-        cache_key = "chat:commands"
+        cache_key = f"{CACHE_PREFIX_CHAT}:commands"
         cached = CacheService.get(cache_key)
         if cached is not None:
             return success_response(data=cached)
@@ -36,7 +41,7 @@ class ChatCommandsView(APIView):
 
         commands = get_all_commands()
         result = {"commands": commands}
-        CacheService.set(cache_key, result, CacheTTL.TOOL_LONG)
+        CacheService.set(cache_key, result, CacheTTL.CONFIG_LONG)
         return success_response(data=result)
 
 
@@ -85,10 +90,15 @@ class ProjectContextView(APIView):
 
     @extend_schema(exclude=True)
     def get(self, request):
-        from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
+        from Django_xm.apps.cache_manager.services.cache_service import (
+            CACHE_PREFIX_CHAT,
+            CACHE_PREFIX_PROJECT_CONTEXT,
+            CacheService,
+            CacheTTL,
+        )
 
         user = request.user
-        cache_key = f"project_context:user_{user.id}"
+        cache_key = f"{CACHE_PREFIX_PROJECT_CONTEXT}:user_{user.id}"
         cached = CacheService.get(cache_key)
         if cached is not None:
             logger.debug("项目上下文缓存命中")

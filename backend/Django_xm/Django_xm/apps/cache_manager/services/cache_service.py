@@ -11,19 +11,21 @@ Redis 缓存服务 - 通用缓存增强模块
 设计原则：
 - 使用前缀命名空间避免 key 冲突
 - 支持可配置的 TTL
-- 支持缓存失效通知
+- 支持集中式缓存失效策略
 - 统计缓存命中率
 """
 
 import asyncio
 import hashlib
-import json
 import logging
 import threading
+from collections.abc import Sequence
 from typing import Any
 
 from django.core.cache import cache
 from django.utils import timezone
+from langchain_core.caches import BaseCache
+from langchain_core.outputs import Generation
 
 logger = logging.getLogger(__name__)
 
@@ -33,20 +35,29 @@ logger = logging.getLogger(__name__)
 CACHE_PREFIX_QUERY = "rag_query"
 CACHE_PREFIX_MODEL = "model_response"
 CACHE_PREFIX_EMBEDDING = "embedding"
-CACHE_PREFIX_TOOL = "tool_result"
 CACHE_PREFIX_VECTOR = "vector_search"
-CACHE_PREFIX_INDEX = "index_meta"
-CACHE_PREFIX_SESSION = "chat_session"
-CACHE_PREFIX_AGENT = "agent_state"
+
+# 跨 app 散落前缀（各自有独立写入方，统一登记以便全量清理与分类统计；
+# 键值与历史字面量严格一致，故不会造成任何缓存失配）
+CACHE_PREFIX_DASHBOARD = "analytics:dashboard"
+CACHE_PREFIX_USAGE_STATS = "users:usage_stats"
+CACHE_PREFIX_CHAT = "chat"  # chat:commands / chat:modes
+CACHE_PREFIX_PROJECT_CONTEXT = "project_context"
+CACHE_PREFIX_SUGGESTIONS = "suggestions"
+# 历史注记：曾存在 user_mcp_servers（tools/mcp/discovery）——把 MCP 配置当缓存存
+# （ttl=None、含 auth_token），与其 DB 体系（McpServerConfig）重复且零调用方，
+# 已于 2026-10-01 随死路径删除。教训：配置数据绝不存缓存层。
 
 CACHE_PREFIX_LABELS = {
     CACHE_PREFIX_QUERY: "RAG 查询缓存",
     CACHE_PREFIX_MODEL: "模型响应缓存",
     CACHE_PREFIX_EMBEDDING: "Embedding 缓存",
-    CACHE_PREFIX_TOOL: "工具结果缓存",
     CACHE_PREFIX_VECTOR: "向量检索缓存",
-    CACHE_PREFIX_SESSION: "会话缓存",
-    CACHE_PREFIX_AGENT: "Agent 状态缓存",
+    CACHE_PREFIX_DASHBOARD: "分析看板缓存",
+    CACHE_PREFIX_USAGE_STATS: "用量统计缓存",
+    CACHE_PREFIX_CHAT: "聊天配置缓存",
+    CACHE_PREFIX_PROJECT_CONTEXT: "项目上下文缓存",
+    CACHE_PREFIX_SUGGESTIONS: "建议缓存",
 }
 
 
@@ -92,7 +103,7 @@ class CacheTTL:
     QUERY_LONG = 86400
     MODEL_MEDIUM = 3600
     EMBEDDING = 604800
-    TOOL_LONG = 86400
+    CONFIG_LONG = 86400  # chat 配置类缓存（命令列表/模式列表），历史上误名 TOOL_LONG
     VECTOR_SEARCH = 3600
 
 
@@ -112,6 +123,9 @@ class CacheService:
     _hit_count = 0
     _miss_count = 0
     _stats_lock = threading.Lock()
+    # get 的未命中哨兵：与任何真实缓存值/调用方 default 严格区分，
+    # 保证命中统计不受缓存值恰为 False/0/[]/None 等值的影响
+    _SENTINEL = object()
 
     @classmethod
     def _increment_hit(cls):
@@ -136,12 +150,12 @@ class CacheService:
             缓存值或默认值
         """
         try:
-            value = cache.get(key, default)
-            if value is not None and value != default:
+            value = cache.get(key, cls._SENTINEL)
+            if value is not cls._SENTINEL:
                 cls._increment_hit()
-            else:
-                cls._increment_miss()
-            return value
+                return value
+            cls._increment_miss()
+            return default
         except Exception:
             logger.exception(f"缓存读取失败: {key}, 错误")
             cls._increment_miss()
@@ -196,9 +210,10 @@ class CacheService:
             default_cache = caches["default"]
 
             if hasattr(default_cache, "delete_pattern"):
-                default_cache.delete_pattern(pattern)
-                logger.info(f"缓存模式删除: {pattern}")
-                return 1
+                # django-redis 的 delete_pattern 返回真实删除的 key 数
+                count = default_cache.delete_pattern(pattern) or 0
+                logger.info(f"缓存模式删除: {pattern}, 删除 {count} 个 key")
+                return count
             return 0
         except Exception:
             logger.exception(f"缓存模式删除失败: {pattern}, 错误")
@@ -238,7 +253,9 @@ def generate_query_cache_key(query: str, index_name: str, k: int = 4) -> str:
     Returns:
         缓存键
     """
-    query_hash = hashlib.md5(query.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
+    # 哈希策略统一为 SHA256 前 24 位（96 bit），与 RedisLangChainCache._make_key 一致：
+    # MD5[:12] 仅 48 bit，生日碰撞临界点约 1600 万条目，碰撞会静默返回错误缓存值
+    query_hash = hashlib.sha256(query.encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
     return f"{CACHE_PREFIX_QUERY}:{index_name}:{query_hash}:k{k}"
 
 
@@ -255,14 +272,14 @@ def generate_model_cache_key(prompt: str, model_name: str, mode: str = "default"
     Returns:
         缓存键
     """
-    prompt_hash = hashlib.md5(prompt.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
+    prompt_hash = hashlib.sha256(prompt.encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
     tools_part = f":t{tools_hash}" if tools_hash else ""
     return f"{CACHE_PREFIX_MODEL}:{model_name}:{mode}:{prompt_hash}{tools_part}"
 
 
 def generate_embedding_cache_key(text: str, model: str = "default") -> str:
     """生成 embedding 缓存键"""
-    text_hash = hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
+    text_hash = hashlib.sha256(text.encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
     return f"{CACHE_PREFIX_EMBEDDING}:{model}:{text_hash}"
 
 
@@ -270,7 +287,7 @@ def generate_vector_search_cache_key(
     query: str, index_name: str, k: int = 4, score_threshold: float | None = None
 ) -> str:
     """生成向量搜索缓存键"""
-    query_hash = hashlib.md5(query.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
+    query_hash = hashlib.sha256(query.encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
     threshold_part = f":th{score_threshold}" if score_threshold else ""
     return f"{CACHE_PREFIX_VECTOR}:{index_name}:{query_hash}:k{k}{threshold_part}"
 
@@ -427,54 +444,6 @@ class CacheHealthChecker:
         }
 
 
-# ==================== 会话缓存服务 ====================
-
-
-class SessionCacheService:
-    """
-    聊天会话缓存服务
-
-    将聊天历史和会话元数据缓存到 Redis，
-    减少数据库查询，加速会话加载
-    """
-
-    @classmethod
-    def _get_session_key(cls, session_id: str) -> str:
-        return f"{CACHE_PREFIX_SESSION}:meta:{session_id}"
-
-    @classmethod
-    def _get_history_key(cls, session_id: str) -> str:
-        return f"{CACHE_PREFIX_SESSION}:history:{session_id}"
-
-    @classmethod
-    def invalidate_session(cls, session_id: str) -> bool:
-        CacheService.delete(cls._get_session_key(session_id))
-        CacheService.delete(cls._get_history_key(session_id))
-        logger.info(f"会话缓存已失效: {session_id}")
-        return True
-
-
-# ==================== Agent 状态缓存服务 ====================
-
-
-class AgentStateCacheService:
-    """
-    Agent 状态缓存服务
-
-    缓存 Agent 运行时状态（工具列表、中间结果等），
-    用于断点续跑和状态恢复
-    """
-
-    @classmethod
-    def _get_agent_key(cls, thread_id: str) -> str:
-        return f"{CACHE_PREFIX_AGENT}:{thread_id}"
-
-    @classmethod
-    def invalidate_agent_state(cls, thread_id: str) -> bool:
-        key = cls._get_agent_key(thread_id)
-        return CacheService.delete(key)
-
-
 # ==================== Redis 原生操作 ====================
 
 
@@ -484,7 +453,6 @@ class RedisDirectClient:
 
     提供 Django cache 框架不直接支持的操作：
     - SCAN 按模式扫描 key
-    - TTL 查询
     - INFO 服务器信息
     """
 
@@ -594,24 +562,8 @@ class CacheInvalidationStrategy:
     @classmethod
     def on_index_updated(cls, index_name: str):
         QueryCacheService.invalidate_index_queries(index_name)
-        CacheService.delete(f"{CACHE_PREFIX_INDEX}:{index_name}")
         CacheService.delete_pattern(f"{CACHE_PREFIX_VECTOR}:{index_name}:*")
         logger.info(f"缓存失效（索引更新）: {index_name}")
-
-    @classmethod
-    def on_session_updated(cls, session_id: str):
-        SessionCacheService.invalidate_session(session_id)
-        logger.info(f"缓存失效（会话更新）: {session_id}")
-
-    @classmethod
-    def on_session_deleted(cls, session_id: str):
-        SessionCacheService.invalidate_session(session_id)
-        logger.info(f"缓存失效（会话删除）: {session_id}")
-
-    @classmethod
-    def on_research_completed(cls, thread_id: str):
-        AgentStateCacheService.invalidate_agent_state(thread_id)
-        logger.info(f"缓存失效（研究完成）: {thread_id}")
 
     @classmethod
     def invalidate_all(cls) -> dict[str, int]:
@@ -620,11 +572,13 @@ class CacheInvalidationStrategy:
             ("query", CACHE_PREFIX_QUERY),
             ("model", CACHE_PREFIX_MODEL),
             ("vector", CACHE_PREFIX_VECTOR),
-            ("tool", CACHE_PREFIX_TOOL),
             ("embedding", CACHE_PREFIX_EMBEDDING),
-            ("index", CACHE_PREFIX_INDEX),
-            ("session", CACHE_PREFIX_SESSION),
-            ("agent", CACHE_PREFIX_AGENT),
+            ("dashboard", CACHE_PREFIX_DASHBOARD),
+            ("usage_stats", CACHE_PREFIX_USAGE_STATS),
+            ("chat", CACHE_PREFIX_CHAT),
+            ("project_context", CACHE_PREFIX_PROJECT_CONTEXT),
+            ("suggestions", CACHE_PREFIX_SUGGESTIONS),
+            # 历史注记：user_mcp_servers（配置数据存缓存的反例）已随死路径删除
         ]:
             count = RedisDirectClient.delete_keys_by_pattern(f"{prefix}:*")
             results[prefix_name] = count
@@ -635,13 +589,17 @@ class CacheInvalidationStrategy:
 # ==================== LangChain LLM Cache 层 ====================
 
 
-class RedisLangChainCache:
+class RedisLangChainCache(BaseCache):
     """
     LangChain LLM Cache 的 Redis 实现
 
-    实现 langchain_core.caches.BaseCache 接口，
-    将 LLM 的 prompt->response 映射缓存到 Redis，
-    避免对相同 prompt 重复调用 API。
+    正式继承 langchain_core.caches.BaseCache（官方抽象基类），
+    将 LLM 的 prompt+llm_string -> Generation 序列缓存到 Redis，
+    避免对相同 prompt+配置重复调用 API。
+
+    key 生成对齐官方语义（BaseCache.lookup docstring 要求）：
+    由 prompt 与 llm_string（LLM 调用参数的序列化串，含模型名/温度/
+    max_tokens 等）二元组联合哈希，保证不同模型/配置互不串缓存。
 
     使用方式:
         from langchain_core.globals import set_llm_cache
@@ -656,41 +614,43 @@ class RedisLangChainCache:
     def __init__(self, ttl: int = CacheTTL.MODEL_MEDIUM):
         self._ttl = ttl
 
-    def _make_key(self, prompt: str, llm_type: str = "") -> str:
-        prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:24]
-        return f"{self.CACHE_PREFIX}:{llm_type}:{prompt_hash}"
+    def _make_key(self, prompt: str, llm_string: str) -> str:
+        # 官方要求 key 由 (prompt, llm_string) 二元组生成；
+        # 加 "\x00" 分隔符消除两段拼接的边界歧义（官方 _hash 为裸拼接）
+        combined = hashlib.sha256(f"{prompt}\x00{llm_string}".encode("utf-8"))
+        return f"{self.CACHE_PREFIX}:{combined.hexdigest()[:24]}"
 
-    def lookup(self, prompt: str, llm_type: str = "") -> list | None:
-        key = self._make_key(prompt, llm_type)
+    def lookup(self, prompt: str, llm_string: str) -> list[Generation] | None:
+        key = self._make_key(prompt, llm_string)
         cached = CacheService.get(key)
         if cached is not None:
             logger.debug(f"LangChain Cache 命中: {key}")
             return cached
         return None
 
-    def update(self, prompt: str, llm_type: str, return_val: list) -> None:
-        key = self._make_key(prompt, llm_type)
-        CacheService.set(key, return_val, self._ttl)
+    def update(self, prompt: str, llm_string: str, return_val: Sequence[Generation]) -> None:
+        key = self._make_key(prompt, llm_string)
+        CacheService.set(key, list(return_val), self._ttl)
         logger.debug(f"LangChain Cache 更新: {key}")
 
-    def clear(self, **kwargs) -> None:
+    def clear(self, **kwargs: Any) -> None:
         CacheService.delete_pattern(f"{self.CACHE_PREFIX}:*")
         logger.info("LangChain Cache 已清空")
 
-    async def alookup(self, prompt: str, llm_type: str = "") -> list | None:
-        key = self._make_key(prompt, llm_type)
+    async def alookup(self, prompt: str, llm_string: str) -> list[Generation] | None:
+        key = self._make_key(prompt, llm_string)
         cached = await asyncio.to_thread(CacheService.get, key)
         if cached is not None:
             logger.debug(f"LangChain Cache 异步命中: {key}")
             return cached
         return None
 
-    async def aupdate(self, prompt: str, llm_type: str, return_val: list) -> None:
-        key = self._make_key(prompt, llm_type)
-        await asyncio.to_thread(CacheService.set, key, return_val, self._ttl)
+    async def aupdate(self, prompt: str, llm_string: str, return_val: Sequence[Generation]) -> None:
+        key = self._make_key(prompt, llm_string)
+        await asyncio.to_thread(CacheService.set, key, list(return_val), self._ttl)
         logger.debug(f"LangChain Cache 异步更新: {key}")
 
-    async def aclear(self, **kwargs) -> None:
+    async def aclear(self, **kwargs: Any) -> None:
         await asyncio.to_thread(CacheService.delete_pattern, f"{self.CACHE_PREFIX}:*")
         logger.info("LangChain Cache 异步清空")
 
@@ -713,7 +673,7 @@ def setup_langchain_cache(enabled: bool = True) -> None:
         from langchain_core.globals import set_llm_cache
 
         cache_instance = RedisLangChainCache()
-        set_llm_cache(cache_instance)  # type: ignore[arg-type]  # RedisLangChainCache implements BaseCache interface via duck typing
+        set_llm_cache(cache_instance)
         logger.info("LangChain LLM Cache 已启用（Redis 后端）")
     except ImportError:
         logger.warning("langchain_core.globals.set_llm_cache 不可用，请升级 langchain-core")
@@ -727,29 +687,30 @@ def setup_langchain_cache(enabled: bool = True) -> None:
 def invalidate_chat_cache(user_id=None):
     """统一聊天缓存失效接口
 
-    在会话创建/更新/删除、消息创建等操作后调用，
-    使 dashboard 缓存失效。
+    在会话创建/更新/删除等操作后调用，
+    使 analytics 的 dashboard 统计缓存失效。
 
     Args:
         user_id: 用户 ID
     """
     if user_id is not None:
-        CacheService.delete(f"dashboard:user_{user_id}")
+        # 键名必须与唯一写入方对齐：analytics_service 写入
+        # "analytics:dashboard:user_{id}"（修复前误删 "dashboard:user_{id}"，
+        # 与真实键错配导致失效永不命中，仅靠 300s 短 TTL 兜底）
+        CacheService.delete(f"analytics:dashboard:user_{user_id}")
 
 
 def invalidate_knowledge_cache(user_id=None, user_index_name=None):
     """统一知识库缓存失效接口
 
     在知识库/文档增删改操作后调用，
-    使知识库列表、文档列表、查询缓存、向量搜索缓存失效。
+    使查询缓存、向量搜索缓存失效。
 
     Args:
-        user_id: 用户 ID，失效 kb_list 缓存
-        user_index_name: 用户索引名（如 user_1_my_kb），失效 doc_list、查询、向量搜索缓存
+        user_id: 用户 ID（保留参数兼容既有调用方；历史上失效的
+            kb_list:/doc_list: 键全仓无写入方，已随死键清理移除）
+        user_index_name: 用户索引名（如 user_1_my_kb），失效查询、向量搜索缓存
     """
-    if user_id is not None:
-        CacheService.delete(f"kb_list:user_{user_id}")
     if user_index_name is not None:
-        CacheService.delete(f"doc_list:{user_index_name}")
         QueryCacheService.invalidate_index_queries(user_index_name)
         VectorSearchCacheService.invalidate_index_queries(user_index_name)

@@ -73,20 +73,6 @@ def get_all_status_providers() -> list[DatabaseStatusProvider]:
         return list(_providers)
 
 
-def get_status_by_name(name: str) -> dict[str, Any]:
-    """按名称查询某个提供者的状态。
-
-    Args:
-        name: 提供者名称（如 'vector_store'、'redis'）
-
-    Returns:
-        状态字典；若提供者不存在，返回 {'connection': 'unregistered', 'error': '...'}
-    """
-    with _lock:
-        for provider in _providers:
-            if provider.get_name() == name:
-                return provider.get_status()
-    return {
-        "connection": "unregistered",
-        "error": f"未注册的状态提供者: {name}",
-    }
+# 注：原 get_status_by_name()（按名查询单个提供者）已于 2026-10-01 删除——
+# 其唯一消费者（core 的 /database/vector-store/status/ 端点）随冗余收敛移除。
+# 消费者应统一走 DatabaseMonitor.get_database_overview()（遍历 get_all_status_providers 聚合）。

@@ -24,14 +24,15 @@ logger = logging.getLogger(__name__)
 def _get_merged_mcp_servers(user=None):
     """合并系统级和用户级 MCP Server 配置
 
-    系统级：settings.MCP_SERVERS（所有用户共享）
+    系统级：`mcp.config.get_system_mcp_servers()`（所有用户共享）——Task 27.3 起
+        配置归属业务模块，不再走 Django settings（修复前读
+        `settings.MCP_SERVERS`，该配置迁移后已不存在，导致系统级恒为空）
     用户级：数据库 McpServerConfig（仅当前用户可见）
     """
-    from django.conf import settings as django_settings
-
+    from Django_xm.apps.tools.mcp.config import get_system_mcp_servers
     from Django_xm.apps.tools.models import McpServerConfig
 
-    base_servers = list(getattr(django_settings, "MCP_SERVERS", []))
+    base_servers = list(get_system_mcp_servers())
     seen = {s.get("name") for s in base_servers}
 
     if user and user.is_authenticated:

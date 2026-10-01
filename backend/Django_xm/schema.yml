@@ -339,7 +339,7 @@ paths:
     post:
       operationId: cache_clear_create
       description: |-
-        缓存清除视图（scope 语义与 CacheInvalidateView 对齐）
+        缓存清除视图
 
         权限按 scope 分派：
         - query：仅清除当前用户自己的 rag_query 缓存，普通用户可用；
@@ -356,30 +356,6 @@ paths:
   /api/v1/cache/health/:
     get:
       operationId: cache_health_retrieve
-      tags:
-      - cache
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/cache/invalidate/:
-    post:
-      operationId: cache_invalidate_create
-      tags:
-      - cache
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/cache/reset-stats/:
-    post:
-      operationId: cache_reset_stats_create
       tags:
       - cache
       security:
@@ -772,35 +748,6 @@ paths:
         数据库总览视图（PostgreSQL + VectorStore + Redis）
 
         通过 ``DatabaseMonitor.get_database_overview()`` 聚合所有已注册状态提供者。
-      tags:
-      - core
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/core/database/postgresql/status/:
-    get:
-      operationId: core_database_postgresql_status_retrieve
-      description: PostgreSQL 数据库状态视图
-      tags:
-      - core
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/core/database/vector-store/status/:
-    get:
-      operationId: core_database_vector_store_status_retrieve
-      description: |-
-        向量存储状态视图
-
-        通过 ``status_registry`` 查询 ``knowledge`` 注册的 ``VectorStoreStatusProvider``。
       tags:
       - core
       security:

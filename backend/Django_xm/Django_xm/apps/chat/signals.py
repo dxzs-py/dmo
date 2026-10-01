@@ -2,7 +2,7 @@
 聊天模块信号处理
 
 负责 ChatSession 和 ChatMessage 的所有信号处理，包括:
-- 会话缓存失效 (SecureSessionCacheService + CacheInvalidationStrategy)
+- 会话缓存失效 (SecureSessionCacheService)
 - 日志记录
 """
 
@@ -32,13 +32,6 @@ def on_session_save(sender, instance, created, **kwargs):
     except Exception as e:
         logger.warning(f"会话安全缓存失效失败: {e}")
 
-    try:
-        from Django_xm.apps.cache_manager.services.cache_service import CacheInvalidationStrategy
-
-        CacheInvalidationStrategy.on_session_updated(str(instance.session_id))
-    except Exception as e:
-        logger.warning(f"会话AI缓存失效失败: {e}")
-
 
 @receiver(post_delete, sender=ChatSession)
 def on_session_delete(sender, instance, **kwargs):
@@ -60,10 +53,3 @@ def on_session_delete(sender, instance, **kwargs):
         SecureSessionCacheService.invalidate_user_session(instance.user_id, str(instance.session_id))
     except Exception:
         logger.exception("会话安全缓存失效失败")
-
-    try:
-        from Django_xm.apps.cache_manager.services.cache_service import CacheInvalidationStrategy
-
-        CacheInvalidationStrategy.on_session_deleted(str(instance.session_id))
-    except Exception:
-        logger.exception("会话AI缓存失效失败")

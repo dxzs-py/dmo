@@ -724,9 +724,9 @@ class ChatModesView(BaseChatAPIView):
 
     @extend_schema(exclude=True)
     def get(self, request):
-        from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
+        from Django_xm.apps.cache_manager.services.cache_service import CACHE_PREFIX_CHAT, CacheService, CacheTTL
 
-        cache_key = "chat:modes"
+        cache_key = f"{CACHE_PREFIX_CHAT}:modes"
         cached = CacheService.get(cache_key)
         if cached is not None:
             return success_response(data=cached)
@@ -746,7 +746,7 @@ class ChatModesView(BaseChatAPIView):
                 "tool_selection": {"available": True, "modes": ["agent", "deep-research"]},
             },
         }
-        CacheService.set(cache_key, result, CacheTTL.TOOL_LONG)
+        CacheService.set(cache_key, result, CacheTTL.CONFIG_LONG)
         return success_response(data=result, message="操作成功")
 
 

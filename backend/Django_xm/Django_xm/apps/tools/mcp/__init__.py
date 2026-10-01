@@ -9,7 +9,11 @@ MCP (Model Context Protocol) 工具集成模块
 支持 LangGraph 和 LangChain Agent 两种框架集成
 
 配置:
-    settings.py 中配置:
+    系统级 Server 由本包 ``mcp/config.py`` 的 ``get_system_mcp_servers()`` 提供
+    （Task 27.3 起不再走 Django settings）：
+        - 生产环境：``MCP_SYSTEM_SERVERS_JSON`` 环境变量（JSON 数组）
+        - 开发环境：内置 sequential-thinking（stdio）+ context7（http）
+    早期曾支持在 settings.py 中配置，形如:
         MCP_SERVERS = [
             # stdio 传输（本地进程）
             {
@@ -146,9 +150,19 @@ atexit.register(_close_devnull_handles)
 
 
 def _get_mcp_servers_config() -> list[dict[str, Any]]:
-    from django.conf import settings as django_settings
+    """系统级 MCP Server 配置。
 
-    all_servers = getattr(django_settings, "MCP_SERVERS", [])
+    来源为本包的 ``config.get_system_mcp_servers()``（Task 27.3 已将配置从
+    Django settings 迁至业务模块）：
+        - 生产：``MCP_SYSTEM_SERVERS_JSON`` 环境变量
+        - 开发：``DEFAULT_MCP_SERVERS``（sequential-thinking / context7）
+
+    修复前此处读 ``getattr(django_settings, "MCP_SERVERS", [])``——该配置迁移后
+    已不存在，导致系统级 Server 恒为空（Task 27.3 迁移遗漏的消费方切换）。
+    """
+    from .config import get_system_mcp_servers
+
+    all_servers = get_system_mcp_servers()
     return [s for s in all_servers if s.get("enabled", True)]
 
 

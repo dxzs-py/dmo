@@ -37,11 +37,9 @@ class User(AbstractUser):
     language = models.CharField(max_length=10, default="zh-CN", verbose_name="语言")
     notifications_enabled = models.BooleanField(default=True, verbose_name="通知开关")
     auto_save_sessions = models.BooleanField(default=True, verbose_name="自动保存会话")
-
-    total_messages = models.PositiveIntegerField(default=0, verbose_name="总消息数")
-    total_sessions = models.PositiveIntegerField(default=0, verbose_name="总会话数")
-    total_tokens = models.PositiveBigIntegerField(default=0, verbose_name="总Token数")
-    active_days = models.PositiveIntegerField(default=0, verbose_name="活跃天数")
+    # 原 total_messages/total_sessions/total_tokens/active_days 4 个计数字段
+    # 已于 2026-10-01 移除（零读取方的死字段，且从未被正确维护——原 signals.py
+    # 死代码未激活）。用量统计由 UserUsageStatsView 经 AnalyticsService 实时聚合。
 
     objects = SoftDeleteUserManager()
     all_objects = AllUserManager()

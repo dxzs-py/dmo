@@ -2,8 +2,7 @@
 深度研究模块信号处理
 
 负责 ResearchTask 的信号处理，包括:
-- 缓存失效
-- 任务状态变更通知
+- 任务状态日志记录
 """
 
 import logging
@@ -22,23 +21,11 @@ def on_research_task_save(sender, instance, created, **kwargs):
         logger.info(f"新研究任务创建: {instance.task_id} (query={instance.query[:50]}...)")
     elif instance.status == "completed":
         logger.info(f"研究任务完成: {instance.task_id}")
-        try:
-            from Django_xm.apps.cache_manager.services.cache_service import CacheInvalidationStrategy
-
-            CacheInvalidationStrategy.on_research_completed(instance.task_id)
-        except Exception as e:
-            logger.warning(f"研究缓存失效失败: {e}")
     elif instance.status == "failed":
         logger.warning(f"研究任务失败: {instance.task_id}, 错误: {instance.error_message}")
-
-    from Django_xm.apps.core.signals import task_status_changed
-
-    task_status_changed.send(
-        sender=sender,
-        task_id=instance.task_id,
-        status=instance.status,
-        created=created,
-    )
+    # 原 core 自定义信号 task_status_changed 的发送已移除（2026-10-01）：
+    # 该 Django Signal 全仓无接收方，属死代码；任务状态的前端通知
+    # 由 realtime 事件链（writeback.py 经 EventType.TASK_STATUS_CHANGED）承担。
 
 
 @receiver(post_delete, sender=ResearchTask)

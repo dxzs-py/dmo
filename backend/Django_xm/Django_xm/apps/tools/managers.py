@@ -328,11 +328,15 @@ class McpToolManager(BaseToolManager):
         return result
 
     def is_system_tool(self, tool_name: str) -> bool:
-        """检查是否在 settings.MCP_SERVERS 配置中"""
-        from django.conf import settings as django_settings
+        """检查是否在系统级 MCP Server 配置中
 
-        system_servers = getattr(django_settings, "MCP_SERVERS", [])
-        return any(s.get("name") == tool_name for s in system_servers)
+        系统级配置来源为 ``mcp.config.get_system_mcp_servers()``（Task 27.3 起不再
+        走 Django settings；修复前读已不存在的 ``settings.MCP_SERVERS``，
+        导致本方法恒返回 False，系统级保护失效）。
+        """
+        from Django_xm.apps.tools.mcp import _get_mcp_servers_config
+
+        return any(s.get("name") == tool_name for s in _get_mcp_servers_config())
 
     def is_user_tool(self, tool_name: str, user) -> bool:
         """检查用户是否拥有指定名称的 MCP Server 配置"""
@@ -509,11 +513,14 @@ class McpToolManager(BaseToolManager):
 
     @staticmethod
     def is_system_server(name: str) -> bool:
-        """判断是否为系统级 MCP Server"""
-        from django.conf import settings as django_settings
+        """判断是否为系统级 MCP Server
 
-        system_servers = getattr(django_settings, "MCP_SERVERS", [])
-        return any(s.get("name") == name for s in system_servers)
+        与 ``is_system_tool`` 同源（``_get_mcp_servers_config()``）；修复前读
+        已不存在的 ``settings.MCP_SERVERS``，恒返回 False。
+        """
+        from Django_xm.apps.tools.mcp import _get_mcp_servers_config
+
+        return any(s.get("name") == name for s in _get_mcp_servers_config())
 
     def _find_server_config(self, server_name: str, user) -> dict[str, Any] | None:
         """在系统级 + 用户级配置中查找指定名称的 Server"""

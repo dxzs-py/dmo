@@ -4,6 +4,7 @@ Suggestion API Views
 动态建议生成接口 - 根据当前查询和上下文生成建议的后续问题
 """
 
+import hashlib
 import logging
 
 from drf_spectacular.utils import extend_schema
@@ -11,7 +12,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from Django_xm.apps.ai_engine.services.suggestion_service import generate_suggestions
-from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
+from Django_xm.apps.cache_manager.services.cache_service import (
+    CACHE_PREFIX_SUGGESTIONS,
+    CacheService,
+    CacheTTL,
+)
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.responses import success_response
@@ -51,7 +56,10 @@ class SuggestionsView(APIView):
         if not query:
             raise BaseAppError("查询内容不能为空", business_code=ErrorCode.INVALID_PARAMS)
 
-        cache_key = f"suggestions:{hash(query)}:{hash(context)}"
+        # 稳定哈希键：Python 内建 hash() 对 str 随机化（PYTHONHASHSEED），
+        # 跨 worker/重启后同一 query 会生成不同 key，致缓存失效
+        key_digest = hashlib.sha1(f"{query}\x00{context}".encode("utf-8")).hexdigest()[:24]
+        cache_key = f"{CACHE_PREFIX_SUGGESTIONS}:{key_digest}"
         cached = CacheService.get(cache_key)
         if cached is not None:
             logger.info("建议缓存命中")

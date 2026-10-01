@@ -3,21 +3,30 @@
 从 ``settings/dev.py`` 迁移而来（Task 27.3）。
 
 归属说明：
-    MCP Server 配置是 ``apps.tools.mcp`` 模块的职责，由 ``discovery.py``
-    直接消费。原放在 ``settings/dev.py`` 违反"配置就近原则"——settings 应
-    只承载 Django 框架级配置，业务模块专属配置应归属业务模块。
+    MCP Server 配置是 ``apps.tools.mcp`` 模块的职责。原放在 ``settings/dev.py``
+    违反"配置就近原则"——settings 应只承载 Django 框架级配置，业务模块专属
+    配置应归属业务模块。
 
-环境差异策略：
-    - 开发环境：内置 2 个默认 MCP Server（sequential-thinking + context7）
-      由 ``_build_default_servers()`` 动态构建，解析本机 npx/node 路径
-    - 生产环境：默认空列表，应通过 ``MCP_REGISTRY_URL`` 环境变量配置注册中心，
-      由 ``MCPServerDiscovery.discover_from_registry()`` 动态发现；
-      或通过 ``MCP_SYSTEM_SERVERS_JSON`` 环境变量（JSON 字符串）显式注入
+消费方（2026-10-01 修正）：
+    - ``mcp/__init__.py::_get_mcp_servers_config()``（工具加载链路的系统级来源）
+    - ``views_mcp.py::_get_merged_mcp_servers()``（列表/测试/状态接口的合并来源）
+    历史注记：早期由 ``discovery.py`` 消费，该路径已随死代码清理移除。
+
+环境差异策略（**实现不做环境判断**，以下为实测行为）：
+    - ``_build_default_servers()`` **无条件**构建 2 个默认 Server
+      （sequential-thinking: stdio + context7: http），并解析本机 npx/node 路径；
+      因此**开发与生产的默认结果相同**（均为这 2 个）
+    - 若生产环境不希望加载内置 Server，须**显式**设置
+      ``MCP_SYSTEM_SERVERS_JSON="[]"``；自定义则设为对应 JSON 数组
+    - 注册中心动态发现是**独立能力**：由前端调用
+      ``/tools/mcp/servers/discover/``（``McpServerDiscoverView`` →
+      ``MCPServerDiscovery.discover_from_registry()``）触发，**不会**自动并入本文件返回值
 
 环境变量：
-    - ``NPM_NPX_PATH`` / ``NPM_NPX_ALT_PATH``：npx 可执行文件路径（开发环境）
-    - ``NODE_PATH``：node 安装目录（开发环境，用于 stdio MCP Server 的 PATH 注入）
-    - ``MCP_SYSTEM_SERVERS_JSON``：系统级 MCP Server JSON 配置（生产环境，覆盖默认）
+    - ``NPM_NPX_PATH`` / ``NPM_NPX_ALT_PATH``：npx 可执行文件路径（缺失时回退 "npx"）
+    - ``NODE_PATH``：node 安装目录（用于 stdio MCP Server 的 PATH 注入）
+    - ``MCP_SYSTEM_SERVERS_JSON``：系统级 MCP Server JSON 配置（**覆盖默认**；
+      设为 "[]" 表示不加载任何系统级 Server）
 """
 
 from __future__ import annotations
@@ -107,8 +116,10 @@ def get_system_mcp_servers() -> list[dict[str, Any]]:
         2. ``DEFAULT_MCP_SERVERS``（开发环境默认 2 个 server）
 
     Returns:
-        系统 MCP Server 配置列表。生产环境未显式配置时返回空列表，
-        应通过 ``MCPServerDiscovery.discover_from_registry()`` 从注册中心发现。
+        系统 MCP Server 配置列表：env 显式配置时返回其值，否则返回
+        ``DEFAULT_MCP_SERVERS``（内置 2 个，**不区分开发/生产**）。
+        生产若要空列表须显式设置 ``MCP_SYSTEM_SERVERS_JSON="[]"``。
+        注册中心发现不由本函数自动补充（见模块 docstring）。
 
     Note:
         本函数取代原 ``getattr(django_settings, 'MCP_SERVERS', [])`` 的间接访问，

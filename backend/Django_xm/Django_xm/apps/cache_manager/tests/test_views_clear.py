@@ -90,6 +90,23 @@ class CacheClearPermissionMatrixTests(TestCase):
         resp = self.client.post(CLEAR_URL, {"scope": "pattern"}, format="json")
         self.assertEqual(resp.status_code, 400)
 
+    def test_admin_model_scope_pattern_matches_writer(self):
+        """A1 回归：scope=model 的删除模式必须与唯一写入方 get_model_string() 同源。
+
+        修复前用 get_openai_config()["model"]（纯模型名，无 provider 前缀），
+        与实际键 model_response:{get_model_string()}:... 错配，清理永不命中。
+        """
+        from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
+
+        expected_prefix = f"model_response:{get_model_string()}"
+        self.client.force_authenticate(user=self.admin)
+        with mock.patch.object(cache_views.CacheService, "delete_pattern", return_value=1) as mock_dp:
+            resp = self.client.post(CLEAR_URL, {"scope": "model"}, format="json")
+        self.assertEqual(resp.status_code, 200)
+        mock_dp.assert_called_once()
+        pattern = mock_dp.call_args.args[0]
+        self.assertTrue(pattern.startswith(expected_prefix), f"pattern={pattern}, expected prefix={expected_prefix}")
+
     def test_admin_scope_all_allowed(self):
         """管理员全量清缓存 → 200（Redis 客户端不可用时跳过删除，仍成功）。"""
         self.client.force_authenticate(user=self.admin)

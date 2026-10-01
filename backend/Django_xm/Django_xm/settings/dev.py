@@ -85,6 +85,9 @@ CELERY_REDIS_BACKEND_HEALTH_CHECK_INTERVAL = 60
 # CELERY_TASK_DEFAULT_QUEUE = "celery"（base.py 已设置），无需担心路由丢失。
 CELERY_TASK_ROUTES = None
 
-# MCP_SERVERS 配置已迁移到 apps/tools/mcp/config.py（Task 27.3），
-# 由 discovery.py 直接 import get_system_mcp_servers() 调用，
-# 不再走 Django settings 间接访问。
+# MCP_SERVERS 配置已迁移到 apps/tools/mcp/config.py（Task 27.3），不再走
+# Django settings 间接访问（本文件不定义 MCP_SERVERS）。
+# 消费方（2026-10-01 修正）：mcp/__init__._get_mcp_servers_config() 与
+# views_mcp._get_merged_mcp_servers()；早期由 discovery.py 消费，该路径已随
+# 死代码清理移除。系统级 Server 默认为内置 2 个，生产如需禁用请设
+# MCP_SYSTEM_SERVERS_JSON="[]"。

@@ -4,11 +4,9 @@ from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.views import APIView
 
-from Django_xm.apps.ai_engine.config import settings as app_cfg
 from Django_xm.apps.cache_manager.services.cache_service import (
     CACHE_PREFIX_LABELS,
     CacheHealthChecker,
-    CacheInvalidationStrategy,
     CacheService,
     ModelResponseCacheService,
     RedisDirectClient,
@@ -121,39 +119,8 @@ class CacheStatsView(APIView):
         return success_response(data=stats)
 
 
-class CacheInvalidateView(APIView):
-    permission_classes = [IsAdminUser]
-
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
-        scope = request.data.get("scope", "all")
-        index_name = request.data.get("index_name")
-        session_id = request.data.get("session_id")
-        pattern = request.data.get("pattern")
-
-        if scope == "index" and index_name:
-            CacheInvalidationStrategy.on_index_updated(index_name)
-            message = f"索引 {index_name} 缓存已失效"
-        elif scope == "session" and session_id:
-            CacheInvalidationStrategy.on_session_updated(session_id)
-            message = f"会话 {session_id} 缓存已失效"
-        elif scope == "pattern" and pattern:
-            count = RedisDirectClient.delete_keys_by_pattern(pattern)
-            message = f"模式 {pattern} 缓存已失效，删除 {count} 个 key"
-        elif scope == "all":
-            results = CacheInvalidationStrategy.invalidate_all()
-            message = f"全量缓存已失效: {results}"
-        else:
-            raise BaseAppError(
-                "请指定有效的 scope (all/index/session/pattern) 及对应参数",
-                business_code=ErrorCode.VALIDATION_FAILED,
-            )
-
-        return success_response(message=message)
-
-
 class CacheClearView(APIView):
-    """缓存清除视图（scope 语义与 CacheInvalidateView 对齐）
+    """缓存清除视图
 
     权限按 scope 分派：
     - query：仅清除当前用户自己的 rag_query 缓存，普通用户可用；
@@ -172,15 +139,22 @@ class CacheClearView(APIView):
 
         cleared = 0
         if scope == "pattern" and pattern:
-            # pattern 为 scope 值（与 get_permissions 分派及 CacheInvalidateView 语义对齐），
+            # pattern 为 scope 值（与 get_permissions 分派对齐），
             # 非旁路参数：普通用户携带 pattern 的 query 请求不会进入此分支（越权修复 dj-01R）
             CacheService.delete_pattern(pattern)
             cleared = 1
         elif scope == "query":
             user = request.user
+            # 契约依赖：knowledge 索引命名约定为 "{user_id}_<kb_name>"，
+            # generate_query_cache_key 生成的键形如 rag_query:{index_name}:{hash}:k{k}，
+            # 故本模式能匹配当前用户全部 RAG 查询缓存；索引命名规则变更时需同步此处
             CacheService.delete_pattern(f"rag_query:user_{user.id}_*")
         elif scope == "model":
-            ModelResponseCacheService.invalidate_model_cache(app_cfg.get_openai_config()["model"])
+            # 与唯一写入方 chat_service 同源：缓存键为 model_response:{get_model_string()}:...
+            # （修复前用 get_openai_config()["model"]，纯模型名无 provider 前缀，与实际键错配，清理永不命中）
+            from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
+
+            ModelResponseCacheService.invalidate_model_cache(get_model_string())
         elif scope == "all":
             client = get_redis_client()
             if client:
@@ -201,12 +175,3 @@ class CacheClearView(APIView):
             )
 
         return success_response(data={"cleared": cleared}, message=f"已清除 {cleared} 个缓存键")
-
-
-class CacheResetStatsView(APIView):
-    permission_classes = [IsAdminUser]
-
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
-        CacheService.reset_stats()
-        return success_response(message="缓存统计已重置")

@@ -20,6 +20,7 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.views import TokenRefreshView as _TokenRefreshView
 
+from Django_xm.apps.cache_manager.services.cache_service import CACHE_PREFIX_USAGE_STATS
 from Django_xm.apps.core.throttling import LoginRateThrottle, MetaRateThrottle, SensitiveOperationRateThrottle
 from Django_xm.common.captcha_mixin import CaptchaMixin
 from Django_xm.common.error_codes import ErrorCode
@@ -416,7 +417,7 @@ class UserPreferencesView(APIView):
 class UserUsageStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
-    CACHE_KEY_TEMPLATE = "users:usage_stats:user{uid}"
+    CACHE_KEY_TEMPLATE = f"{CACHE_PREFIX_USAGE_STATS}:user{{uid}}"
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
