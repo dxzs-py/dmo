@@ -60,7 +60,6 @@ export const useSessionStore = defineStore('session', () => {
 
     // ===== 会话列表 / CRUD =====
     loadSessionsFromBackend: sessionList.loadSessionsFromBackend,
-    loadMoreSessions: sessionList.loadMoreSessions,
     loadSessionDetail: sessionList.loadSessionDetail,
     createNewSession: sessionCrud.createNewSession,
     switchSession: sessionCrud.switchSession,
@@ -74,7 +73,6 @@ export const useSessionStore = defineStore('session', () => {
     setSelectedKnowledgeBases: sessionList.setSelectedKnowledgeBases,
     loadKnowledgeBases: sessionList.loadKnowledgeBases,
     initialize: sessionList.initialize,
-    clearAllLocalData: sessionList.clearAllLocalData,
     touchSessionUpdatedAt: sessionList.touchSessionUpdatedAt,
     getSessionMessages: sessionList.getSessionMessages,
 

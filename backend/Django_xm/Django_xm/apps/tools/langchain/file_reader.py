@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from Django_xm.apps.ai_engine.config import settings as app_cfg
 from Django_xm.apps.tools.base import AsyncToolMixin
+from Django_xm.apps.tools.langchain.filesystem import FilesystemContextMixin, check_path_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -173,8 +174,21 @@ def _read_image_file(file_path: Path) -> str:
         raise ValueError(f"图片识别失败: {e!s}") from e
 
 
+def _deny_access(file_path: str, deny_reason: str) -> ValueError:
+    """将路径准入拒绝原因转换为工具层结构化 ValueError（S-03/S-06）。"""
+    # check_path_allowed 返回消息带"错误："前缀（适配 fs_* 字符串返回模式），
+    # 本模块由调用方统一包装"错误："前缀，此处剥离避免重复
+    logger.warning("🚫 文件读取被拒绝: %s（%s）", file_path, deny_reason)
+    return ValueError(deny_reason.removeprefix("错误："))
+
+
 def read_file_content(file_path: str) -> str:
     path = Path(file_path)
+
+    # 安全边界（S-03/S-06）：统一 resolve 后必须位于 DATA_DIR 内，且不得命中敏感清单
+    deny_reason = check_path_allowed(path)
+    if deny_reason:
+        raise _deny_access(file_path, deny_reason)
 
     if not path.exists():
         raise FileNotFoundError(f"文件不存在: {file_path}")
@@ -213,6 +227,11 @@ def read_file_content(file_path: str) -> str:
 
 def read_file_as_documents(file_path: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> list[Document]:
     path = Path(file_path)
+
+    # 安全边界（S-03/S-06）：统一 resolve 后必须位于 DATA_DIR 内，且不得命中敏感清单
+    deny_reason = check_path_allowed(path)
+    if deny_reason:
+        raise _deny_access(file_path, deny_reason)
 
     if not path.exists():
         raise FileNotFoundError(f"文件不存在: {file_path}")
@@ -277,11 +296,16 @@ def read_file_as_documents(file_path: str, chunk_size: int = 1000, chunk_overlap
         return [Document(page_content=raw_text, metadata={"source": file_name, "file_type": ext.lstrip(".")})]
 
 
-def get_attachment_info(attachment_id: int) -> dict[str, Any]:
+def get_attachment_info(attachment_id: int, user=None) -> dict[str, Any]:
+    """获取附件元信息。
+
+    user 非 None 时强制属主过滤（session__user，S-09 IDOR 防护）；
+    user=None 仅供系统内部调用（attachment_id 来自服务端查询而非 LLM 参数）。
+    """
     try:
         from Django_xm.apps.attachments.services.cross_app import get_attachment_by_id
 
-        attachment = get_attachment_by_id(attachment_id)
+        attachment = get_attachment_by_id(attachment_id, user=user)
     except ValueError:
         raise
     except Exception as e:
@@ -316,8 +340,8 @@ def get_attachment_info(attachment_id: int) -> dict[str, Any]:
     }
 
 
-def read_attachment_as_base64(attachment_id: int) -> tuple[str, str]:
-    info = get_attachment_info(attachment_id)
+def read_attachment_as_base64(attachment_id: int, user=None) -> tuple[str, str]:
+    info = get_attachment_info(attachment_id, user=user)
     file_path = info["file_path"]
     ext = info["ext"]
     mime_type = IMAGE_MIME_MAP.get(ext, "image/png")
@@ -329,9 +353,9 @@ def read_attachment_as_base64(attachment_id: int) -> tuple[str, str]:
 
 
 def read_attachment_as_documents(
-    attachment_id: int, chunk_size: int = 1000, chunk_overlap: int = 200
+    attachment_id: int, chunk_size: int = 1000, chunk_overlap: int = 200, user=None
 ) -> list[Document]:
-    info = get_attachment_info(attachment_id)
+    info = get_attachment_info(attachment_id, user=user)
     file_path = info["file_path"]
 
     docs = read_file_as_documents(file_path, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
@@ -343,11 +367,16 @@ def read_attachment_as_documents(
     return docs
 
 
-def read_uploaded_attachment(attachment_id: int) -> str:
+def read_uploaded_attachment(attachment_id: int, user=None) -> str:
+    """读取用户上传的附件内容。
+
+    user 非 None 时强制属主过滤（session__user，S-09 IDOR 防护）；
+    user=None 仅供系统内部调用（attachment_id 来自服务端查询而非 LLM 参数）。
+    """
     try:
         from Django_xm.apps.attachments.services.cross_app import get_attachment_by_id
 
-        attachment = get_attachment_by_id(attachment_id)
+        attachment = get_attachment_by_id(attachment_id, user=user)
     except ValueError:
         raise
     except Exception as e:
@@ -372,11 +401,12 @@ def read_uploaded_attachment(attachment_id: int) -> str:
     return header + content
 
 
-def read_multiple_attachments(attachment_ids: list[int]) -> str:
+def read_multiple_attachments(attachment_ids: list[int], user=None) -> str:
+    """批量读取附件内容；user 非 None 时透传属主过滤（S-09）。"""
     parts = []
     for att_id in attachment_ids:
         try:
-            content = read_uploaded_attachment(att_id)
+            content = read_uploaded_attachment(att_id, user=user)
             parts.append(content)
         except Exception as e:
             parts.append(f"❌ 读取附件 (id={att_id}) 失败: {e!s}")
@@ -433,7 +463,15 @@ class FileReaderTool(AsyncToolMixin, BaseTool):
             return error_msg
 
 
-class AttachmentReaderTool(BaseTool):
+class AttachmentReaderTool(FilesystemContextMixin, BaseTool):
+    """附件读取工具
+
+    属主校验（S-09 IDOR 防护）：user_id 取自系统会话上下文
+    （RunnableConfig.configurable.user_id，由 chat_service / research_runner 注入，
+    复用 FilesystemContextMixin 捕获），LLM 传入的 attachment_id 仅能命中
+    当前用户名下的附件；上下文缺失（无法确认属主）时拒绝读取（安全默认）。
+    """
+
     name: str = "attachment_reader"
     metadata: dict = Field(
         default_factory=lambda: {
@@ -455,8 +493,12 @@ class AttachmentReaderTool(BaseTool):
     def _run(self, attachment_id: int) -> str:
         logger.info(f"📎 读取附件: id={attachment_id}")
 
+        # IDOR 防护（S-09）：无法确认属主（configurable 未注入 user_id）时拒绝读取
+        if self._captured_user_id is None:
+            return "错误：无法确认当前用户身份，已拒绝读取附件"
+
         try:
-            content = read_uploaded_attachment(attachment_id)
+            content = read_uploaded_attachment(attachment_id, user=self._captured_user_id)
             logger.info(f"📎 附件读取成功: {len(content)} 字符")
             return content
         except Exception as e:

@@ -69,12 +69,14 @@ class ApprovalMiddleware(AgentMiddleware):
     def _default_policies() -> list[Any]:
         from .policies import (
             AttachmentRagSearchApprovalPolicy,
+            AttachmentReaderApprovalPolicy,
             EditFileApprovalPolicy,
             # deepagents 框架工具审批策略
             # deepagents FilesystemMiddleware 提供的工具名称与项目自定义工具不同，
             # 需要独立注册策略，否则 write_file/edit_file/execute 等工具会绕过审批
             ExecuteApprovalPolicy,
             FileReaderApprovalPolicy,
+            FsReadFileApprovalPolicy,
             FsWriteFileApprovalPolicy,
             GlobApprovalPolicy,
             GrepApprovalPolicy,
@@ -94,6 +96,8 @@ class ApprovalMiddleware(AgentMiddleware):
             FileReaderApprovalPolicy(),
             AttachmentRagSearchApprovalPolicy(),
             FsWriteFileApprovalPolicy(),
+            FsReadFileApprovalPolicy(),
+            AttachmentReaderApprovalPolicy(),
             # 子代理派生工具策略（spawn_sub_agent）
             SpawnApprovalPolicy(),
             # 其他副作用工具策略（write_todos）

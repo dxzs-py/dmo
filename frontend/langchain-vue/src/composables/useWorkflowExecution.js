@@ -287,9 +287,6 @@ export function useWorkflowExecution({
         }
         ElMessage.error(sseData.data?.error || sseData.data?.message || '工作流执行失败')
         break
-      case 'stream_error':
-        logger.warn('工作流流式执行异常:', sseData.message || sseData.data?.message)
-        break
       case 'error':
         ElMessage.error(sseData.message || sseData.data?.message || '工作流执行出错')
         closeSSE()

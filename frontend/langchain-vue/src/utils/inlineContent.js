@@ -24,20 +24,6 @@
 import { sortToolCallsForDisplay } from './messageOperations.js'
 
 /**
- * 提取工具调用 ID（兼容 id / toolCallId 双字段）
- *
- * 供 splitContentByToolPositions 复用（原 agentLayerTree.js 单函数模块已并入本文件，
- * spec unify-agent-research-display-architecture Task 5.7）。
- *
- * @param {Object} tc
- * @returns {string}
- */
-export function getToolCallId(tc) {
-  if (!tc || typeof tc !== 'object') return ''
-  return tc.id || tc.toolCallId || ''
-}
-
-/**
  * 过滤主 agent 工具调用并统一排序（spec unify-agent-research-display-architecture）
  *
  * 收敛 ChatMessage / ResearchTaskDetail 两处 mainToolCalls 的重复实现，

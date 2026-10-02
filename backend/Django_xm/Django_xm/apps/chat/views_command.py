@@ -27,7 +27,6 @@ class ChatCommandsView(APIView):
     def get(self, request):
         from Django_xm.apps.cache_manager.services.cache_service import (
             CACHE_PREFIX_CHAT,
-            CACHE_PREFIX_PROJECT_CONTEXT,
             CacheService,
             CacheTTL,
         )
@@ -91,7 +90,6 @@ class ProjectContextView(APIView):
     @extend_schema(exclude=True)
     def get(self, request):
         from Django_xm.apps.cache_manager.services.cache_service import (
-            CACHE_PREFIX_CHAT,
             CACHE_PREFIX_PROJECT_CONTEXT,
             CacheService,
             CacheTTL,

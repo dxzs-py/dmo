@@ -9,12 +9,10 @@
 本模块为模型/执行层韧性基础设施，归位于 ai_engine 底层引擎层，供各业务 app 引用。
 """
 
-import asyncio
 import hashlib
 import json
 import logging
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -32,7 +30,7 @@ class ResilienceConfig:
     """统一韧性执行配置
 
     agent 执行层韧性配置（重试/降级/超时/重复调用检测），
-    供 retry_with_backoff / ExecutionTimeoutManager 使用。
+    供 ExecutionTimeoutManager 使用。
     """
 
     # ===== agent 执行层配置 =====
@@ -247,57 +245,6 @@ def calculate_backoff(attempt: int, config: ResilienceConfig) -> float:
     """
     interval = config.initial_retry_interval * (config.retry_backoff_factor ** (attempt - 1))
     return min(interval, config.max_retry_interval)
-
-
-async def retry_with_backoff(
-    fn: Callable,
-    config: ResilienceConfig,
-    on_retry: Callable | None = None,
-    context: dict[str, Any] | None = None,
-) -> Any:
-    """带指数退避的异步重试
-
-    Args:
-        fn: 异步函数
-        config: 韧性配置
-        on_retry: 重试回调 fn(attempt, error, backoff)
-        context: 执行上下文（用于日志）
-
-    Returns:
-        fn 的返回值
-
-    Raises:
-        最后一次异常（如果所有重试都失败）
-    """
-    last_error = None
-
-    for attempt in range(config.max_retries + 1):
-        try:
-            return await fn()
-        except Exception as e:
-            last_error = e
-            action, classified = classify_and_decide(e, attempt, config.max_retries)
-
-            if action != ErrorAction.RETRY:
-                raise
-
-            if attempt < config.max_retries:
-                backoff = calculate_backoff(attempt + 1, config)
-                logger.warning(
-                    f"[Resilience] 重试 {attempt + 1}/{config.max_retries}, "
-                    f"退避 {backoff:.1f}s, 错误: {classified.error_code}: {classified.message}"
-                )
-                if on_retry:
-                    try:
-                        on_retry(attempt + 1, e, backoff)
-                    except Exception:
-                        # 回调失败不应影响重试主流程
-                        logger.debug("on_retry 回调执行失败", exc_info=True)
-                await asyncio.sleep(backoff)
-            else:
-                raise
-
-    raise last_error  # 不应到达这里
 
 
 # ============================================================================

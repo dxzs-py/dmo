@@ -285,7 +285,7 @@ v-for="file in files" :key="file.name" v-memo="[file.name, file.size, file.uploa
 <script setup>
 import { ref, reactive, onActivated, computed, onUnmounted, onDeactivated } from 'vue'
 import { ragAPI } from '@/api/knowledge'
-import { ElMessage, ElNotification } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Upload, Document } from '@element-plus/icons-vue'
 import { formatDate, formatFileSize } from '../utils/format'
 import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
@@ -630,7 +630,6 @@ const handleStreamEvent = (convertedData) => {
     case 'start':
       break
     case 'chunk':
-    case 'content':
       if (convertedData.content) {
         streamingAnswer.value += convertedData.content
         if (result.value) {
@@ -639,7 +638,6 @@ const handleStreamEvent = (convertedData) => {
       }
       break
     case 'end':
-    case 'done':
       if (result.value) {
         result.value.answer = streamingAnswer.value
         result.value.success = true
@@ -650,16 +648,6 @@ const handleStreamEvent = (convertedData) => {
       if (result.value) {
         result.value.success = false
         result.value.error = errorMessage.value
-      }
-      break
-    case 'model_fallback':
-      if (convertedData.data?.message) {
-        ElNotification({
-          title: '模型降级提示',
-          message: convertedData.data.message,
-          type: 'warning',
-          duration: 8000,
-        })
       }
       break
     case 'sources':

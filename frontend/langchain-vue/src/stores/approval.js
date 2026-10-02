@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { useSessionStore } from './session'
 import { resumeApprovalStream } from '../api/approval'
 import { getInterruptId } from '../utils/messageOperations'
@@ -50,9 +50,6 @@ export const useApprovalStore = defineStore('approval', () => {
    * value: { source: 'chat'|'deep_research', taskId?, sessionId?, approvalData, createdAt }
    */
   const pendingApprovals = ref(new Map())
-
-  /** 是否有待处理审批 */
-  const hasPending = computed(() => pendingApprovals.value.size > 0)
 
   let cleanupTimer = null
 
@@ -898,7 +895,6 @@ export const useApprovalStore = defineStore('approval', () => {
   return {
     pendingApprovals,
     pendingBindQueue,
-    hasPending,
     handleApprovalEvent,
     executeApproval,
     restoreFromSession,

@@ -549,43 +549,6 @@ class RedisDirectClient:
             return 0
 
 
-# ==================== 缓存失效策略 ====================
-
-
-class CacheInvalidationStrategy:
-    """
-    缓存失效策略
-
-    在数据变更时自动使相关缓存失效，保证数据一致性
-    """
-
-    @classmethod
-    def on_index_updated(cls, index_name: str):
-        QueryCacheService.invalidate_index_queries(index_name)
-        CacheService.delete_pattern(f"{CACHE_PREFIX_VECTOR}:{index_name}:*")
-        logger.info(f"缓存失效（索引更新）: {index_name}")
-
-    @classmethod
-    def invalidate_all(cls) -> dict[str, int]:
-        results = {}
-        for prefix_name, prefix in [
-            ("query", CACHE_PREFIX_QUERY),
-            ("model", CACHE_PREFIX_MODEL),
-            ("vector", CACHE_PREFIX_VECTOR),
-            ("embedding", CACHE_PREFIX_EMBEDDING),
-            ("dashboard", CACHE_PREFIX_DASHBOARD),
-            ("usage_stats", CACHE_PREFIX_USAGE_STATS),
-            ("chat", CACHE_PREFIX_CHAT),
-            ("project_context", CACHE_PREFIX_PROJECT_CONTEXT),
-            ("suggestions", CACHE_PREFIX_SUGGESTIONS),
-            # 历史注记：user_mcp_servers（配置数据存缓存的反例）已随死路径删除
-        ]:
-            count = RedisDirectClient.delete_keys_by_pattern(f"{prefix}:*")
-            results[prefix_name] = count
-        logger.info(f"全量缓存失效: {results}")
-        return results
-
-
 # ==================== LangChain LLM Cache 层 ====================
 
 

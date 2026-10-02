@@ -16,23 +16,6 @@
         class="expired-alert"
       />
 
-      <div class="login-tabs">
-        <div
-          class="tab"
-          :class="{ active: loginType === 0 }"
-          @click="loginType = 0"
-        >
-          密码登录
-        </div>
-        <div
-          class="tab"
-          :class="{ active: loginType === 1 }"
-          @click="loginType = 1"
-        >
-          验证码登录
-        </div>
-      </div>
-
       <el-form
         ref="formRef"
         class="login-form"
@@ -40,81 +23,49 @@
         :rules="rules"
         @submit.prevent="handleLogin"
       >
-        <template v-if="loginType === 0">
-          <el-form-item prop="username">
+        <el-form-item prop="username">
+          <el-input
+            v-model="formData.username"
+            placeholder="用户名 / 手机号"
+            prefix-icon="User"
+            size="large"
+          />
+        </el-form-item>
+
+        <el-form-item prop="password">
+          <el-input
+            v-model="formData.password"
+            type="password"
+            placeholder="密码"
+            prefix-icon="Lock"
+            size="large"
+            show-password
+          />
+        </el-form-item>
+
+        <el-form-item prop="captcha">
+          <div class="captcha-wrapper">
             <el-input
-              v-model="formData.username"
-              placeholder="用户名 / 手机号"
-              prefix-icon="User"
+              v-model="formData.captcha"
+              placeholder="验证码"
+              prefix-icon="CircleCheck"
               size="large"
+              style="flex: 1"
             />
-          </el-form-item>
-
-          <el-form-item prop="password">
-            <el-input
-              v-model="formData.password"
-              type="password"
-              placeholder="密码"
-              prefix-icon="Lock"
-              size="large"
-              show-password
+            <img
+              :src="captchaSrc"
+              class="captcha-img"
+              alt="验证码"
+              title="点击刷新"
+              @click="refreshCaptcha"
             />
-          </el-form-item>
-
-          <el-form-item prop="captcha">
-            <div class="captcha-wrapper">
-              <el-input
-                v-model="formData.captcha"
-                placeholder="验证码"
-                prefix-icon="CircleCheck"
-                size="large"
-                style="flex: 1"
-              />
-              <img
-                :src="captchaSrc"
-                class="captcha-img"
-                alt="验证码"
-                title="点击刷新"
-                @click="refreshCaptcha"
-              />
-            </div>
-          </el-form-item>
-
-          <div class="form-options">
-            <el-checkbox v-model="formData.remember">记住密码</el-checkbox>
-            <a href="#" class="forgot-link">忘记密码？</a>
           </div>
-        </template>
+        </el-form-item>
 
-        <template v-else>
-          <el-form-item prop="mobile">
-            <el-input
-              v-model="formData.mobile"
-              placeholder="手机号"
-              prefix-icon="Phone"
-              size="large"
-            />
-          </el-form-item>
-
-          <el-form-item prop="code">
-            <div class="code-wrapper">
-              <el-input
-                v-model="formData.code"
-                placeholder="验证码"
-                prefix-icon="CircleCheck"
-                size="large"
-                style="flex: 1"
-              />
-              <el-button
-                size="large"
-                :disabled="countdown > 0"
-                @click="getCode"
-              >
-                {{ countdown > 0 ? `${countdown}秒后重试` : '获取验证码' }}
-              </el-button>
-            </div>
-          </el-form-item>
-        </template>
+        <div class="form-options">
+          <el-checkbox v-model="formData.remember">记住密码</el-checkbox>
+          <a href="#" class="forgot-link">忘记密码？</a>
+        </div>
 
         <el-form-item>
           <el-button
@@ -142,7 +93,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { userAPI } from '@/api/user'
@@ -154,9 +105,7 @@ const router = useRouter()
 const userStore = useUserStore()
 const formRef = ref(null)
 
-const loginType = ref(0)
 const loading = ref(false)
-const countdown = ref(0)
 const captchaSrc = ref('')
 const captchaKey = ref('')
 const isExpired = ref(false)
@@ -182,28 +131,8 @@ const validatePassword = (rule, value, callback) => {
 }
 
 const validateCaptcha = (rule, value, callback) => {
-  if (loginType.value === 0 && !value) {
-    callback(new Error('请输入验证码'))
-  } else {
-    callback()
-  }
-}
-
-const validateMobile = (rule, value, callback) => {
-  if (!value) {
-    callback(new Error('请输入手机号'))
-  } else if (!/^1[3-9]\d{9}$/.test(value)) {
-    callback(new Error('请输入有效的手机号'))
-  } else {
-    callback()
-  }
-}
-
-const validateCode = (rule, value, callback) => {
   if (!value) {
     callback(new Error('请输入验证码'))
-  } else if (!/^\d{4,6}$/.test(value)) {
-    callback(new Error('验证码为4-6位数字'))
   } else {
     callback()
   }
@@ -213,32 +142,14 @@ const formData = reactive({
   username: '',
   password: '',
   captcha: '',
-  mobile: '',
-  code: '',
   remember: false
 })
 
-const baseRules = computed(() => ({
+const rules = {
   username: [{ validator: validateUsername, trigger: 'blur' }],
   password: [{ validator: validatePassword, trigger: 'blur' }],
-  captcha: [{ validator: validateCaptcha, trigger: 'blur' }],
-  mobile: [{ validator: validateMobile, trigger: 'blur' }],
-  code: [{ validator: validateCode, trigger: 'blur' }]
-}))
-
-const rules = computed(() => {
-  if (loginType.value === 0) {
-    return {
-      username: baseRules.value.username,
-      password: baseRules.value.password,
-      captcha: baseRules.value.captcha
-    }
-  }
-  return {
-    mobile: baseRules.value.mobile,
-    code: baseRules.value.code
-  }
-})
+  captcha: [{ validator: validateCaptcha, trigger: 'blur' }]
+}
 
 onMounted(() => {
   refreshCaptcha()
@@ -269,20 +180,12 @@ async function handleLogin() {
 
   loading.value = true
   try {
-    let result
-    if (loginType.value === 0) {
-      result = await userStore.login({
-        username: formData.username,
-        password: formData.password,
-        captcha: formData.captcha,
-        captchaKey: captchaKey.value
-      })
-    } else {
-      result = await userStore.login({
-        username: formData.mobile,
-        password: formData.code
-      })
-    }
+    const result = await userStore.login({
+      username: formData.username,
+      password: formData.password,
+      captcha: formData.captcha,
+      captchaKey: captchaKey.value
+    })
 
     if (result.success) {
       ElMessage.success(result.message)
@@ -290,46 +193,13 @@ async function handleLogin() {
       router.push(redirect)
     } else {
       ElMessage.error(result.message)
-      if (loginType.value === 0) {
-        refreshCaptcha()
-        formData.captcha = ''
-      }
+      refreshCaptcha()
+      formData.captcha = ''
     }
   } catch {
     ElMessage.error('登录失败，请稍后重试')
   } finally {
     loading.value = false
-  }
-}
-
-async function getCode() {
-  try {
-    await formRef.value?.validateField('mobile')
-  } catch {
-    return
-  }
-
-  try {
-    const response = await userAPI.sendVerifyCode({ mobile: formData.mobile })
-    if (response.data?.code === 200) {
-      ElMessage.success('验证码已发送，请查看手机')
-      countdown.value = 60
-      const timer = setInterval(() => {
-        countdown.value--
-        if (countdown.value <= 0) {
-          clearInterval(timer)
-        }
-      }, 1000)
-    } else {
-      ElMessage.error(response.data?.message || '验证码发送失败')
-    }
-  } catch (error) {
-    const msg = error.response?.data?.message || '验证码发送失败，请稍后重试'
-    if (error.response?.status === 429) {
-      ElMessage.error('操作过于频繁，请稍后再试')
-    } else {
-      ElMessage.error(msg)
-    }
   }
 }
 </script>
@@ -378,37 +248,6 @@ async function getCode() {
   margin: 0;
 }
 
-.login-tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 24px;
-  background: var(--el-fill-color-light, #f3f4f6);
-  padding: 4px;
-  border-radius: 8px;
-}
-
-.tab {
-  flex: 1;
-  text-align: center;
-  padding: 10px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--el-text-color-secondary, #6b7280);
-  transition: all 0.2s;
-}
-
-.tab:hover {
-  color: var(--el-text-color-primary, #374151);
-}
-
-.tab.active {
-  background: var(--el-bg-color, white);
-  color: #667eea;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
 .login-form {
   display: flex;
   flex-direction: column;
@@ -432,12 +271,6 @@ async function getCode() {
 
 .captcha-img:hover {
   border-color: #667eea;
-}
-
-.code-wrapper {
-  display: flex;
-  gap: 12px;
-  width: 100%;
 }
 
 .form-options {
@@ -538,15 +371,6 @@ async function getCode() {
 
   .login-header {
     margin-bottom: 20px;
-  }
-
-  .login-tabs {
-    margin-bottom: 16px;
-  }
-
-  .tab {
-    padding: 8px 12px;
-    font-size: 13px;
   }
 
   .login-button {

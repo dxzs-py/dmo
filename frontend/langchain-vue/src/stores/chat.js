@@ -514,11 +514,6 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  const clearCurrentSession = () => {
-    const sessionStore = useSessionStore()
-    sessionStore.clearCurrentSessionMessages()
-  }
-
   const clearError = () => {
     lastStreamError.value = null
   }
@@ -542,14 +537,6 @@ export const useChatStore = defineStore('chat', () => {
       clearAll()
     }
   })
-
-  const deleteMessage = async (backendId, researchTaskId, frontendId) => {
-    const sessionStore = useSessionStore()
-    const sessionId = sessionStore.currentSessionId
-    await chatAPI.deleteMessage(backendId)
-    sessionStore.removeMessageFromSession(sessionId, frontendId || backendId)
-    ElMessage.success('消息已删除')
-  }
 
   const deleteMessagePair = async (sessionId, backendId, frontendId) => {
     const sessionStore = useSessionStore()
@@ -613,11 +600,9 @@ export const useChatStore = defineStore('chat', () => {
     sendMessage,
     regenerateMessage,
     fetchModes,
-    clearCurrentSession,
     stopStreaming,
     clearError,
     attachmentProcessing,
-    deleteMessage,
     deleteMessagePair,
     approveCommand,
     rejectCommand,

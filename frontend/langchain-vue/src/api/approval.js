@@ -4,23 +4,9 @@
  * 对接后端 /api/v1/approvals/ 端点：
  * - POST /approvals/{interrupt_id}/resume/：恢复审批（chat / deep_research / learning source 均走 SSE 流）
  * - POST /approvals/{interrupt_id}/reject/：拒绝审批
- * - GET /approvals/{interrupt_id}/：查询单条审批
  */
 
 import { apiClient } from '@/api/axios'
-
-/**
- * 查询单条审批
- *
- * @param {string} interruptId - 审批中断 ID
- * @returns {Promise} axios response
- */
-export function getApprovalDetail(interruptId) {
-  if (!interruptId) {
-    return Promise.reject(new Error('interruptId 不能为空'))
-  }
-  return apiClient.get(`/approvals/${interruptId}/`)
-}
 
 /**
  * 恢复审批（执行与连接解耦后的普通 POST）。

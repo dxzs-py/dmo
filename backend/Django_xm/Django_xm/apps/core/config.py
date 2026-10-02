@@ -21,8 +21,6 @@ AI 相关配置（LLM/Agent/RAG/Embedding/Guardrails/LangSmith 等）
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -59,12 +57,6 @@ class ProjectSettings(BaseSettings):
 
     # ==================== 日志配置 ====================
     log_level: str = Field(default="INFO", description="日志级别: DEBUG/INFO/WARNING/ERROR/CRITICAL")
-
-    log_file: str = Field(default="logs/app.log", description="日志文件路径")
-
-    log_rotation: str = Field(default="100 MB", description="日志轮转大小")
-
-    log_retention: str = Field(default="30 days", description="日志保留时间")
 
     # ==================== 数据目录配置 ====================
     data_dir: str = Field(default="data", description="数据存储根目录")

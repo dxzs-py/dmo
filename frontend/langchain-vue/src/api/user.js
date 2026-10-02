@@ -20,5 +20,4 @@ export const userAPI = {
   updatePreferences(data) { return apiClient.put('/users/preferences/', data) },
   getUsageStats() { return apiClient.get('/users/usage-stats/') },
   deleteAccount() { return apiClient.delete('/users/account/') },
-  sendVerifyCode(data) { return apiClient.post('/users/verify-code/', data) },
 }

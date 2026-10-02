@@ -251,18 +251,6 @@ export const useResearchStore = defineStore('research', () => {
     return setTaskStatus(taskId, patch, { force: true })
   }
 
-  /**
-   * 清理指定 task 的状态数据
-   * @param {string} taskId - 研究任务 ID
-   */
-  const clearTaskInfo = (taskId) => {
-    if (!taskId) return
-    if (taskInfo.value.has(taskId)) {
-      taskInfo.value.delete(taskId)
-      logger.info(`[Research] 清理 taskInfo: taskId=${taskId}`)
-    }
-  }
-
   // ==================== 公共方法 ====================
 
   /**
@@ -527,6 +515,5 @@ export const useResearchStore = defineStore('research', () => {
     getTaskStatus,
     updateTaskFromEvent,
     setTaskReasoning,
-    clearTaskInfo,
   }
 })

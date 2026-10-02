@@ -181,11 +181,6 @@ export const createSessionListSlice = (runtimeDeps) => {
     return promise
   }
 
-  const loadMoreSessions = async () => {
-    if (isLoading.value || !paginationMeta.value.hasMore) return
-    await loadSessionsFromBackend(paginationMeta.value.page + 1)
-  }
-
   const loadSessionDetail = async (sessionId, { forceRefresh = false } = {}) => {
     if (!userStore.isLoggedIn || !sessionId) return null
 
@@ -381,14 +376,12 @@ export const createSessionListSlice = (runtimeDeps) => {
     paginationMeta,
     // actions
     loadSessionsFromBackend,
-    loadMoreSessions,
     loadSessionDetail,
     getSessionMessages,
     setSelectedKnowledgeBase,
     setSelectedKnowledgeBases,
     loadKnowledgeBases,
     initialize,
-    clearAllLocalData,
     touchSessionUpdatedAt,
   }
 }

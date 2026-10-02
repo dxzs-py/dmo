@@ -34,6 +34,74 @@ def _resolve_data_dir() -> str:
         )
 
 
+def get_data_dir() -> Path:
+    """DATA_DIR 真相源（settings.DATA_DIR），统一 resolve 后返回 Path。"""
+    return Path(_resolve_data_dir()).resolve()
+
+
+# ── 敏感文件保护清单（安全修复 S-03/S-06）─────────────────────────
+# 命中清单的路径一律硬拒绝（工具层直接返回错误，即使审批通过也不执行）。
+SENSITIVE_FILE_NAMES = frozenset(
+    {
+        ".env",
+        ".env.local",
+        ".env.development",
+        ".env.production",
+        ".env.test",
+        "settings.py",
+        "id_rsa",
+        "id_rsa1",
+        "id_ed25519",
+        "id_ecdsa",
+        "id_dsa",
+        "schema.yml",
+        "credentials.json",
+        "credentials.yml",
+    }
+)
+SENSITIVE_FILE_SUFFIXES = (".pem", ".key", ".pfx", ".p12")
+# 目录级敏感项：Django settings/ 配置目录、SSH 与 git 内部目录
+SENSITIVE_PATH_PARTS = frozenset({"settings", ".ssh", ".git"})
+
+
+def is_sensitive_path(path: Path) -> bool:
+    """判断路径是否命中敏感文件保护清单（.env / settings / 私钥 / 证书等）。"""
+    candidate = Path(path)
+    name = candidate.name.lower()
+    if name in SENSITIVE_FILE_NAMES or name.endswith(SENSITIVE_FILE_SUFFIXES):
+        return True
+    return any(part.lower() in SENSITIVE_PATH_PARTS for part in candidate.parts)
+
+
+def is_path_in_data_dir(path: Path) -> bool:
+    """判断 resolve 后的路径是否位于 DATA_DIR 边界内（防 ../ 与符号链接逃逸）。"""
+    try:
+        return Path(path).resolve().is_relative_to(get_data_dir())
+    except OSError:
+        return False
+
+
+def check_path_allowed(path: Path, anchor: Path | None = None) -> str | None:
+    """路径准入统一校验：返回拒绝原因文本，None 表示放行。
+
+    - anchor 为 None（绝对路径场景）：resolve 后必须位于 DATA_DIR 内；
+    - anchor 指定时（会话 workspace 相对路径）：落点必须仍位于 workspace 内
+      （workspace 本身由系统构建在 DATA_DIR 下，正常业务不受影响）；
+    - 敏感文件清单命中一律拒绝（优先级高于审批结果）。
+    """
+    try:
+        resolved = Path(path).resolve()
+    except OSError as e:
+        return f"错误：路径解析失败: {e!s}"
+    if is_sensitive_path(resolved):
+        return f"错误：拒绝访问：文件命中敏感文件保护清单: {resolved.name}"
+    boundary = Path(anchor).resolve() if anchor is not None else get_data_dir()
+    label = "会话工作区" if anchor is not None else "数据目录"
+    if not resolved.is_relative_to(boundary):
+        return f"错误：拒绝访问：路径超出{label}边界（仅允许 {boundary} 内的文件）: {path}"
+    return None
+
+
 class ResearchFileSystem:
     def __init__(
         self,
@@ -97,9 +165,13 @@ class ResearchFileSystem:
         if self._is_path_traversal(relative_path):
             return "错误：不允许使用路径遍历（.. 或编码绕过）"
 
-        # 绝对路径直接写入，不经过研究文件系统
+        # 绝对路径写入：先过安全边界（DATA_DIR 硬边界 + 敏感清单），再落盘
         if self._is_absolute_path(relative_path):
-            file_path = Path(relative_path)
+            file_path = Path(relative_path).resolve()
+            deny_reason = check_path_allowed(file_path)
+            if deny_reason:
+                logger.warning("🚫 文件写入被拒绝: %s（%s）", relative_path, deny_reason)
+                return deny_reason
             file_path.parent.mkdir(parents=True, exist_ok=True)
             try:
                 with open(file_path, "w", encoding="utf-8") as f:
@@ -119,6 +191,12 @@ class ResearchFileSystem:
         else:
             file_path = self.workspace_path / subdirectory / rel.name
 
+        # 安全边界：相对路径最终落点必须仍在会话工作区内，且不命中敏感清单
+        deny_reason = check_path_allowed(file_path, anchor=self.workspace_path)
+        if deny_reason:
+            logger.warning("🚫 文件写入被拒绝: %s（%s）", relative_path, deny_reason)
+            return deny_reason
+
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -136,9 +214,13 @@ class ResearchFileSystem:
         if self._is_path_traversal(relative_path):
             return "错误：不允许使用路径遍历（.. 或编码绕过）"
 
-        # 绝对路径直接读取
+        # 绝对路径读取：先过安全边界（DATA_DIR 硬边界 + 敏感清单），再打开文件
         if self._is_absolute_path(relative_path):
-            file_path = Path(relative_path)
+            file_path = Path(relative_path).resolve()
+            deny_reason = check_path_allowed(file_path)
+            if deny_reason:
+                logger.warning("🚫 文件读取被拒绝: %s（%s）", relative_path, deny_reason)
+                return deny_reason
             try:
                 with open(file_path, encoding="utf-8") as f:
                     content = f.read()
@@ -156,6 +238,12 @@ class ResearchFileSystem:
             file_path = self.workspace_path / rel
         else:
             file_path = self.workspace_path / subdirectory / rel.name
+
+        # 安全边界：相对路径最终落点必须仍在会话工作区内，且不命中敏感清单
+        deny_reason = check_path_allowed(file_path, anchor=self.workspace_path)
+        if deny_reason:
+            logger.warning("🚫 文件读取被拒绝: %s（%s）", relative_path, deny_reason)
+            return deny_reason
 
         try:
             with open(file_path, encoding="utf-8") as f:
@@ -316,14 +404,14 @@ class FilesystemContextMixin:
 
 class FsWriteFileInput(BaseModel):
     relative_path: str = Field(
-        description="文件路径，支持相对路径（如'plan.md'、'notes/intro.md'）和绝对路径（如'D:\\docs\\report.md'）"
+        description="文件路径，支持相对路径（如'plan.md'、'notes/intro.md'）；绝对路径仅允许数据目录内的文件"
     )
     content: str = Field(description="要写入的内容")
     thread_id: str = Field(description="线程ID（必填；仅供隔离兼容，实际存储目录由系统会话上下文自动决定）")
 
 
 class FsReadFileInput(BaseModel):
-    relative_path: str = Field(description="文件路径，支持相对路径和绝对路径")
+    relative_path: str = Field(description="文件路径，支持相对路径；绝对路径仅允许数据目录内的文件")
     thread_id: str = Field(description="线程ID（必填；仅供隔离兼容，实际存储目录由系统会话上下文自动决定）")
 
 
@@ -359,9 +447,10 @@ class FsWriteFileTool(FilesystemContextMixin, AsyncToolMixin, BaseTool):
         "写入内容到文件系统中的文件，用于保存中间结果、笔记、计划、报告等。"
         "适用场景：需要持久化存储中间结果、笔记、计划或报告，跨对话保存数据。"
         "不适用：读取文件（应使用 fs_read_file）、搜索文件内容（应使用 fs_search_files）。"
-        "参数：relative_path-文件路径（支持相对路径如'plan.md'和绝对路径如'D:\\docs\\report.md'，必填），"
+        "参数：relative_path-文件路径（支持相对路径如'plan.md'；绝对路径仅允许数据目录内的文件，必填），"
         "content-要写入的文件内容（必填），thread_id-线程ID（必填，系统会话上下文自动决定存储目录，传当前会话标识即可）。"
-        "边界：禁止使用'..'路径穿越；相对路径自动根据路径匹配子目录（plans/notes/reports/temp）。"
+        "边界：禁止使用'..'路径穿越；仅允许写入数据目录内文件；禁止读写 .env、settings.py、私钥等敏感文件；"
+        "相对路径自动根据路径匹配子目录（plans/notes/reports/temp）。"
     )
     args_schema: type[BaseModel] = FsWriteFileInput
 
@@ -390,7 +479,7 @@ class FsReadFileTool(FilesystemContextMixin, AsyncToolMixin, BaseTool):
         "适用场景：需要查看之前保存的文件内容、回顾笔记或计划。"
         "不适用：写入文件（应使用 fs_write_file）、浏览目录（应使用 fs_list_files）。"
         "参数：relative_path-相对路径文件名（必填），thread_id-线程ID（必填，系统会话上下文自动决定存储目录，传当前会话标识即可）。"
-        "边界：禁止使用'..'路径穿越；文件不存在时返回错误提示。"
+        "边界：禁止使用'..'路径穿越；仅允许读取数据目录内文件；禁止读取 .env、settings.py、私钥等敏感文件；文件不存在时返回错误提示。"
     )
     args_schema: type[BaseModel] = FsReadFileInput
 

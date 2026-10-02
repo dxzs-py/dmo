@@ -10,10 +10,18 @@ from django.utils import timezone
 from ..models import AttachmentStatus
 
 
-def get_attachment_by_id(attachment_id):
-    """获取附件对象（含 session 预取），不存在返回 None"""
+def get_attachment_by_id(attachment_id, user=None):
+    """获取附件对象（含 session 预取），不存在返回 None。
+
+    user 非 None 时强制属主过滤（session__user，S-09 IDOR 防护），
+    跨用户附件直接查询不到（等价 404）；
+    user=None 仅供系统内部调用（attachment_id 来自服务端查询而非 LLM 参数）。
+    """
     ChatAttachment = apps.get_model("attachments", "ChatAttachment")
-    return ChatAttachment.objects.select_related("session").filter(id=attachment_id).first()
+    queryset = ChatAttachment.objects.select_related("session").filter(id=attachment_id)
+    if user is not None:
+        queryset = queryset.filter(session__user=user)
+    return queryset.first()
 
 
 def soft_delete_session_attachments(session):

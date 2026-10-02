@@ -9,18 +9,15 @@ export const useToolsStore = defineStore('tools', () => {
   const mcpServers = ref([])
   const skills = ref([])
   const skillPackages = ref([])
-  const toolMeta = ref({ categories: [] })
 
   const langchainLoading = ref(false)
   const mcpLoading = ref(false)
   const skillLoading = ref(false)
-  const metaLoading = ref(false)
 
   const langchainLoaded = ref(false)
   const mcpLoaded = ref(false)
   const skillLoaded = ref(false)
   const skillPackageLoaded = ref(false)
-  const metaLoaded = ref(false)
 
   const systemLangchainTools = computed(() => langchainTools.value.filter(t => t.source === 'system'))
   const userLangchainTools = computed(() => langchainTools.value.filter(t => t.source === 'user'))
@@ -91,42 +88,19 @@ export const useToolsStore = defineStore('tools', () => {
     }
   }
 
-  const loadToolMeta = async (force = false) => {
-    if (!force && metaLoaded.value && !metaLoading.value) return
-    metaLoading.value = true
-    try {
-      const res = await toolsAPI.getToolMeta()
-      toolMeta.value = res.data?.data || { categories: [] }
-      metaLoaded.value = true
-    } catch {
-      toolMeta.value = { categories: [] }
-    } finally {
-      metaLoading.value = false
-    }
-  }
-
   const invalidateLangchainTools = () => { langchainLoaded.value = false }
   const invalidateMcpServers = () => { mcpLoaded.value = false }
   const invalidateSkills = () => { skillLoaded.value = false; skillPackageLoaded.value = false }
-  const invalidateAll = () => {
-    langchainLoaded.value = false
-    mcpLoaded.value = false
-    skillLoaded.value = false
-    skillPackageLoaded.value = false
-    metaLoaded.value = false
-  }
 
   const clearAll = () => {
     langchainTools.value = []
     mcpServers.value = []
     skills.value = []
     skillPackages.value = []
-    toolMeta.value = { categories: [] }
     langchainLoaded.value = false
     mcpLoaded.value = false
     skillLoaded.value = false
     skillPackageLoaded.value = false
-    metaLoaded.value = false
   }
 
   // 登出时清除所有工具数据，防止跨用户数据泄露
@@ -142,11 +116,9 @@ export const useToolsStore = defineStore('tools', () => {
     mcpServers,
     skills,
     skillPackages,
-    toolMeta,
     langchainLoading,
     mcpLoading,
     skillLoading,
-    metaLoading,
     systemLangchainTools,
     userLangchainTools,
     systemMcpServers,
@@ -157,11 +129,9 @@ export const useToolsStore = defineStore('tools', () => {
     loadMcpServers,
     loadSkills,
     loadSkillPackages,
-    loadToolMeta,
     invalidateLangchainTools,
     invalidateMcpServers,
     invalidateSkills,
-    invalidateAll,
     clearAll,
   }
 })

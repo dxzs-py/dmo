@@ -488,3 +488,62 @@ class WebFetchApprovalPolicy(ApprovalPolicy):
 
     def assess_danger(self, args: dict) -> str:
         return "low"
+
+
+# ── 文件工具策略补全（安全修复 S-03/S-06/S-09）───────────────────
+# fs_read_file / attachment_reader 此前未注册策略，middleware 走"无策略
+# 直接执行"分支。以下策略参照现有文件类工具口径补全注册：
+# - fs_read_file：只读工具，口径对齐 FileReaderApprovalPolicy——
+#   相对路径（会话工作区内）SAFE 自动通过；绝对路径 CONTROLLED 需审批
+#   （DATA_DIR 内跨会话目录读取仍是敏感操作）。路径越界 / 敏感清单由
+#   工具层硬拒绝（filesystem.check_path_allowed），不依赖审批结果。
+# - attachment_reader：只读本会话附件，属主校验在工具层强制执行
+#   （AttachmentReaderTool + cross_app.get_attachment_by_id），
+#   口径对齐 AttachmentRagSearchApprovalPolicy → SAFE 自动通过 + 审计。
+
+
+class FsReadFileApprovalPolicy(ApprovalPolicy):
+    """fs_read_file 工具审批策略
+
+    风险分级（RiskLevel）：
+        - 相对路径 → SAFE（会话工作区内读取，自动通过）
+        - 绝对路径 → CONTROLLED（DATA_DIR 内跨会话/目录读取，需审批）
+    """
+
+    tool_name = "fs_read_file"
+    # 只读工具：is_write_operation=False，子 agent 中不上调风险等级
+
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        """评估 fs_read_file 风险等级。"""
+        relative_path = args.get("relative_path", "")
+        if not relative_path:
+            return RiskLevel.SAFE  # 空路径，工具内部会处理
+        if os.path.isabs(relative_path):
+            return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
+        return RiskLevel.SAFE  # 相对路径，会话工作区内自动通过
+
+    def assess_danger(self, args: dict) -> str:
+        """旧格式危险等级（兼容 DB 字段 danger_level）。"""
+        risk = self.assess_risk(args)
+        if risk == RiskLevel.HIGH:
+            return "high"
+        elif risk == RiskLevel.SAFE:
+            return "low"
+        return "medium"
+
+
+class AttachmentReaderApprovalPolicy(ApprovalPolicy):
+    """attachment_reader 工具审批策略（只读，SAFE 自动通过）
+
+    读取当前用户名下的聊天附件（属主校验在工具层强制执行），
+    与 attachment_rag_search 口径对齐：固定 SAFE 自动通过，仅审计。
+    """
+
+    tool_name = "attachment_reader"
+    # 只读工具：is_write_operation=False（默认），子 agent 中不上调风险等级
+
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        return RiskLevel.SAFE
+
+    def assess_danger(self, args: dict) -> str:
+        return "low"

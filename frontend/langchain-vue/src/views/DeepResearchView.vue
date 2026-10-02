@@ -610,9 +610,6 @@ const handleSSEEvent = (sseData) => {
         autoLoadDocAnalysis()
       }
       break
-    case 'step_update':
-      progressMessage.value = sseData.step || ''
-      break
     case 'done':
       closeSSE()
       stopElapsedTimer()

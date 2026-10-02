@@ -2,13 +2,13 @@
 
 为 HIGH 级工具调用提供隔离执行环境。
 
-执行策略（任务级开关 + 长驻容器 + fail-closed）：
-    1. enable_sandbox=True 且全局 SANDBOX_ENABLED=True 且命令为 HIGH 级
-       → 长驻 Docker 容器内执行（docker exec 复用）
-    2. enable_sandbox=False（默认）或全局 SANDBOX_ENABLED=False
-       → 本机执行（正常配置，非故障，不视为降级）
-    3. 开启沙箱但 Docker 二次执行失败 → fail-closed 明确报错
-       （含原因与"检查 Docker 或关闭沙箱重试"建议），绝不静默降级本机
+执行策略（risk_level 阶梯 + 任务级开关 + 长驻容器 + fail-closed）：
+    1. 全局 SANDBOX_ENABLED=False → 本机执行（既有语义：全局关=不沙箱）
+    2. HIGH 级（risk_level='high' 或命令命中高危子串）→ 强制容器执行：
+       任务级开关不参与；Docker 不可用/容器失败 → fail-closed 明确报错，
+       绝不静默降级本机（S-02：HIGH 命令绝不回落宿主）
+    3. 任务级开关 enable_sandbox=True + 受控级（controlled）→ 容器执行
+    4. 其余（任务开关关闭 / 低风险 safe）→ 本机执行（正常配置，非故障）
 
 容器生命周期（按 thread_id 长驻复用）：
     - 容器名：langchain-sandbox-{sha1(thread_id)[:12]}
@@ -24,10 +24,11 @@
       任务终态 / SESSION_TIMEOUT 超时后释放容器
 
 与 shell_exec 集成：
-    shell_exec._run 从工具调用上下文（config.configurable）读取
-    enable_sandbox / thread_id，经 _execute_command 传给
-    sandbox_executor.should_sandbox(command, enable_sandbox=...) 判定路由，
-    返回 True 则走 execute(..., enable_sandbox=..., thread_id=...) 容器路径。
+    shell_exec._run 复用审批策略评估 risk_level，连同工具调用上下文
+    （config.configurable）中的 enable_sandbox / thread_id，经 _execute_command
+    传给 sandbox_executor.should_sandbox(command, risk_level=..., enable_sandbox=...)
+    判定路由，返回 True 则走 execute(..., enable_sandbox=True, thread_id=...)
+    容器路径（路由已判定进沙箱，任务开关以路由结果为准）。
 """
 
 import hashlib
@@ -161,30 +162,41 @@ class SandboxExecutor:
         risk_level: str | None = None,
         enable_sandbox: bool = False,
     ) -> bool:
-        """判断命令是否应在沙箱中执行（任务级判定）。
+        """判断命令是否应在沙箱中执行（fail-closed 路由阶梯，S-02）。
 
-        判定逻辑（enable_sandbox 与 risk_level/high-risk 叠加）：
-        1. enable_sandbox 必须为 True（任务级开关，默认关闭）
-        2. 全局 SANDBOX_ENABLED 必须为 True
-        3. risk_level == 'high' 或命令匹配 HIGH 级模式（双重保护）
-
-        enable_sandbox=False 或全局未启用 → 返回 False（本机执行，非故障）；
-        开启沙箱但 Docker 不可用的 fail-closed 错误由 execute() 承担。
+        路由阶梯（按序判定）：
+        1. 全局 SANDBOX_ENABLED=False → False（本机执行；既有语义：全局关=不沙箱）
+        2. HIGH 级（risk_level == 'high' 或命令命中高危子串模式）→ True
+           强制沙箱：任务级开关不参与判定（审批承诺"强制 Docker 沙箱执行"）；
+           Docker 不可用时由 execute() fail-closed 拒绝执行，绝不回落宿主
+        3. 任务级开关 enable_sandbox=False（且非 HIGH）→ False（本机执行，非故障）
+        4. 任务开关开启时按等级路由：
+           - risk_level == 'controlled' → True（进容器；Docker 不可用由 execute() fail-closed）
+           - risk_level == 'safe' → False（低风险本机，高危子串已在第 2 步兜底）
+           - risk_level 为 None（调用方未分类，兼容直调）→ False（仅第 2 步子串兜底）
 
         Args:
             command: 待执行的命令
-            risk_level: 风险等级（safe/controlled/high），可选
+            risk_level: 审批策略判定的风险等级
+                （RiskLevel 值：safe/controlled/high，兼容枚举与字符串）
             enable_sandbox: 任务级沙箱开关（来自工具调用上下文）
 
         Returns:
-            True 表示应走沙箱执行路径
+            True 表示必须走沙箱执行路径
         """
-        if not enable_sandbox or not _is_sandbox_enabled():
+        if not _is_sandbox_enabled():
             return False
 
-        # 风险等级判定：显式 HIGH 或命令匹配高风险模式
+        # HIGH 级：显式等级或高危子串命中 → 强制沙箱（任务级开关不参与）
         is_high_risk = risk_level == "high" or _is_high_risk_command(command)
-        return is_high_risk
+        if is_high_risk:
+            return True
+
+        if not enable_sandbox:
+            return False
+
+        # 任务开关开启：受控级进容器；safe/None 保持本机（高危子串已兜底）
+        return risk_level == "controlled"
 
     # ------------------------------------------------------------------
     # 执行入口
@@ -199,21 +211,27 @@ class SandboxExecutor:
         enable_sandbox: bool = False,
         thread_id: str = "",
     ) -> SandboxResult:
-        """在沙箱中执行命令（未开启沙箱时走本机路径）。
+        """在沙箱中执行命令（未路由进沙箱时走本机路径）。
 
         Args:
             command: 待执行的命令
             working_dir: 工作目录（宿主路径，映射到容器内 /workspace 下）
             timeout: 超时秒数
-            risk_level: 风险等级
+            risk_level: 审批策略判定的风险等级（safe/controlled/high）
             enable_sandbox: 任务级沙箱开关
             thread_id: 研究任务/会话线程 ID（容器命名与生命周期定位依据）
 
         Returns:
             SandboxResult: 执行结果（fail-closed 时 error 含原因与建议）
         """
-        # 任务级开关未开启或全局未启用 → 本机执行（正常配置，非故障）
-        if not enable_sandbox or not _is_sandbox_enabled():
+        # 全局未启用 → 本机执行（既有语义：全局关=不沙箱，非故障）
+        if not _is_sandbox_enabled():
+            return self._execute_local(command, working_dir, timeout)
+
+        # HIGH 级（显式 risk_level 或高危子串）强制沙箱：任务级开关不参与（S-02），
+        # Docker 不可用时 fail-closed 报错，绝不静默降级本机
+        is_high_risk = risk_level == "high" or _is_high_risk_command(command)
+        if not enable_sandbox and not is_high_risk:
             return self._execute_local(command, working_dir, timeout)
 
         self._ensure_docker_checked()

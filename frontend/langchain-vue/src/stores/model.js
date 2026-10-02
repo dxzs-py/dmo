@@ -10,14 +10,12 @@ export const useModelStore = defineStore('model', () => {
   const providers = ref([])
   const isLoading = ref(false)
   const isTesting = ref(false)
-  const isSwitching = ref(false)
   const currentProviderId = ref('openai')
   const currentModelName = ref(null)
   const specialParams = ref({})
   const temperature = ref(0.7)
   const maxTokens = ref(10240)
   const testResult = ref(null)
-  const switchResult = ref(null)
 
   const currentProvider = computed(() => {
     return providers.value.find(p => p.id === currentProviderId.value) || null
@@ -26,12 +24,6 @@ export const useModelStore = defineStore('model', () => {
   const currentProviderSpecialParams = computed(() => {
     if (!currentProvider.value) return {}
     return currentProvider.value.specialParams || {}
-  })
-
-  const selectedModelLabel = computed(() => {
-    if (!currentProvider.value) return ''
-    const modelName = currentModelName.value || currentProvider.value.defaultModel
-    return `${currentProvider.value.label} / ${modelName}`
   })
 
   const thinkingEnabled = computed(() => {
@@ -125,7 +117,6 @@ export const useModelStore = defineStore('model', () => {
     currentModelName.value = modelName || provider.defaultModel
     specialParams.value = _initSpecialParams(provider)
     testResult.value = null
-    switchResult.value = null
   }
 
   const setSpecialParam = (key, value) => {
@@ -171,41 +162,6 @@ export const useModelStore = defineStore('model', () => {
     }
   }
 
-  const switchModel = async () => {
-    if (!currentProviderId.value) return false
-    isSwitching.value = true
-    switchResult.value = null
-    try {
-      const config = getModelConfig()
-      const res = await modelAPI.switchModel(
-        config.providerId,
-        config.modelName,
-        {
-          temperature: config.temperature,
-          maxTokens: config.maxTokens,
-          specialParams: config.specialParams,
-        }
-      )
-      const data = res.data
-      if (data?.code === 200) {
-        switchResult.value = { success: true, message: data.message }
-        ElMessage.success(data.message || '模型切换成功')
-        return true
-      } else {
-        switchResult.value = { success: false, message: data.message }
-        ElMessage.error(data.message || '模型切换失败')
-        return false
-      }
-    } catch (e) {
-      const msg = e.response?.data?.message || e.message || '模型切换失败'
-      switchResult.value = { success: false, message: msg }
-      ElMessage.error(msg)
-      return false
-    } finally {
-      isSwitching.value = false
-    }
-  }
-
   const getModelConfig = () => {
     if (!currentProviderId.value) return {}
     const config = {
@@ -226,7 +182,6 @@ export const useModelStore = defineStore('model', () => {
     temperature.value = 0.7
     maxTokens.value = 10240
     testResult.value = null
-    switchResult.value = null
   }
 
   // 登出时清除模型数据，防止跨用户数据泄露
@@ -241,17 +196,14 @@ export const useModelStore = defineStore('model', () => {
     providers,
     isLoading,
     isTesting,
-    isSwitching,
     currentProviderId,
     currentModelName,
     specialParams,
     temperature,
     maxTokens,
     testResult,
-    switchResult,
     currentProvider,
     currentProviderSpecialParams,
-    selectedModelLabel,
     thinkingEnabled,
     currentModelCapabilities,
     loadProviders,
@@ -260,7 +212,6 @@ export const useModelStore = defineStore('model', () => {
     setTemperature,
     setMaxTokens,
     testConnection,
-    switchModel,
     getModelConfig,
   }
 })

@@ -24,17 +24,6 @@ export function formatDate(date) {
   return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
-export function formatTimestamp(date) {
-  if (typeof date === 'string') date = new Date(date)
-  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-}
-
-export function truncateText(text, maxLength = 50) {
-  if (!text) return ''
-  if (text.length <= maxLength) return text
-  return text.slice(0, maxLength) + '...'
-}
-
 export function getModeLabel(mode) {
   const labels = {
     'agent': '代理',

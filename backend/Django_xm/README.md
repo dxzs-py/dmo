@@ -34,7 +34,7 @@ cp .env.example .env
 | Tavily 搜索 | `TAVILY_API_KEY`、`TAVILY_MAX_RESULTS`                                                   | 联网搜索工具               |
 | 高德地图    | `AMAP_KEY`                                                                               | 地图工具                   |
 | 服务器      | `SERVER_HOST`、`SERVER_PORT`、`SERVER_RELOAD`                                            | 服务监听配置               |
-| 日志        | `LOG_LEVEL`、`LOG_FILE`、`LOG_ROTATION`、`LOG_RETENTION`                                 | 日志级别与轮转             |
+| 日志        | `LOG_LEVEL`                                                                              | 日志级别                   |
 | CORS        | `CORS_ALLOWED_ORIGINS`                                                                   | 允许的前端来源（逗号分隔） |
 | 向量存储    | `VECTOR_STORE_PATH`、`VECTOR_STORE_TYPE`、`EMBEDDING_MODEL`、`EMBEDDING_BATCH_SIZE`      | 向量库后端与嵌入模型       |
 | 文本分块    | `CHUNK_SIZE`、`CHUNK_OVERLAP`                                                            | 文档切分参数               |

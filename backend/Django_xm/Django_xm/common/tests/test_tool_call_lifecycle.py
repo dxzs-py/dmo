@@ -6,8 +6,6 @@
 3. field_name 仅用于日志定位，不影响返回值。
 """
 
-import logging
-
 from django.test import SimpleTestCase
 
 from Django_xm.common.risk_levels import RiskLevel

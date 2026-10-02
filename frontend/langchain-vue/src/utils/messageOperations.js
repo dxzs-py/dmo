@@ -107,18 +107,6 @@ export function setLastMessageField(sessions, sessionId, field, value) {
   return true
 }
 
-export function addLastMessageFieldItem(sessions, sessionId, field, item) {
-  const result = getLastAssistantMessage(sessions, sessionId)
-  if (!result) return
-  if (!result.message[field]) result.message[field] = []
-  result.message[field].push(item)
-  const ver = result.message.versions?.[result.message.currentVersion]
-  if (ver) {
-    if (!ver[field]) ver[field] = []
-    ver[field].push(item)
-  }
-}
-
 export function getMessageByIndex(sessions, sessionId, messageIndex) {
   const session = sessions.find(s => s.id === sessionId)
   if (!session || messageIndex < 0 || messageIndex >= session.messages.length) return null
@@ -688,29 +676,6 @@ export function updateApprovalStateInMap(toolCallMap, toolCallId, state, data = 
       tc.status = nextStatus
     }
   }
-  return true
-}
-
-/**
- * 在 Map 中更新 toolCall 的 status
- *
- * Map 版本的 updateToolCallStatus（sessionStore）。
- * 用于深度研究审批通过后设置 running 状态等场景。
- *
- * @param {Map} toolCallMap - toolCall Map
- * @param {string} toolCallId - 工具调用 ID
- * @param {string} status - 新的 toolCall.status
- * @param {Object} [data] - 审批数据（用于辅助查找 toolCall）
- * @returns {boolean} 是否成功更新（toolCall 不存在时返回 false）
- */
-export function updateToolCallStatusInMap(toolCallMap, toolCallId, status, data = null) {
-  if (!toolCallMap || !toolCallId) return false
-  const { toolCall: tc } = findToolCallInMap(toolCallMap, toolCallId, data)
-  if (!tc) return false
-  // 状态推进统一走状态机（add 模式）：终态不回退 / 非法转换回退由 applyToolCallState 保证
-  const { status: nextStatus, applied: statusApplied } = applyToolCallState(tc, { status }, { mode: 'add' })
-  if (!statusApplied || nextStatus === undefined) return false
-  tc.status = nextStatus
   return true
 }
 

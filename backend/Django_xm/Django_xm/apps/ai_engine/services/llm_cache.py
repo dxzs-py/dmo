@@ -1,16 +1,15 @@
-"""LLM 缓存与速率限制基础设施
+"""LLM 速率限制与模型创建缓存基础设施
 
 从 llm_factory.py 拆分而来，职责：
-1. 全局 LLM 缓存（InMemoryCache / RedisSemanticCache）管理
-2. 速率限制器（InMemoryRateLimiter）单例
-3. 模型创建的统一缓存封装（_cached_model_creation）
+1. 速率限制器（InMemoryRateLimiter）单例
+2. 模型创建的统一缓存封装（cached_model_creation）
 
 依赖关系：
-- llm_cache 是底层基础设施，不依赖 llm_factory / llm_fallback
-- 上层 llm_factory 通过 _cached_model_creation 共用缓存逻辑
+- 本模块是底层基础设施，不依赖 llm_factory / llm_fallback
+- 上层 llm_factory 通过 cached_model_creation 共用模型缓存
+- 全局 LLM 请求缓存由 cache_manager.setup_langchain_cache 承担
 
 参考：
-- https://docs.langchain.com/oss/python/langchain/caching
 - https://reference.langchain.com/python/langchain/rate_limiters
 """
 
@@ -34,66 +33,6 @@ logger = get_logger(__name__)
 
 _rate_limiter_lock = threading.Lock()
 _rate_limiter: Any | None = None
-_llm_cache_lock = threading.Lock()
-_llm_cache: Any | None = None
-
-
-# ============== LLM 缓存 ==============
-
-
-def get_llm_cache() -> Any:
-    """获取全局 LLM InMemoryCache 单例
-
-    首次调用时惰性创建 langchain_core.caches.InMemoryCache 实例。
-    后续调用直接返回缓存的单例（线程安全）。
-    """
-    global _llm_cache  # noqa: PLW0603 - 模块级单例惰性初始化（双检锁模式）
-    if _llm_cache is not None:
-        return _llm_cache
-
-    with _llm_cache_lock:
-        if _llm_cache is not None:
-            return _llm_cache
-
-        try:
-            from langchain_core.caches import InMemoryCache
-
-            _llm_cache = InMemoryCache()
-            logger.info("LLM InMemoryCache 已创建")
-            return _llm_cache
-        except ImportError:
-            logger.warning("langchain_core.caches.InMemoryCache 不可用")
-            return None
-        except Exception as e:
-            logger.warning(f"LLM Cache 创建失败: {e}")
-            return None
-
-
-def setup_llm_cache() -> None:
-    """将 InMemoryCache 安装到 langchain_core 全局缓存槽
-
-    优先使用 langchain_core.globals.set_llm_cache（新版 API），
-    不可用时回退到 langchain_core.llm_cache（旧版属性）。
-    """
-    try:
-        from langchain_core.globals import set_llm_cache
-
-        cache = get_llm_cache()
-        if cache is not None:
-            set_llm_cache(cache)
-            logger.info("全局 LLM Cache 已设置 (via langchain_core.globals)")
-    except ImportError:
-        try:
-            import langchain_core
-
-            cache = get_llm_cache()
-            if cache is not None:
-                langchain_core.llm_cache = cache  # type: ignore[attr-defined]  # langchain compat: llm_cache module attr not in stubs
-                logger.info("全局 LLM Cache 已设置 (via langchain_core.llm_cache, 兼容模式)")
-        except Exception as e:
-            logger.warning(f"设置全局 LLM Cache 失败: {e}")
-    except Exception as e:
-        logger.warning(f"设置全局 LLM Cache 失败: {e}")
 
 
 # ============== 速率限制器 ==============

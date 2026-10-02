@@ -28,15 +28,24 @@ def _get_merged_mcp_servers(user=None):
         配置归属业务模块，不再走 Django settings（修复前读
         `settings.MCP_SERVERS`，该配置迁移后已不存在，导致系统级恒为空）
     用户级：数据库 McpServerConfig（仅当前用户可见）
+
+    安全约束（S-04）：stdio 会以配置中的 command 在服务端启动子进程（等价
+    任意命令执行）。系统级 Server 由管理员维护（config 模块 + DB
+    source="system"），属可信配置，对所有用户保留；非管理员仅过滤
+    用户自建（source="user"）的 stdio Server，管理员不设限。
     """
     from Django_xm.apps.tools.mcp.config import get_system_mcp_servers
     from Django_xm.apps.tools.models import McpServerConfig
+    from Django_xm.apps.tools.serializers import is_mcp_admin
 
     base_servers = list(get_system_mcp_servers())
     seen = {s.get("name") for s in base_servers}
 
     if user and user.is_authenticated:
         user_servers = McpServerConfig.objects.filter(user=user, status="active")
+        if not is_mcp_admin(user):
+            # 仅排除用户自建 stdio（source="user"）；source="system" 的 stdio 为可信配置，保留
+            user_servers = user_servers.exclude(transport="stdio", source="user")
         for srv in user_servers:
             if srv.name not in seen:
                 base_servers.append(srv.to_config_dict())
@@ -315,7 +324,8 @@ class McpServerView(MethodThrottleMixin, APIView):
         from Django_xm.apps.tools.managers import McpToolManager
         from Django_xm.apps.tools.serializers import McpServerAddSerializer
 
-        serializer = McpServerAddSerializer(data=request.data)
+        # context 注入 request：serializer 依赖当前用户判定 stdio 传输的管理员权限
+        serializer = McpServerAddSerializer(data=request.data, context={"request": request})
         if not serializer.is_valid():
             raise BaseAppError(
                 "数据验证失败",
@@ -338,9 +348,10 @@ class McpServerDetailView(APIView):
         from Django_xm.apps.tools.managers import McpToolManager
         from Django_xm.apps.tools.serializers import McpServerAddSerializer
 
-        # name 以 path 为准（body 携带 name 时忽略），保持资源标识单一来源
+        # name 以 path 为准（body 携带 name 时忽略），保持资源标识单一来源；
+        # context 注入 request：serializer 依赖当前用户判定 stdio 传输的管理员权限
         data = {**request.data, "name": name}
-        serializer = McpServerAddSerializer(data=data)
+        serializer = McpServerAddSerializer(data=data, context={"request": request})
         if not serializer.is_valid():
             raise BaseAppError(
                 "数据验证失败",

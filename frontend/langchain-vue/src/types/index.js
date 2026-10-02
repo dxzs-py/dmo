@@ -8,11 +8,6 @@
  * （其 role 枚举引用本文件 MessageRole，保持单一权威源）。
  */
 
-export const AgentMode = {
-  AGENT: 'agent',
-  DEEP_RESEARCH: 'deep-research',
-}
-
 export const MessageRole = {
   USER: 'user',
   ASSISTANT: 'assistant',
@@ -138,43 +133,6 @@ export const PROTECTED_STREAM_STATES = new Set([
   StreamState.COMPLETED,
   StreamState.ERROR,
 ])
-
-export const PlanStepStatus = {
-  PENDING: 'pending',
-  IN_PROGRESS: 'in_progress',
-  COMPLETED: 'completed',
-  FAILED: 'failed',
-}
-
-export const ChainOfThoughtStepStatus = {
-  PENDING: 'pending',
-  ACTIVE: 'active',
-  COMPLETE: 'complete',
-}
-
-export const QueueItemStatus = {
-  PENDING: 'pending',
-  COMPLETED: 'completed',
-}
-
-export const StreamChunkType = {
-  START: 'start',
-  CHUNK: 'chunk',
-  TOOL: 'tool',
-  TOOL_RESULT: 'tool_result',
-  REASONING: 'reasoning',
-  SOURCE: 'source',
-  SOURCES: 'sources',
-  PLAN: 'plan',
-  TASK: 'task',
-  QUEUE: 'queue',
-  CONTEXT: 'context',
-  CITATION: 'citation',
-  CHAIN_OF_THOUGHT: 'chain_of_thought',
-  SUGGESTIONS: 'suggestions',
-  END: 'end',
-  ERROR: 'error',
-}
 
 // ==================== 工具调用与审批类型定义（统一字段规范） ====================
 

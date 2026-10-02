@@ -14,7 +14,6 @@ get_embeddings、get_embedding_dimension。
 
 import asyncio
 import logging
-from typing import Any
 
 from langchain_core.embeddings import Embeddings
 

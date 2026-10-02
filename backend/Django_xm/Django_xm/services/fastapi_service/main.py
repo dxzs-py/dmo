@@ -23,7 +23,8 @@ from contextlib import asynccontextmanager
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.dev")
+# 交由 settings/__init__.py 按 DJANGO_ENV 分发 dev/prod（默认 dev，本地行为不变）
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings")
 # 日志隔离：settings.LOGGING 据此选择日志文件（8001 → fastapi.log，Web → django.log），
 # 必须在 django.setup() 前设置（LOGGING 在 settings 加载时按 SERVICE_ROLE 构建）
 os.environ["SERVICE_ROLE"] = "fastapi"

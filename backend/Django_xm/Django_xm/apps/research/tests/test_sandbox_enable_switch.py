@@ -23,6 +23,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
+from Django_xm.apps.agent_hub.approval.policies import RiskLevel
 from Django_xm.apps.research.models import ResearchTask
 from Django_xm.apps.research.serializers import ResearchStartSerializer
 from Django_xm.apps.research.services.research_runner import execute_research_async
@@ -123,7 +124,9 @@ class ShellSandboxRoutingTests(TestCase):
             result = _execute_command("rm -rf /tmp/x", enable_sandbox=True, thread_id="tid-1")
 
         self.assertEqual(result.status, ToolStatus.SUCCESS)
-        mock_se.should_sandbox.assert_called_once_with("rm -rf /tmp/x", enable_sandbox=True)
+        mock_se.should_sandbox.assert_called_once_with(
+            "rm -rf /tmp/x", risk_level=RiskLevel.SAFE, enable_sandbox=True
+        )
         call_kwargs = mock_se.execute.call_args.kwargs
         self.assertIs(call_kwargs["enable_sandbox"], True)
         self.assertEqual(call_kwargs["thread_id"], "tid-1")
@@ -158,7 +161,9 @@ class ShellSandboxRoutingTests(TestCase):
 
         self.assertEqual(result.status, ToolStatus.SUCCESS)
         mock_se.execute.assert_not_called()
-        mock_se.should_sandbox.assert_called_once_with("rm -rf /tmp/x", enable_sandbox=False)
+        mock_se.should_sandbox.assert_called_once_with(
+            "rm -rf /tmp/x", risk_level=RiskLevel.SAFE, enable_sandbox=False
+        )
 
     def test_default_off_skips_sandbox(self):
         """完全缺省（config 无开关）→ enable_sandbox=False，本机执行。"""
@@ -172,7 +177,9 @@ class ShellSandboxRoutingTests(TestCase):
                 result = _execute_command("echo hi")
 
         self.assertEqual(result.status, ToolStatus.SUCCESS)
-        mock_se.should_sandbox.assert_called_once_with("echo hi", enable_sandbox=False)
+        mock_se.should_sandbox.assert_called_once_with(
+            "echo hi", risk_level=RiskLevel.SAFE, enable_sandbox=False
+        )
 
     @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
     def test_sandbox_error_fail_closed_no_local_fallback(self):

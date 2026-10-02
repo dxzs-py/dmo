@@ -577,47 +577,6 @@ registerInternalAdapters()
 // ==================== 公共 API ====================
 
 /**
- * 获取工具显示配置
- *
- * 优先级：注册表 adapter.displayConfig → INTERNAL_DISPLAY_CONFIG（内置工具）→ DEFAULT_DISPLAY_CONFIG
- * statusSymbols 进行深合并（adapter 的覆盖默认的）
- *
- * @param {string} toolName - 工具名称
- * @returns {Object} 显示配置（含 icon/collapsible/collapsedByDefault/statusSymbols）
- */
-export function getToolDisplayConfig(toolName) {
-  const adapter = adapterRegistry.get(toolName)
-  const displayConfig = adapter?.displayConfig
-
-  if (displayConfig) {
-    return {
-      ...DEFAULT_DISPLAY_CONFIG,
-      ...displayConfig,
-      statusSymbols: {
-        ...DEFAULT_DISPLAY_CONFIG.statusSymbols,
-        ...displayConfig.statusSymbols,
-      },
-    }
-  }
-
-  if (READONLY_TOOL_NAMES.has(toolName)) {
-    return {
-      ...DEFAULT_DISPLAY_CONFIG,
-      ...INTERNAL_DISPLAY_CONFIG,
-      statusSymbols: {
-        ...DEFAULT_DISPLAY_CONFIG.statusSymbols,
-        ...INTERNAL_DISPLAY_CONFIG.statusSymbols,
-      },
-    }
-  }
-
-  return {
-    ...DEFAULT_DISPLAY_CONFIG,
-    statusSymbols: { ...DEFAULT_DISPLAY_CONFIG.statusSymbols },
-  }
-}
-
-/**
  * 格式化工具参数显示
  *
  * - 内置工具或已注册 adapter 的工具：调用对应的 parameterFormatter
@@ -699,43 +658,6 @@ export function formatToolSummaryLine(toolName, params, result, status) {
   }
 
   return parts.join(' → ')
-}
-
-/**
- * 注册自定义工具适配器
- *
- * 用于运行时扩展新工具的渲染规则。若 toolName 已存在，将覆盖原适配器。
- *
- * @param {string} toolName - 工具名称
- * @param {Object} adapterConfig - 适配器配置
- * @param {Object} [adapterConfig.displayConfig] - 显示配置（icon/collapsible/collapsedByDefault/statusSymbols）
- * @param {Function} [adapterConfig.parameterFormatter] - 参数格式化器 (params) => { label, formatted, displayMode }
- * @param {Function} [adapterConfig.resultFormatter] - 结果格式化器 (result) => { formatted, displayMode, language }
- */
-export function registerToolAdapter(toolName, adapterConfig) {
-  if (!toolName || typeof toolName !== 'string') {
-    throw new Error('registerToolAdapter: toolName 必须为非空字符串')
-  }
-  if (!adapterConfig || typeof adapterConfig !== 'object') {
-    throw new Error('registerToolAdapter: adapterConfig 必须为对象')
-  }
-  adapterRegistry.set(toolName, adapterConfig)
-}
-
-/**
- * 判断是否为只读工具
- *
- * 只读工具（ls/glob/grep）无副作用，后端不发起审批，
- * 前端使用简化折叠样式渲染。
- *
- * 注意：有副作用工具（write_file/execute 等）不在此集合中，
- * 其审批面板的显示由 approvalData 驱动。
- *
- * @param {string} toolName - 工具名称
- * @returns {boolean}
- */
-export function isReadonlyTool(toolName) {
-  return READONLY_TOOL_NAMES.has(toolName)
 }
 
 

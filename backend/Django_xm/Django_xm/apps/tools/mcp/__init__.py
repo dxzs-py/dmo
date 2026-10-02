@@ -50,7 +50,6 @@ from contextlib import contextmanager
 from typing import Any
 
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel
 
 from Django_xm.apps.core.logging_utils import get_logger
 

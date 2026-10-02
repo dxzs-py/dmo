@@ -16,6 +16,7 @@
     python manage.py check --settings=Django_xm.settings.test
 """
 
+import os
 from datetime import timedelta
 
 from .base import *  # pylint: disable=wildcard-import,unused-wildcard-import
@@ -143,6 +144,10 @@ AI_LLM_TIMEOUT = 5.0
 AI_LLM_MAX_RETRIES = 0
 
 # ── 沙箱：测试环境禁用（避免 Docker 依赖）──────────────────────
+# REL-13 测试隔离：base.py 的 load_dotenv() 会把本地 .env 的 SANDBOX_ENABLED=true
+# 灌入 os.environ，此处在其加载之后显式还原测试默认值，
+# 保证测试结果不依赖本机沙箱/Docker 状态。
+os.environ["SANDBOX_ENABLED"] = "false"
 SANDBOX_CONFIG = {**SANDBOX_CONFIG, "ENABLED": False}
 
 # ── 静态文件：测试环境使用临时目录（避免污染项目目录）──────────

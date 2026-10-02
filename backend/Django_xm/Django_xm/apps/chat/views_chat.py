@@ -1108,6 +1108,57 @@ class ChatMessageCreateView(BaseChatAPIView):
             http_status=status.HTTP_201_CREATED,
         )
 
+    @extend_schema(exclude=True)
+    @log_view_action
+    @transaction.atomic
+    def delete(self, request, session_id):
+        """清空会话全部消息（软删除 + checkpoint 重建 + 广播同步）。
+
+        与 POST 共用集合资源路径（dj-06 资源化路由约定：资源路径唯一，方法由视图分发），
+        供前端 /clear 命令一键清空当前会话消息。语义与单条删除
+        （ChatMessageDeleteView）/链式截断（ChatMessagePairDeleteView）保持一致：
+        软删除、事务提交后重建 checkpoint、广播 MESSAGES_DELETED 多端同步。
+        """
+        session = self.get_session_or_404(session_id, request.user)
+        if not session:
+            raise NotFound("会话不存在")
+
+        messages = list(
+            ChatMessage.objects.filter(session=session, is_deleted=False).order_by("created_at")
+        )
+        if not messages:
+            return success_response(data={"deleted_message_ids": []}, message="无消息可清除")
+
+        for msg in messages:
+            msg.soft_delete()
+
+        from Django_xm.apps.cache_manager.services.cache_service import invalidate_chat_cache
+
+        invalidate_chat_cache(user_id=request.user.id)
+
+        # 事务提交后再重建 checkpoint（全量清空后从剩余消息=空重建），复用既有清理逻辑
+        session_uuid = session.session_id
+        deleted_ids = [m.id for m in messages]
+        transaction.on_commit(lambda: run_async(_cleanup_checkpoint_messages_async_by_id(session_uuid, deleted_ids)))
+
+        # 广播 MESSAGES_DELETED：所有浏览器同步移除被清空的消息
+        try:
+            publish_event_sync(
+                EventType.MESSAGES_DELETED,
+                {
+                    "session_id": session_uuid,
+                    "deleted_message_ids": [str(mid) for mid in deleted_ids],
+                },
+                session_id=session_uuid,
+            )
+        except Exception as broadcast_err:
+            logger.warning(f"[ChatMessageClear] 广播 MESSAGES_DELETED 失败: {broadcast_err}")
+
+        return success_response(
+            data={"deleted_message_ids": deleted_ids},
+            message="会话消息已清空",
+        )
+
 
 class ChatMessageBatchCreateView(BaseChatAPIView):
     @extend_schema(request=ChatMessageSerializer, responses=ChatMessageSerializer)

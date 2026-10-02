@@ -83,15 +83,178 @@ class SandboxExecutorTests(SimpleTestCase):
         self.assertFalse(executor.should_sandbox("ls", enable_sandbox=True))
 
     @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
-    def test_should_sandbox_switch_off(self):
-        """开关关闭（默认）即使 HIGH 命令也走本机（非故障）。"""
+    def test_should_sandbox_switch_off_high_still_forced(self):
+        """S-02 修复：任务开关关闭 + HIGH 级仍强制沙箱（fail-closed，不回落宿主）。"""
         executor = SandboxExecutor()
-        self.assertFalse(executor.should_sandbox("rm -rf /tmp/x", enable_sandbox=False))
+        self.assertTrue(executor.should_sandbox("rm -rf /tmp/x", enable_sandbox=False))
+        self.assertTrue(
+            executor.should_sandbox(
+                "python -c 'x'", risk_level="high", enable_sandbox=False
+            )
+        )
+
+    @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
+    def test_should_sandbox_switch_off_non_high_local(self):
+        """任务开关关闭 + 非 HIGH（未分类）→ 本机（既有语义保留）。"""
+        executor = SandboxExecutor()
+        self.assertFalse(executor.should_sandbox("ls", enable_sandbox=False))
 
     def test_should_sandbox_global_disabled(self):
         """全局 SANDBOX_ENABLED=False（test.py 默认）：开关开启也走本机。"""
         executor = SandboxExecutor()
         self.assertFalse(executor.should_sandbox("rm -rf /tmp/x", enable_sandbox=True))
+
+    # ------------------------------------------------------------------
+    # risk_level 路由阶梯（S-02，fail-closed）
+    # ------------------------------------------------------------------
+    @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
+    def test_high_risk_level_forced_sandbox(self):
+        """显式 risk_level='high' → 强制沙箱（任务开关不参与）。"""
+        executor = SandboxExecutor()
+        self.assertTrue(
+            executor.should_sandbox(
+                "python -c 'import shutil'", risk_level="high", enable_sandbox=False
+            )
+        )
+
+    @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
+    def test_high_risk_docker_unavailable_rejected_not_local(self):
+        """HIGH 级 + Docker 不可用（mock）→ 拒绝执行（fail-closed），绝不回落本机。"""
+        executor = SandboxExecutor()
+        with patch(
+            "Django_xm.common.sandbox.executor._is_docker_available",
+            return_value=False,
+        ), patch("Django_xm.common.sandbox.executor.subprocess.Popen") as mock_popen:
+            routed = executor.should_sandbox(
+                "python -c 'import shutil'", risk_level="high", enable_sandbox=True
+            )
+            result = executor.execute(
+                "python -c 'import shutil'",
+                risk_level="high",
+                enable_sandbox=True,
+                thread_id="t-high-down",
+            )
+
+        self.assertTrue(
+            routed, "HIGH 级必须路由进沙箱（由 execute fail-closed 拒绝，而非返回 False 落回本机）"
+        )
+        self.assertTrue(result.error, "Docker 不可用必须返回明确错误")
+        self.assertIn("Docker", result.error)
+        self.assertFalse(result.sandboxed)
+        # 绝不回落宿主：本机执行路径未被调用
+        mock_popen.assert_not_called()
+
+    @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
+    def test_high_risk_docker_available_executes_in_container(self):
+        """HIGH 级 + Docker 可用（mock）→ True 且实际进容器执行。"""
+        executor = SandboxExecutor()
+        executor._docker_available = True
+        calls = []
+        with patch(
+            "Django_xm.common.sandbox.executor.subprocess.run",
+            side_effect=_fake_run(calls),
+        ):
+            routed = executor.should_sandbox(
+                "python -c 'import shutil'", risk_level="high", enable_sandbox=False
+            )
+            result = executor.execute(
+                "python -c 'import shutil'",
+                risk_level="high",
+                enable_sandbox=False,
+                thread_id="t-high-up",
+            )
+
+        self.assertTrue(routed)
+        self.assertTrue(result.sandboxed)
+        self.assertEqual(result.return_code, 0)
+        self.assertTrue(any("docker exec" in c for c in calls))
+
+    def test_high_risk_global_disabled_no_sandbox(self):
+        """全局关（显式覆盖，不依赖 .env）→ False（既有语义：全局关=不沙箱）。"""
+        sandbox_off = {**settings.SANDBOX_CONFIG, "ENABLED": False}
+        executor = SandboxExecutor()
+        with override_settings(SANDBOX_CONFIG=sandbox_off):
+            self.assertFalse(
+                executor.should_sandbox(
+                    "python -c 'import shutil'", risk_level="high", enable_sandbox=True
+                )
+            )
+
+    @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
+    def test_controlled_risk_with_task_switch_routes_to_container(self):
+        """受控级（controlled）+ 任务开关开启 → 进容器（S-02 审计样例路径）。"""
+        executor = SandboxExecutor()
+        self.assertTrue(
+            executor.should_sandbox(
+                "python -c 'import shutil'", risk_level="controlled", enable_sandbox=True
+            )
+        )
+
+    @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
+    def test_controlled_risk_without_task_switch_local(self):
+        """受控级 + 任务开关关闭 → 本机（用户未选择沙箱）。"""
+        executor = SandboxExecutor()
+        self.assertFalse(
+            executor.should_sandbox(
+                "python -c 'import shutil'", risk_level="controlled", enable_sandbox=False
+            )
+        )
+
+    @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
+    def test_safe_risk_with_task_switch_local(self):
+        """低风险（safe）+ 任务开关开启 → 本机（高危子串已在上方兜底）。"""
+        executor = SandboxExecutor()
+        self.assertFalse(
+            executor.should_sandbox("echo hi", risk_level="safe", enable_sandbox=True)
+        )
+
+    @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
+    def test_none_risk_legacy_substring_only(self):
+        """未提供 risk_level（兼容直调）保持旧行为：仅高危子串兜底生效。"""
+        executor = SandboxExecutor()
+        self.assertFalse(executor.should_sandbox("python -c 'x'", enable_sandbox=True))
+        self.assertTrue(executor.should_sandbox("rm -rf /tmp/x", enable_sandbox=True))
+
+    @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
+    def test_execute_high_risk_forced_despite_switch_off(self):
+        """execute 直调：HIGH 级 + 任务开关关闭 → 仍进容器（守卫不回落本机）。"""
+        executor = SandboxExecutor()
+        executor._docker_available = True
+        calls = []
+        with patch(
+            "Django_xm.common.sandbox.executor.subprocess.run",
+            side_effect=_fake_run(calls),
+        ):
+            result = executor.execute(
+                "python -c 'import shutil'",
+                risk_level="high",
+                enable_sandbox=False,
+                thread_id="t-exec-high",
+            )
+
+        self.assertTrue(result.sandboxed)
+        self.assertTrue(any("docker exec" in c for c in calls))
+
+    @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
+    def test_execute_non_high_without_switch_stays_local(self):
+        """execute 直调：非 HIGH + 任务开关关闭 → 本机（既有语义不回退）。"""
+        executor = SandboxExecutor()
+        fake_process = MagicMock()
+        fake_process.communicate.return_value = ("local-out", "")
+        fake_process.returncode = 0
+        with patch(
+            "Django_xm.common.sandbox.executor.subprocess.run"
+        ) as mock_run, patch(
+            "Django_xm.common.sandbox.executor.subprocess.Popen",
+            return_value=fake_process,
+        ):
+            result = executor.execute(
+                "python -c 'x'", risk_level="controlled", enable_sandbox=False
+            )
+
+        self.assertFalse(result.sandboxed)
+        self.assertEqual(result.stdout, "local-out")
+        mock_run.assert_not_called()
 
     # ------------------------------------------------------------------
     # 容器复用

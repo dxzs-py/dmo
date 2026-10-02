@@ -12,16 +12,6 @@ export const modelAPI = {
     })
   },
 
-  switchModel(providerId, modelName = null, options = {}) {
-    return apiClient.post('/ai-engine/models/switch/', {
-      providerId: providerId,
-      modelName: modelName,
-      temperature: options.temperature,
-      maxTokens: options.maxTokens,
-      specialParams: options.specialParams || null,
-    })
-  },
-
   getHelperModel() {
     return apiClient.get('/ai-engine/helper-model/')
   },

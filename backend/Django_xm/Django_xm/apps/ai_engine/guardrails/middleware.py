@@ -16,10 +16,7 @@ Guardrails 中间件 - 基于 LangChain AgentMiddleware 实现
 """
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from langchain_core.runnables import RunnableLambda
+from typing import Any
 
 import logging
 import threading

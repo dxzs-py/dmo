@@ -106,7 +106,7 @@ DATABASES = {
         "ENGINE": "django.db.backends.postgresql",
         "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
         "PORT": int(os.environ.get("DB_PORT", "5432")),
-        "USER": os.environ.get("DB_USER", "daixing"),
+        "USER": os.environ.get("DB_USER", ""),
         "PASSWORD": os.environ.get("DB_PASSWORD", ""),
         "NAME": os.environ.get("DB_NAME", "langchain"),
         "CONN_MAX_AGE": 60,
@@ -262,7 +262,9 @@ SIMPLE_JWT = {
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
     "ALGORITHM": "HS256",
-    "SIGNING_KEY": SECRET_KEY,
+    # JWT 独立签名钥：JWT_SIGNING_KEY 留空/未设置时沿用 SECRET_KEY（不破坏现有登录态）；
+    # 生产环境可设置该变量与 SECRET_KEY 解耦，二者轮换互不影响
+    "SIGNING_KEY": os.environ.get("JWT_SIGNING_KEY") or SECRET_KEY,
     "TOKEN_OBTAIN_SERIALIZER": "Django_xm.apps.users.serializers.MyTokenObtainPairSerializer",
     "UPDATE_LAST_LOGIN": True,
 }
