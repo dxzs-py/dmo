@@ -8,7 +8,6 @@ import pinia from './stores'
 import { useThemeStore } from './stores/theme'
 import { useUserStore } from './stores/user'
 import { useSessionStore } from './stores/session'
-import { useCapabilityStore } from './stores/capability'
 import ErrorBoundary from './components/common/ErrorBoundary.vue'
 import { useSyncStore } from './stores/sync'
 import { logger } from './utils/logger'
@@ -51,11 +50,6 @@ sessionStore.initialize().catch(err => {
 // Initialize real-time sync store for WebSocket connection
 const syncStore = useSyncStore()
 syncStore.initialize()
-
-const capabilityStore = useCapabilityStore()
-if (userStore.isLoggedIn) {
-  capabilityStore.fetchCapabilityConfig()
-}
 
 app.component('ErrorBoundary', ErrorBoundary)
 

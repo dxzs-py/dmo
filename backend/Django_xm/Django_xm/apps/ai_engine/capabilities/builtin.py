@@ -190,7 +190,6 @@ class GuardrailsCapability(AgentCapability):
             return build_middleware_stack(
                 enable_guardrails=kwargs.get("enable_guardrails", True),
                 enable_pii=kwargs.get("enable_pii", False),
-                enable_human_in_loop=kwargs.get("enable_human_in_loop", False),
                 enable_rate_limit=kwargs.get("enable_rate_limit", False),
                 guardrails_strict=kwargs.get("guardrails_strict", False),
                 pii_reject=kwargs.get("pii_reject", False),
@@ -213,7 +212,6 @@ class GuardrailsCapability(AgentCapability):
                 "guardrails_enabled": settings.guardrails_enabled,
                 "guardrails_strict_mode": settings.guardrails_strict_mode,
                 "guardrails_enable_pii": settings.guardrails_enable_pii,
-                "guardrails_enable_human_in_loop": settings.guardrails_enable_human_in_loop,
                 "guardrails_max_message_count": settings.guardrails_max_message_count,
             }
         except Exception:
@@ -221,7 +219,6 @@ class GuardrailsCapability(AgentCapability):
                 "guardrails_enabled": False,
                 "guardrails_strict_mode": False,
                 "guardrails_enable_pii": False,
-                "guardrails_enable_human_in_loop": False,
                 "guardrails_max_message_count": 100,
             }
 

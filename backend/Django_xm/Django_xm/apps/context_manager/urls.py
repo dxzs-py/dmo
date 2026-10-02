@@ -1,14 +1,5 @@
-from django.urls import path
-
-from . import views
-
 app_name = "context_manager"
 
-urlpatterns = [
-    path("stats/", views.ContextStatsView.as_view(), name="context_stats"),
-    path("knowledge-graph/", views.KnowledgeGraphView.as_view(), name="context_knowledge_graph"),
-    path("token-budget/", views.TokenBudgetView.as_view(), name="context_token_budget"),
-    path("compress/", views.ContextCompressView.as_view(), name="context_compress"),
-    path("knowledge-graph/detail/", views.KnowledgeGraphDetailView.as_view(), name="context_knowledge_graph_detail"),
-    path("capability-config/", views.capability_config_view, name="capability_config"),
-]
+# REST 端点已全部下线（前端零消费，2026-10 死接口下线裁决）。
+# 本 app 的服务层（services/）仍由 chat/agent 链消费，不受影响。
+urlpatterns = []

@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, markRaw, triggerRef } from 'vue'
 import { logger } from '@/utils/logger'
-import { toCamelCase } from '@/utils/sessionTransformers'
 import { ResearchTaskStatus } from '@/types'
 import {
   addOrUpdateToolCallInMap,
@@ -235,7 +234,9 @@ export const useResearchStore = defineStore('research', () => {
    */
   const updateTaskFromEvent = (taskId, payload) => {
     if (!taskId || !payload) return null
-    const data = toCamelCase(payload)
+    // 入站已转换：stream_completed 事件 payload 在 useRealtimeSync dispatcher
+    // 边界经 parseProtocolEvent 整体 toCamelCase，此处不再二次转换
+    const data = payload
     const success = data.success !== false
     const patch = {
       status: success ? ResearchTaskStatus.COMPLETED : ResearchTaskStatus.FAILED,

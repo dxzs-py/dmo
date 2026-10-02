@@ -15,6 +15,25 @@
 依赖关系（DAG，无循环）：
   llm_cache ← llm_fallback ← llm_factory
 
+创建路径收敛（B⑩）：
+  provider_id 路径 get_chat_model_by_provider 是唯一核心创建入口
+  （registry 校验 / api_key 校验 / special_params / 缓存键 / groq / ollama
+  / 降级接线全部收敛于此）。get_chat_model 是薄适配层：
+  model_provider（provider_id 或 provider 字符串）经 _resolve_provider_id
+  解析为 provider_id 后委托核心；fallback 懒加载编排保持不变——
+  get_chat_model(enable_fallback=True) 是全系统唯一的降级路径。
+
+调用图（收敛后）：
+  业务 30 处 ──► get_chat_model(model_name, model_provider, ...)
+                  ├─ enable_fallback=False ──► _create_single_chat_model（薄适配）
+                  │                               └─► get_chat_model_by_provider（核心）
+                  └─ enable_fallback=True（默认，唯一降级路径）
+                       ├─ _create_single_chat_model（主模型，薄适配）
+                       ├─ 主模型创建失败 → 逐候选 get_chat_model_by_provider 提升
+                       └─ LazyFallbackChatModel(factory=get_chat_model_by_provider)
+  管理端/连通性 ──► get_chat_model_by_provider(provider_id)
+  get_helper_model / get_structured_model_with_fallback ──► 同上两条路径
+
 参考：
 - https://docs.langchain.com/oss/python/langchain/models
 - https://reference.langchain.com/python/langchain/chat_models/#init_chat_model
@@ -89,7 +108,8 @@ def _apply_special_params(
 
     将 special_params 按 provider 注册表中的规则拆解为
     model_kwargs / extra_body / top_level 参数，而非原样透传给 init_chat_model。
-    此函数被 _create_single_chat_model 和 get_chat_model_by_provider 共用。
+    此函数仅被核心创建入口 get_chat_model_by_provider 调用
+    （B⑩ 收敛后 _create_single_chat_model 经薄适配层委托核心）。
     """
     registry = PROVIDER_REGISTRY.get(provider_id) or get_provider_config(provider_id)
     if not registry:
@@ -141,7 +161,22 @@ def _apply_special_params(
             logger.debug("Anthropic 扩展思考模式已启用，注入 thinking 参数")
 
 
-# ============== 单模型创建 ==============
+# ============== 单模型创建（薄适配层） ==============
+
+
+def _resolve_provider_id(name: str) -> str | None:
+    """将 provider_id 或 provider 字符串解析为 registry 中的 provider_id
+
+    匹配语义与原 _get_provider_config 一致：单次遍历 registry，
+    命中 ``cfg["provider"] == name``（provider 字符串，如千帆的 "openai"）
+    或 ``provider_id == name``（registry 键）。保持单次遍历是为了在
+    同名歧义场景（provider 字符串与某个更早的 provider_id 相同）下
+    与旧路径的命中顺序完全一致。
+    """
+    for provider_id, cfg in get_model_registry().items():
+        if cfg.get("provider") == name or provider_id == name:
+            return provider_id
+    return None
 
 
 def _create_single_chat_model(
@@ -153,11 +188,29 @@ def _create_single_chat_model(
     use_cache: bool = True,
     **kwargs: Any,
 ) -> BaseChatModel:
-    """创建单个聊天模型（无 fallback）
+    """创建单个聊天模型（无 fallback）——get_chat_model_by_provider 的薄适配层
 
-    内部函数，供 get_chat_model() 共用。
+    B⑩ 收敛：创建逻辑（registry 校验 / API Key 校验 / special_params /
+    缓存键 / groq / ollama）唯一存在于 get_chat_model_by_provider，
+    本函数仅负责名称语义适配：
+
+    1. 默认值解析：model_name / model_provider 缺省时依次回退
+       SystemConfig.default_chat_model → settings；
+    2. 名称解析：显式 ``provider_id`` kwarg 优先，其次 _resolve_provider_id
+       将 model_provider（provider_id 或 provider 字符串）解析为 provider_id；
+    3. 委托核心：解析失败抛 ValueError（列出可用 provider），成功则
+       参数与 kwargs（special_params / use_cache / max_retries 等）原样透传。
+
+    语义说明（与旧 provider 字符串直连路径的差异，均已确认为改善）：
+    - 缓存键含 special_params 后缀：不同 special_params 不再共享同一
+      缓存实例（旧路径键无后缀会互相覆盖）；
+    - API Key 未配置时在创建阶段即抛 ValueError（旧路径延迟到
+      init_chat_model 内部才报错），失败更早、信息更明确；
+    - model_provider 为 provider 字符串且携带 special_params 时，经
+      provider_id 反查后参数可正确注入（旧路径以字符串查注册表落空
+      导致参数被静默忽略）。
     """
-    # 优先从 SystemConfig 数据库读取用户保存的默认模型
+    # 1. 默认值解析（优先从 SystemConfig 数据库读取用户保存的默认模型）
     if not model_provider or not model_name:
         system_default = get_system_default_chat_model()
         if system_default:
@@ -168,68 +221,23 @@ def _create_single_chat_model(
 
     model_name = model_name or settings.openai_model
     provider = model_provider or getattr(django_settings, "AI_DEFAULT_PROVIDER", "openai")
-    temperature = temperature if temperature is not None else settings.openai_temperature
-    streaming = streaming if streaming is not None else settings.openai_streaming
 
-    init_kwargs: dict[str, Any] = {
-        "model": model_name,
-        "model_provider": provider,
-        "temperature": temperature,
-        "streaming": streaming,
-        "timeout": getattr(django_settings, "AI_LLM_TIMEOUT", 120.0),
-        "max_retries": getattr(django_settings, "AI_LLM_MAX_RETRIES", 3),
-    }
+    # 2. 名称解析：provider_id 或 provider 字符串 → provider_id
+    provider_id = kwargs.pop("provider_id", None) or _resolve_provider_id(provider)
+    if provider_id is None:
+        available = ", ".join(sorted(get_model_registry().keys()))
+        raise ValueError(f"未知的提供商: {provider}. 可用: {available}")
 
-    provider_config = _get_provider_config(provider)
-    init_kwargs.update(provider_config)
-
-    if max_tokens is not None:
-        init_kwargs["max_tokens"] = max_tokens
-    elif settings.openai_max_tokens is not None:
-        init_kwargs["max_tokens"] = settings.openai_max_tokens
-
-    rate_limiter = get_rate_limiter()
-    if rate_limiter is not None and "rate_limiter" not in kwargs:
-        init_kwargs["rate_limiter"] = rate_limiter
-        logger.debug("已附加速率限制器")
-
-    # 从 kwargs 中提取 special_params，使用 provider 感知逻辑解析
-    # 避免原样透传给 init_chat_model 导致 API 报错
-    special_params = kwargs.pop("special_params", None)
-    if special_params:
-        # 确定 provider_id 用于查找注册表
-        provider_id: str = kwargs.pop("provider_id", None) or provider
-        _apply_special_params(init_kwargs, special_params, provider_id, provider, model_name)
-
-        if model_supports_capability(provider_id, model_name, "deep_thinking"):
-            apply_reasoning_patch_if_needed()
-
-    init_kwargs.update(kwargs)
-
-    logger.info(
-        f"创建聊天模型: {model_name} "
-        f"(provider={init_kwargs['model_provider']}, "
-        f"temperature={temperature}, streaming={streaming})"
+    # 3. 委托 provider_id 核心路径（参数与 kwargs 原样透传）
+    return get_chat_model_by_provider(
+        provider_id=provider_id,
+        model_name=model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        streaming=streaming,
+        use_cache=use_cache,
+        **kwargs,
     )
-
-    cache_key = make_cache_key(
-        model_name,
-        provider,
-        temperature,
-        streaming,
-        init_kwargs.get("max_tokens"),
-        api_key=init_kwargs.get("api_key"),
-        base_url=init_kwargs.get("base_url"),
-        max_retries=init_kwargs.get("max_retries"),
-    )
-
-    def _create():
-        model = init_chat_model(**init_kwargs)
-        model._provider_id = provider
-        logger.debug(f"模型创建成功: {model_name}")
-        return model
-
-    return cached_model_creation(cache_key, use_cache, _create)
 
 
 # ============== 公开 API：模型创建 ==============
@@ -364,36 +372,6 @@ def get_model_config(preset: str) -> dict:
     """从统一配置获取模型预设配置"""
     presets = get_model_presets()
     return presets.get(preset, {})
-
-
-def _get_provider_config(provider: str) -> dict[str, Any]:
-    """从数据库获取 provider 的 API 配置（api_key, base_url）"""
-    for provider_id, cfg in get_model_registry().items():
-        if cfg["provider"] == provider or provider_id == provider:
-            result: dict[str, Any] = {}
-            key_attr = cfg.get("api_key_attr")
-            if key_attr:
-                api_key = getattr(settings, key_attr, "")
-                if api_key:
-                    result["api_key"] = api_key
-            base_url_attr = cfg.get("base_url_attr")
-            if base_url_attr:
-                base_url = getattr(settings, base_url_attr, "")
-                if base_url:
-                    result["base_url"] = base_url
-            return result
-
-    # 硬编码 fallback（数据库无数据时兜底）
-    if provider == "openai":
-        return {
-            "api_key": settings.openai_api_key,
-            "base_url": settings.openai_api_base,
-        }
-    elif provider == "anthropic":
-        return {
-            "api_key": getattr(settings, "anthropic_api_key", ""),
-        }
-    return {}
 
 
 def get_model_string(
@@ -945,6 +923,15 @@ def get_structured_model_with_fallback(
 
 class JsonModeStructuredModel:
     """JSON mode 结构化输出模型（DeepSeek 专用）
+
+    与 StructuredModelWithFallback 的边界（B⑩ 判定，非同语义双实现）：
+    - 本类是**单模型 JSON mode 兼容适配器**，解决 DeepSeek thinking 模式与
+      tool_choice 冲突导致 with_structured_output 不可用的问题；
+    - StructuredModelWithFallback（llm_fallback.py）是**多模型 fallback 编排器**，
+      持有多个结构化模型逐个尝试、失败切换；
+    - 二者是组合关系：本类实例作为 StructuredModelWithFallback._models 的元素
+      参与降级（见 get_structured_model_with_fallback 的 DeepSeek thinking 分支），
+      不可强行合并。
 
     DeepSeek thinking mode 与 tool_choice 冲突，无法使用 with_structured_output。
     本类通过 response_format={"type": "json_object"} + 手动注入 JSON Schema 提示词

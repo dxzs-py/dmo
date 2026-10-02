@@ -93,11 +93,6 @@ class AuthRequiredTests(TestCase):
         resp = self.client.get(f"{LEARNING_URL}tasks/")
         self.assertEqual(resp.status_code, 401, resp.content)
 
-    def test_anonymous_start_unauthorized(self):
-        """匿名启动工作流 → 401"""
-        resp = self.client.post(f"{LEARNING_URL}start/", {"user_question": "Q"}, format="json")
-        self.assertEqual(resp.status_code, 401, resp.content)
-
 
 class WorkflowListViewTests(TestCase):
     """WorkflowListView：任务列表与过滤"""

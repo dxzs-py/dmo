@@ -1,10 +1,9 @@
 import { ref, onUnmounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { workflowAPI } from '@/api/workflow'
-import { readSSEStream } from '@/utils/sse'
-import { extractSSEError } from '@/utils/apiErrorHandler'
 import { logger } from '@/utils/logger'
 import { useModelStore } from '@/stores/model'
+import { useSSEStream } from '@/composables/useSSEStream'
 import { LearningStep, LearningTaskStatus } from '@/types'
 
 /**
@@ -13,7 +12,8 @@ import { LearningStep, LearningTaskStatus } from '@/types'
  * 职责（自 WorkflowView 执行流域迁移，SSE 连接生命周期/事件路由/错误恢复逐字保持）：
  *   - startWorkflow：校验表单 → 本地 stub 进入详情 → SSE 流式启动（事件驱动推进）
  *   - _runSSE / startStreamWithEvents / startRestartStream / connectSSE / closeSSE：
- *     SSE 连接生命周期（AbortController 中断 + readSSEStream 逐事件消费）
+ *     SSE 连接生命周期（骨架委托 useSSEStream：AbortController 中断 +
+ *     readSSEStream 逐事件消费；事件路由/回退策略留在本层）
  *   - handleSSEEvent：workflow_step / workflow_state_update / workflow_completed /
  *     workflow_failed / stream_error / error 事件路由到 execution 状态更新
  *
@@ -24,7 +24,7 @@ import { LearningStep, LearningTaskStatus } from '@/types'
  *     （轮询 composable 与本 composable 共同依赖 execution，视图持有以打破
  *      「execution composable 需 polling、polling 需要 execution」的初始化环）
  *
- * 实例安全：sseAbortController / sseReaderActive 为调用闭包内私有，
+ * 实例安全：SSE 骨架状态（AbortController/活跃标志）由 useSSEStream 闭包内私有，
  * 每次调用返回全新独立状态，无模块级可变全局；onUnmounted 自动断开 SSE。
  *
  * @param {object} deps
@@ -66,9 +66,8 @@ export function useWorkflowExecution({
   const showDetail = ref(false)
   const currentStepMessage = ref('')
 
-  /** @type {AbortController | null} */
-  let sseAbortController = null
-  let sseReaderActive = false
+  // SSE 连接骨架委托 useSSEStream（onEvent 惰性转发 handleSSEEvent，避免定义顺序 TDZ）
+  const sseStream = useSSEStream({ onEvent: (data) => handleSSEEvent(data) })
 
   const startWorkflow = async () => {
     if (!workflowForm.query.trim()) {
@@ -123,35 +122,15 @@ export function useWorkflowExecution({
   /**
    * 通用 SSE 流式执行：建立 fetch 流并逐事件交给 handleSSEEvent 驱动 execution
    * @param {() => Promise<Response>} requestFn 发起 SSE 请求的函数（不传 AbortSignal，
-   *   避免 Vite proxy 对带 signal 的 SSE 响应整体缓冲；中断由 readSSEStream 的 signal 控制）
+   *   避免 Vite proxy 对带 signal 的 SSE 响应整体缓冲；中断由 useSSEStream 的
+   *   signal 控制 readSSEStream 退出）
    */
   const _runSSE = async (requestFn) => {
-    sseAbortController = new AbortController()
-    sseReaderActive = true
-
-    try {
-      const response = await requestFn()
-
-      if (!response.ok) {
-        // rd-06：错误响应解析统一到 apiErrorHandler.extractSSEError
-        throw await extractSSEError(response)
-      }
-
-      await readSSEStream(response, (data) => {
-        if (!sseReaderActive) return
-        handleSSEEvent(data)
-      }, sseAbortController.signal)
-
-      // 流正常结束（waiting_for_answers 中断时 handleSSEEvent 已 closeSSE，此处兜底关闭）
-      if (sseReaderActive) closeSSE()
-    } catch (error) {
-      if (error.name === 'AbortError') {
-        return
-      }
-      throw error
-    } finally {
-      sseReaderActive = false
-      sseAbortController = null
+    const result = await sseStream.start(requestFn)
+    // 流正常结束（waiting_for_answers 中断时 handleSSEEvent 已 closeSSE）无需兜底：
+    // 原实现的 `if (sseReaderActive) closeSSE()` 仅做等价清理，已由骨架 finally 承担
+    if (result.status === 'error') {
+      throw result.error
     }
   }
 
@@ -166,45 +145,24 @@ export function useWorkflowExecution({
   )
 
   const connectSSE = async (threadId) => {
-    closeSSE()
+    sseStream.abort()
 
-    sseAbortController = new AbortController()
-    sseReaderActive = true
+    // streamFetchRaw：无 signal 直连，避免 Vite proxy 缓冲（token 走 query 参数）
+    const result = await sseStream.start(() => workflowAPI.streamFetchRaw(threadId))
 
-    try {
-      // streamFetchRaw：无 signal 直连，避免 Vite proxy 缓冲（token 走 query 参数）
-      const response = await workflowAPI.streamFetchRaw(threadId)
-
-      if (!response.ok) {
-        // rd-06：错误响应解析统一到 apiErrorHandler.extractSSEError
-        throw await extractSSEError(response)
+    if (result.status === 'aborted') return
+    if (result.status === 'error') {
+      logger.error('SSE连接失败，回退到轮询:', result.error)
+    }
+    // 回退轮询：completed 仅在流未被主动关闭（active）时回退（对齐原
+    // sseReaderActive 检查）；error 与原实现一致，不检查 active 直接按步骤判断
+    const shouldFallback = result.status === 'error'
+      || (result.status === 'completed' && result.active)
+    if (shouldFallback && execution.value) {
+      const step = execution.value.currentStep
+      if (step !== LearningStep.WAITING_FOR_ANSWERS && step !== LearningStep.END && step !== LearningStep.COMPLETED) {
+        polling.schedulePolling()
       }
-
-      await readSSEStream(response, (data) => {
-        if (!sseReaderActive) return
-        handleSSEEvent(data)
-      }, sseAbortController.signal)
-
-      if (sseReaderActive && execution.value) {
-        const step = execution.value.currentStep
-        if (step !== LearningStep.WAITING_FOR_ANSWERS && step !== LearningStep.END && step !== LearningStep.COMPLETED) {
-          polling.schedulePolling()
-        }
-      }
-    } catch (error) {
-      if (error.name === 'AbortError') {
-        return
-      }
-      logger.error('SSE连接失败，回退到轮询:', error)
-      if (execution.value) {
-        const step = execution.value.currentStep
-        if (step !== LearningStep.WAITING_FOR_ANSWERS && step !== LearningStep.END && step !== LearningStep.COMPLETED) {
-          polling.schedulePolling()
-        }
-      }
-    } finally {
-      sseReaderActive = false
-      sseAbortController = null
     }
   }
 
@@ -295,11 +253,7 @@ export function useWorkflowExecution({
   }
 
   const closeSSE = () => {
-    sseReaderActive = false
-    if (sseAbortController) {
-      sseAbortController.abort()
-      sseAbortController = null
-    }
+    sseStream.abort()
   }
 
   // 实例卸载自动断开 SSE（abort 中断 readSSEStream；keep-alive 失活由视图

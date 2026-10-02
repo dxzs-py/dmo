@@ -11,24 +11,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
-vi.mock('@/composables/useStreamChat', () => {
-  const CONNECTION_STATUS = {
-    CONNECTED: 'connected',
-    RECONNECTING: 'reconnecting',
-    CONNECTING: 'connecting',
-  }
-  return {
-    CONNECTION_STATUS,
-    useStreamChat: vi.fn(() => ({
-      isStreaming: ref(false),
-      abortController: null,
-      abort: vi.fn(),
-      streamChat: vi.fn(),
-      connectionStatus: ref(CONNECTION_STATUS.CONNECTED),
-      lastError: null,
-    })),
-  }
-})
+vi.mock('@/composables/useStreamChat', () => ({
+  useStreamChat: vi.fn(() => ({
+    isStreaming: ref(false),
+    abortController: null,
+    abort: vi.fn(),
+    streamChat: vi.fn(),
+    lastError: null,
+  })),
+}))
 
 vi.mock('@/stores/approval', () => ({
   useApprovalStore: vi.fn(() => ({ pendingApprovals: new Map() })),

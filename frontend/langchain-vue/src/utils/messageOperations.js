@@ -162,7 +162,6 @@ export function createMessageVersion(message) {
     content: message.content,
     sources: message.sources || [],
     plan: message.plan || null,
-    chainOfThought: message.chainOfThought || null,
     toolCalls,
     subagentContents,
     reasoning: message.reasoning || null,

@@ -3,6 +3,7 @@ import { ref, watch, nextTick, computed } from 'vue'
 import { Promotion, Search, Document, Close, VideoPause, Loading, RefreshRight, Check, CircleClose } from '@element-plus/icons-vue'
 import SlashCommandPanel from '@/components/common/SlashCommandPanel.vue'
 import ToolSelector from '@/components/chat/ToolSelector.vue'
+import { formatSizeAuto, getFileIcon } from '@/utils/format'
 
 const props = defineProps({
   modelValue: {
@@ -152,23 +153,6 @@ watch(() => props.modelValue, (val) => {
   }
 })
 
-const formatFileSize = (bytes) => {
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
-}
-
-const getFileIcon = (type) => {
-  const iconMap = {
-    pdf: '📄', doc: '📝', docx: '📝', txt: '📃',
-    png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', webp: '🖼️', svg: '🖼️',
-    xls: '📊', xlsx: '📊', csv: '📊',
-    py: '🐍', js: '📜', ts: '📜', html: '🌐', css: '🎨',
-    json: '📋', xml: '📋', md: '📝',
-  }
-  return iconMap[type] || '📎'
-}
-
 const handleKeyDown = (event) => {
   if (showCommandPanel.value) {
     if (event.key === 'Escape') {
@@ -296,7 +280,7 @@ watch(() => props.modelValue, adjustTextareaHeight)
                   <el-icon v-else-if="file.status === 'success'" class="attachment-status status-success" :size="14"><Check /></el-icon>
                   <el-icon v-else-if="file.status === 'failed'" class="attachment-status status-failed" :size="14"><CircleClose /></el-icon>
                 </div>
-                <span v-if="file.size" class="attachment-size">{{ formatFileSize(file.size) }}</span>
+                <span v-if="file.size" class="attachment-size">{{ formatSizeAuto(file.size) }}</span>
                 <el-progress
                   v-if="file.status === 'uploading'"
                   :percentage="file.progress || 0"

@@ -51,12 +51,12 @@
       </el-table-column>
       <el-table-column prop="createdAt" label="创建时间" width="180">
         <template #default="{ row }">
-          {{ formatDate(row.createdAt) }}
+          {{ formatDateTime(row.createdAt) }}
         </template>
       </el-table-column>
       <el-table-column prop="updatedAt" label="更新时间" width="180">
         <template #default="{ row }">
-          {{ formatDate(row.updatedAt) }}
+          {{ formatDateTime(row.updatedAt) }}
         </template>
       </el-table-column>
       <el-table-column label="操作" width="200" fixed="right">
@@ -105,6 +105,7 @@ import { Search, Refresh, View, Delete, ChatDotRound, RefreshRight } from '@elem
 import { logger } from '../../utils/logger'
 import { confirmDelete } from '../../utils/dialog'
 import { getTaskStatusText, getTaskStatusTagType } from '../../utils/researchTaskStatus'
+import { formatDateTime } from '../../utils/format'
 import { ResearchTaskStatus } from '../../types'
 
 const props = defineProps({
@@ -133,12 +134,6 @@ const total = ref(0)
 const totalPages = computed(() => Math.ceil(total.value / pageSize.value))
 const searchQuery = ref('')
 const statusFilter = ref('')
-
-const formatDate = (dateStr) => {
-  if (!dateStr) return '-'
-  const date = new Date(dateStr)
-  return date.toLocaleString('zh-CN')
-}
 
 const loadTasks = async () => {
   loading.value = true

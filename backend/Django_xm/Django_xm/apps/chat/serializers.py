@@ -240,7 +240,6 @@ class ChatMessageSerializer(serializers.ModelSerializer):
     research_task_status = serializers.SerializerMethodField(method_name='get_research_task_status')
     research_task_deleted = serializers.SerializerMethodField(method_name='get_research_task_deleted')
     session_id = serializers.PrimaryKeyRelatedField(source='session', read_only=True)
-    chain_of_thought = serializers.JSONField(read_only=True)
     tool_calls = serializers.JSONField(read_only=True)
     # 子代理图层正文/思考（Agent 图层嵌套规范 Task 1.5，刷新后恢复子代理图层依据）
     subagent_contents = serializers.JSONField(read_only=True)
@@ -260,7 +259,6 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             "content",
             "sources",
             "plan",
-            "chain_of_thought",
             "tool_calls",
             "approval",
             "reasoning",

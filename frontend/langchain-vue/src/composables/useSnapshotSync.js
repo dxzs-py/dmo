@@ -4,7 +4,7 @@ import { deepResearchAPI } from '@/api/research'
 import { useSessionStore } from '@/stores/session'
 import { useResearchStore } from '@/stores/research'
 import { logger } from '@/utils/logger'
-import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/sessionTransformers'
+import { transformBackendMessageToFrontend } from '@/utils/sessionTransformers'
 import { _mergeToolCalls, NON_CONTENT_FIELDS } from '@/utils/messageOperations'
 import { ToolCallStatus } from '@/types'
 import { getToolCallStatusPriority, TERMINAL_STATUSES } from '@/utils/toolCallStateMachine'
@@ -409,7 +409,8 @@ function createSnapshotSyncInstance({ kind, id }) {
         return
       }
 
-      const converted = toCamelCase(data)
+      // 入站已转换：快照响应经 axios 拦截器统一 toCamelCase，此处不再二次转换
+      const converted = data
 
       // 校对消息（converted.messages 可选）
       if (converted.messages !== undefined) {

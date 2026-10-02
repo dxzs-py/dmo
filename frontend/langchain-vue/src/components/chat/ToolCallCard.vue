@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { ArrowDown, ArrowRight, CircleCheck, Clock, Close, Connection, Loading, MagicStick, Promotion } from '@element-plus/icons-vue'
 import { ToolCallStatus } from '../../types'
+import { getToolStatusText, getToolStatusTagType } from '../../utils/toolStatusText'
 import {
   formatToolParameters,
   formatToolResult,
@@ -132,44 +133,9 @@ const statusIcon = computed(() => {
   }
 })
 
-const statusType = computed(() => {
-  switch (props.status) {
-    case 'completed':
-      return 'success'
-    case 'failed':
-    case 'rejected':
-      return 'danger'
-    case 'running':
-      return 'warning'
-    case 'waiting':
-      return 'info'
-    case 'timeout':
-      return 'danger'
-    default:
-      return 'info'
-  }
-})
+const statusType = computed(() => getToolStatusTagType(props.status))
 
-const statusText = computed(() => {
-  switch (props.status) {
-    case 'completed':
-      return '已完成'
-    case 'failed':
-      return '失败'
-    case 'rejected':
-      return '已拒绝'
-    case 'running':
-      return '执行中'
-    case 'waiting':
-      return '待审批'
-    case 'timeout':
-      return '已超时'
-    case 'pending':
-      return '等待中'
-    default:
-      return '等待中'
-  }
-})
+const statusText = computed(() => getToolStatusText(props.status))
 
 // ============================================================
 // 工具参数 / 结果格式化（接入 utils/toolAdapters.js）
@@ -190,7 +156,7 @@ const statusText = computed(() => {
 // 关键不变量：
 //   - displayMode 由格式化器决定，模板按 displayMode 渲染（inline 单行 / pre JSON / pre command）
 //   - label 由格式化器决定，覆盖原硬编码 operationLabel map（已含 deepagents 工具名）
-//   - props 接口不变，4 个调用方（ChatMessage/AiMessage/ChainOfThought/DeepResearchView）无需修改
+//   - props 接口不变，3 个调用方（ChatMessage/AiMessage/DeepResearchView）无需修改
 
 const inputDisplay = computed(() => {
   // Skill hybrid 模式保留原 input 直传（hybridSections 分支处理输出）

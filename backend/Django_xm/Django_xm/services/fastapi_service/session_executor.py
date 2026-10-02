@@ -21,15 +21,16 @@ from asgiref.sync import sync_to_async
 
 from Django_xm.apps.approvals.models import Approval
 from Django_xm.apps.approvals.services.approval_batch import (
+    await_wait_for_batch_decision,
     collect_batch_decisions,
     create_approvals_for_interrupts,
     finalize_batch_approvals,
+    self_heal_expired_approvals,
 )
 from Django_xm.apps.research.services.research_runner import (
     cleanup_research_sandbox,
     execute_research_async,
     finalize_research,
-    self_heal_expired_approvals,
 )
 
 logger = logging.getLogger(__name__)
@@ -694,7 +695,9 @@ class SessionExecutor:
                     )
                     return decisions
             for gid in batch_ids:
-                await sync_to_async(self_heal_expired_approvals)(self.thread_id, gid)
+                await sync_to_async(self_heal_expired_approvals)(
+                    Approval.Source.DEEP_RESEARCH, self.thread_id, gid
+                )
             # 所有批次均未决断：挂起等待审批信令（周期性轮询兜底）
             event = asyncio.Event()
             self._pending_events["__initial__"] = event
@@ -760,46 +763,20 @@ class SessionExecutor:
     async def _wait_for_batch_decision(self, graph_interrupt_id: str) -> dict:
         """挂起等待同批次全部审批决断，返回 Command(resume=...) 的 decisions。
 
-        机制：
-        - 优先检查 DB 批次完整性（可能已被前端提前全部确认）；
-        - 否则挂起 ``asyncio.Event``，由审批信令唤醒；
-        - 挂起期间周期性自愈过期审批（终态化 TIMEOUT），轮询 DB；
-        - 信令唤醒/轮询超时后统一重新读取 DB 校验批次完整性，
-          仅当同批次全部决断才退出恢复（避免部分决断即恢复导致重入）。
+        薄委托 approvals.services.approval_batch.await_wait_for_batch_decision
+        （B⑦ 收敛：与 chat 链路共享唯一实现，含过期审批自愈），仅注入
+        research 链路差异参数：source=deep_research / source_id=thread_id /
+        轮询间隔 / 日志标签。
         """
-        event = asyncio.Event()
-        self._pending_events[graph_interrupt_id] = event
-        try:
-            while True:
-                # 安全点（Task 9）：收到停止请求立即退出等待，由外层 finally 落库并广播
-                if self._stop_requested:
-                    raise asyncio.CancelledError("用户停止生成")
-                resume_by_interrupt, all_resolved = await sync_to_async(collect_batch_decisions)(
-                    Approval.Source.DEEP_RESEARCH, self.thread_id, graph_interrupt_id
-                )
-                if all_resolved:
-                    break
-                # 批次自愈：过期 pending 终态化为 TIMEOUT
-                await sync_to_async(self_heal_expired_approvals)(self.thread_id, graph_interrupt_id)
-                # 等待审批信令（周期轮询兜底）。信令唤醒或轮询超时均重新读取 DB，
-                # 只有全部决断才退出循环——保证 Command(resume=...) 携带完整批次决策。
-                event.clear()
-                try:
-                    await asyncio.wait_for(event.wait(), timeout=_BATCH_POLL_INTERVAL)
-                except TimeoutError:
-                    pass  # 未收到信令：继续轮询校验
-        finally:
-            self._pending_events.pop(graph_interrupt_id, None)
-
-        logger.info(
-            f"[SessionExecutor] 批次全部决断，恢复执行: "
-            f"thread_id={self.thread_id}, graph_interrupt_id={graph_interrupt_id}, "
-            f"decisions={resume_by_interrupt}"
+        return await await_wait_for_batch_decision(
+            self,
+            source=Approval.Source.DEEP_RESEARCH,
+            source_id=self.thread_id,
+            graph_interrupt_id=graph_interrupt_id,
+            poll_interval=_BATCH_POLL_INTERVAL,
+            log_label="SessionExecutor",
+            id_label="thread_id",
         )
-        await sync_to_async(finalize_batch_approvals)(
-            resume_by_interrupt, Approval.Source.DEEP_RESEARCH, self.thread_id
-        )
-        return resume_by_interrupt
 
     def on_approval_signal(self, payload: dict) -> None:
         """审批信令到达：唤醒对应批次的挂起协程（若存在）。"""
@@ -966,6 +943,20 @@ class SessionExecutor:
     # ------------------------------------------------------------------
     # Agent 构建
     # ------------------------------------------------------------------
+    def _load_skill_dirs(self, selected_skill_names: list[str]) -> list[str]:
+        """加载选中 Skill 包的目录列表（同步 ORM，须经 sync_to_async 调用）。
+
+        Args:
+            selected_skill_names: 已剥离 skill_ 前缀的 Skill 包名列表
+
+        Returns:
+            存在且有效的 skill_dir 列表（供 DeepAgent skills 参数）
+        """
+        from Django_xm.apps.tools.skills.adapter import SkillAdapter
+
+        adapter = SkillAdapter(user_id=self.user_id)
+        return adapter.to_deep_agent_skills(selected_skill_names=selected_skill_names)
+
     async def _build_agent(self):
         """构建研究智能体（初始执行：从 start 信令参数构建）。
 
@@ -1037,10 +1028,11 @@ class SessionExecutor:
         ]
         if selected_skill_names:
             try:
-                from Django_xm.apps.tools.skills.adapter import SkillAdapter
-
-                adapter = SkillAdapter(user_id=self.user_id)
-                skill_dirs = adapter.to_deep_agent_skills(selected_skill_names=selected_skill_names)
+                # SkillAdapter 内部为同步 ORM 查询，必须经 sync_to_async 进入线程池
+                # （直调会抛 SynchronousOnlyOperation 导致 Skill 静默不加载）
+                skill_dirs = await sync_to_async(
+                    self._load_skill_dirs, thread_sensitive=True
+                )(selected_skill_names)
                 if skill_dirs:
                     skills = skill_dirs
             except Exception as e:

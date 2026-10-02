@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 _CHAT_BATCH_POLL_INTERVAL = 5
 
 
-# 审批批次决策/终态化已收敛到 approvals.services.approval_batch（source 参数区分 chat/research），
-# 由 _wait_for_chat_batch_decision 内 import 调用。
+# 审批批次决策/终态化/自愈/挂起等待已收敛到 approvals.services.approval_batch
+# （B⑦：source 参数区分 chat/research），由 _wait_for_chat_batch_decision 薄委托。
 
 
 async def _wait_for_chat_batch_decision(
@@ -39,44 +39,27 @@ async def _wait_for_chat_batch_decision(
 ) -> dict:
     """挂起等待 chat 同批次全部审批决断，返回 Command(resume=...) 的 decisions。
 
-    与 SessionExecutor._wait_for_batch_decision 同构，仅 source 不同：
+    薄委托 approvals.services.approval_batch.await_wait_for_batch_decision
+    （B⑦ 收敛：与 SessionExecutor._wait_for_batch_decision 共享唯一实现），
+    仅注入 chat 链路差异参数：source=chat / source_id=session_id / 轮询间隔 /
+    日志标签。chat 链路已补齐过期审批自愈语义（与 research 版一致）：
     - 优先检查 DB 批次完整性（可能已被前端提前全部确认）；
     - 否则挂起 asyncio.Event，由审批信令（on_approval_signal）唤醒；
-    - 挂起期间周期性轮询 DB（信令丢失最终一致兜底）；
+    - 挂起期间周期性自愈过期审批（终态化 TIMEOUT）并轮询 DB（兜底）；
     - 仅当同批次全部决断才退出（避免部分决断即恢复导致重入）。
     """
-    event = asyncio.Event()
-    executor._pending_events[graph_interrupt_id] = event
     from Django_xm.apps.approvals.models import Approval
-    from Django_xm.apps.approvals.services.approval_batch import (
-        collect_batch_decisions,
-        finalize_batch_approvals,
-    )
+    from Django_xm.apps.approvals.services.approval_batch import await_wait_for_batch_decision
 
-    try:
-        while True:
-            # 安全点（Task 9）：收到停止请求立即退出等待，由外层 finally 落库并广播
-            if executor._stop_requested:
-                raise asyncio.CancelledError("用户停止生成")
-            decisions, all_resolved = await sync_to_async(collect_batch_decisions)(
-                Approval.Source.CHAT, session_id, graph_interrupt_id
-            )
-            if all_resolved:
-                break
-            event.clear()
-            try:
-                await asyncio.wait_for(event.wait(), timeout=_CHAT_BATCH_POLL_INTERVAL)
-            except TimeoutError:
-                pass  # 未收到信令：继续轮询校验
-    finally:
-        executor._pending_events.pop(graph_interrupt_id, None)
-
-    logger.info(
-        f"[ChatExec] 批次全部决断，恢复执行: session={session_id}, "
-        f"graph_interrupt_id={graph_interrupt_id}, decisions={decisions}"
+    return await await_wait_for_batch_decision(
+        executor,
+        source=Approval.Source.CHAT,
+        source_id=session_id,
+        graph_interrupt_id=graph_interrupt_id,
+        poll_interval=_CHAT_BATCH_POLL_INTERVAL,
+        log_label="ChatExec",
+        id_label="session",
     )
-    await sync_to_async(finalize_batch_approvals)(decisions, Approval.Source.CHAT, session_id)
-    return decisions
 
 
 async def run_chat_session(executor, params: dict) -> None:

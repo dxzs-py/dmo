@@ -6,6 +6,7 @@ import LxScrollArea from '../common/LxScrollArea.vue'
 import AiArtifact from '../ai-elements/AiArtifact.vue'
 import AiPanel from '../ai-elements/AiPanel.vue'
 import AiToolbar from '../ai-elements/AiToolbar.vue'
+import { getToolStatusText, getToolStatusTagType } from '../../utils/toolStatusText'
 
 const props = defineProps({
   message: {
@@ -44,7 +45,6 @@ const metadata = computed(() => {
       error: tc.error || null,
     })),
     reasoning: props.message.reasoning?.content || null,
-    chainOfThought: props.message.chainOfThought || null,
     plan: props.message.plan || null,
     context: props.message.context || null,
   }
@@ -79,7 +79,6 @@ const rawJson = computed(() => {
     sources: props.message.sources,
     plan: props.message.plan,
     reasoning: props.message.reasoning,
-    chainOfThought: props.message.chainOfThought,
     toolCalls: props.message.toolCalls,
     context: props.message.context,
     suggestions: props.message.suggestions,
@@ -89,15 +88,11 @@ const rawJson = computed(() => {
 const hasSources = computed(() => metadata.value?.sources?.length > 0)
 const hasTools = computed(() => metadata.value?.tools?.length > 0)
 const hasReasoning = computed(() => !!metadata.value?.reasoning)
-const hasChainOfThought = computed(() => {
-  const cot = metadata.value?.chainOfThought
-  return Array.isArray(cot) && cot.length > 0
-})
 const hasPlan = computed(() => {
   const plan = metadata.value?.plan
   return plan && typeof plan === 'object' && !Array.isArray(plan) && Object.keys(plan).length > 0
 })
-const hasAnyReasoning = computed(() => hasReasoning.value || hasChainOfThought.value || hasPlan.value)
+const hasAnyReasoning = computed(() => hasReasoning.value || hasPlan.value)
 
 const artifacts = computed(() => {
   if (!props.message || !props.message.artifacts) return []
@@ -124,43 +119,11 @@ const tabs = computed(() => [
   { value: 'json', label: 'JSON', icon: View, count: 0 },
 ])
 
-const getToolStateType = (state) => {
-  const typeMap = {
-    'input-available': 'warning',
-    'output-available': 'success',
-    'output-error': 'danger',
-    'calling': 'warning',
-    'success': 'success',
-    'error': 'danger',
-    'pending': 'info',
-    'completed': 'success',
-    'pending-approval': 'warning',
-    'approved': 'success',
-    'rejected': 'danger',
-    'timeout': 'warning',
-    'processing': 'warning',
-  }
-  return typeMap[state] || 'info'
-}
+// 状态文案 / 标签色统一走 utils/toolStatusText.js 单一权威双表
+// （口径基线为 ToolCallCard 7 态；timeout 标签色由 warning 统一为 danger）
+const getToolStateType = (state) => getToolStatusTagType(state)
 
-const getToolStateLabel = (state) => {
-  const labelMap = {
-    'input-available': '等待中',
-    'output-available': '已完成',
-    'output-error': '出错',
-    'calling': '调用中',
-    'success': '成功',
-    'error': '失败',
-    'pending': '等待中',
-    'completed': '已完成',
-    'pending-approval': '待审批',
-    'approved': '已确认',
-    'rejected': '已拒绝',
-    'timeout': '已超时',
-    'processing': '处理中',
-  }
-  return labelMap[state] || state
-}
+const getToolStateLabel = (state) => getToolStatusText(state)
 
 watch(() => props.message, () => {
   if (!hasSources.value && hasTools.value) {
@@ -317,19 +280,6 @@ watch(() => props.message, () => {
                     <span class="step-text">{{ typeof step === 'string' ? step : step.text || step.title || JSON.stringify(step) }}</span>
                   </div>
                 </div>
-              </div>
-            </div>
-            <div v-if="hasChainOfThought" class="reasoning-item">
-              <div class="reasoning-title">思维链</div>
-              <div class="reasoning-content">
-                <template v-if="Array.isArray(metadata.chainOfThought)">
-                  <div v-for="(step, idx) in metadata.chainOfThought" :key="idx" class="cot-step">
-                    {{ typeof step === 'string' ? step : step.content || step.text || JSON.stringify(step) }}
-                  </div>
-                </template>
-                <template v-else>
-                  {{ typeof metadata.chainOfThought === 'string' ? metadata.chainOfThought : JSON.stringify(metadata.chainOfThought, null, 2) }}
-                </template>
               </div>
             </div>
           </div>
@@ -903,17 +853,6 @@ watch(() => props.message, () => {
   font-size: 12px;
   line-height: 20px;
   color: var(--muted-foreground);
-}
-
-.cot-step {
-  padding: 6px 0;
-  border-bottom: 1px dashed var(--border);
-  font-size: 12px;
-  color: var(--muted-foreground);
-}
-
-.cot-step:last-child {
-  border-bottom: none;
 }
 
 .token-grid {

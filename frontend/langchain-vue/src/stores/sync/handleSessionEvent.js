@@ -1,5 +1,4 @@
 import { logger } from '@/utils/logger'
-import { toCamelCase } from '@/utils/sessionTransformers'
 import { getEventSessionId } from '@/utils/eventRouting'
 import { StreamState, PROTECTED_STREAM_STATES } from '@/types'
 import { TOOL_CALL_EVENT_TYPES, APPROVAL_EVENT_TYPES } from '@/types/realtimeEvents'
@@ -67,19 +66,10 @@ export const createHandleSessionEvent = (ctx) => {
    * @param {RealtimeEvent} event
    */
   const handleSessionEvent = async (event) => {
-    // 统一入站转换：WebSocket 事件 payload snake_case → camelCase，转换后所有下游
-    // handler（messageHandlers/toolCallHandler/approvalHandler）收到的数据均为
-    // camelCase，禁止再访问 snake_case 键名。
-    // 防御：转换异常时跳过该事件（由后续 replay/fullSync 补偿），保证函数不抛异常，
-    // 避免事件不进 orderedQueue 直接丢失
-    try {
-      event.payload = toCamelCase(event.payload)
-    } catch (err) {
-      logger.error(
-        `[Sync] session 事件 payload 转换失败，跳过事件: type=${event.type}, error=${err?.message || err}`
-      )
-      return
-    }
+    // 入站已转换：WebSocket 事件在 useRealtimeSync dispatcher 边界经
+    // parseProtocolEvent 整体 toCamelCase（type 还原为协议路由标识符），
+    // 此处不再二次转换；下游 handler 均消费 camelCase payload，
+    // 禁止再访问 snake_case 键名。
     // 路由字段解析（P3-R1 根因修复，统一入口 getEventSessionId）：后端将 session_id
     // 注入事件顶层（与 payload 平级，见 realtime_events.py _publish_to_session_async），
     // payload 内部不含 session_id；统一 helper 优先 payload，其次 event 顶层，

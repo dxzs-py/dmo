@@ -4,12 +4,10 @@
 统一使用项目标准响应格式 (code=200 表示成功)
 """
 
-import hmac
 import logging
 import uuid
 from typing import Any
 
-from django.core.cache import cache
 from django.http import HttpResponse
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, serializers, status
@@ -192,34 +190,6 @@ class CaptchaView(APIView):
         _code, image_buf = generator.generate(captcha_key)
 
         return HttpResponse(image_buf, content_type="image/png", headers={"X-Captcha-Key": captcha_key})
-
-
-class CaptchaVerifyView(APIView):
-    """
-    验证图形验证码
-    """
-
-    permission_classes = [AllowAny]
-
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
-        captcha_key = request.data.get("captcha_key")
-        captcha_code = request.data.get("captcha_code", "").lower()
-
-        if not captcha_key or not captcha_code:
-            raise BaseAppError("验证码不能为空", business_code=ErrorCode.INVALID_PARAMS)
-
-        stored_code = cache.get(f"captcha:{captcha_key}")
-
-        if not stored_code:
-            raise BaseAppError("验证码已过期，请刷新", business_code=ErrorCode.VALIDATION_FAILED)
-
-        if not hmac.compare_digest(str(stored_code), str(captcha_code)):
-            raise BaseAppError("验证码错误", business_code=ErrorCode.VALIDATION_FAILED)
-
-        cache.delete(f"captcha:{captcha_key}")
-
-        return success_response(message="验证成功")
 
 
 class SecureLogoutView(APIView):

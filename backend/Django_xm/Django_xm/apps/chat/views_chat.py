@@ -99,7 +99,6 @@ def _archive_current_version(message):
         "content": message.content or "",
         "sources": message.sources,
         "plan": message.plan,
-        "chain_of_thought": message.chain_of_thought,
         "tool_calls": message.tool_calls,
         "reasoning": message.reasoning or None,
         "suggestions": message.suggestions,

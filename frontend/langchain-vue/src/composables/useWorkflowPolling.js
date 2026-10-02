@@ -2,11 +2,10 @@ import { onUnmounted } from 'vue'
 import { workflowAPI } from '@/api/workflow'
 import { logger } from '@/utils/logger'
 import { LearningStep } from '@/types'
+import { usePollingBackoff } from './usePollingBackoff'
 
-/** 轮询退避常量（不可变配置，非实例可变状态，模块级共享安全） */
-const BASE_POLL_INTERVAL = 3000
-const MAX_POLL_INTERVAL = 30000
-const POLL_BACKOFF_FACTOR = 1.5
+/** 轮询退避参数：基础 3s / 上限 30s / 1.5 倍退避（不可变配置，模块级共享安全） */
+const POLLING_BACKOFF_OPTIONS = { baseDelay: 3000, maxDelay: 30000, multiplier: 1.5 }
 
 /**
  * 学习工作流状态轮询 composable
@@ -35,7 +34,8 @@ const POLL_BACKOFF_FACTOR = 1.5
 export function useWorkflowPolling({ execution, answersForm, onTerminal }) {
   /** @type {ReturnType<typeof setTimeout> | null} */
   let pollingTimer = null
-  let currentPollInterval = BASE_POLL_INTERVAL
+  // 退避骨架：当前间隔 / 退避一步 / 重置（usePollingBackoff 统一实现）
+  const { currentDelay: currentPollInterval, backoff: backoffPollInterval, reset: resetPollInterval } = usePollingBackoff(POLLING_BACKOFF_OPTIONS)
 
   const pollExecutionStatus = async () => {
     if (!execution.value) {
@@ -66,21 +66,15 @@ export function useWorkflowPolling({ execution, answersForm, onTerminal }) {
       }
 
       if (currentStep !== execution.value.currentStep) {
-        currentPollInterval = BASE_POLL_INTERVAL
+        resetPollInterval()
       } else {
-        currentPollInterval = Math.min(
-          Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
-          MAX_POLL_INTERVAL
-        )
+        backoffPollInterval()
       }
-      pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
+      pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval.value)
     } catch (error) {
       logger.error('获取工作流状态失败:', error)
-      currentPollInterval = Math.min(
-        Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
-        MAX_POLL_INTERVAL
-      )
-      pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
+      backoffPollInterval()
+      pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval.value)
     }
   }
 
@@ -89,7 +83,7 @@ export function useWorkflowPolling({ execution, answersForm, onTerminal }) {
       clearTimeout(pollingTimer)
       pollingTimer = null
     }
-    currentPollInterval = BASE_POLL_INTERVAL
+    resetPollInterval()
   }
 
   /**
@@ -97,7 +91,7 @@ export function useWorkflowPolling({ execution, answersForm, onTerminal }) {
    * 等价原 connectSSE 内联的 `pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)`
    */
   const schedulePolling = () => {
-    pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
+    pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval.value)
   }
 
   // 实例卸载自动清理定时器（keep-alive 失活由视图 onDeactivated 显式调用 stopPolling）

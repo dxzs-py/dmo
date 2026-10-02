@@ -26,7 +26,7 @@ from Django_xm.apps.chat.models import ChatMessage, ChatSession
 from Django_xm.apps.chat.serializers import ChatMessageSerializer, build_research_task_map
 
 # list 语义 JSONField（空值为 []）
-LIST_FIELDS = ("sources", "chain_of_thought", "suggestions", "versions", "tool_calls")
+LIST_FIELDS = ("sources", "suggestions", "versions", "tool_calls")
 # dict 语义 JSONField（空值为 {}）
 DICT_FIELDS = ("plan", "approval", "reasoning", "subagent_contents", "token_detail")
 ALL_JSON_FIELDS = [*LIST_FIELDS, *DICT_FIELDS]

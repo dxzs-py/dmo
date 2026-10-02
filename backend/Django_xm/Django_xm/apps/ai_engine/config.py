@@ -244,8 +244,6 @@ class Settings(ProjectSettings):
 
     guardrails_enable_pii: bool = Field(default=False, description="是否启用 PII 检测与脱敏")
 
-    guardrails_enable_human_in_loop: bool = Field(default=False, description="是否启用人工审核中断")
-
     guardrails_max_message_count: int = Field(default=100, ge=1, description="Guardrails 最大消息数量限制")
 
     guardrails_blocked_tools: str = Field(default="", description="Guardrails 额外屏蔽的工具名（逗号分隔）")

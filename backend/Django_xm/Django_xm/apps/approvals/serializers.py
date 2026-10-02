@@ -1,9 +1,6 @@
 """审批序列化器。
 
-按读/写职责拆分为两个序列化器：
-- ``ApprovalReadSerializer``：GET /approvals/、/approvals/{id}/、/approvals/{id}/state/，
-  暴露全部展示字段，全部 read_only。
-- ``ApprovalWriteSerializer``：POST /approvals/{id}/resume/、/approvals/{id}/reject/，
+- ``ApprovalWriteSerializer``：POST /approvals/{id}/resume/，
   白名单设计：客户端仅可提交 ``approved`` 与 ``user_input`` 两个字段，
   其他审批字段（state、parameters、approved_by、source 等）由服务端控制，
   客户端尝试提交 protected 字段会触发 ``to_internal_value`` 显式拒绝（返回 400），
@@ -13,47 +10,6 @@
 from rest_framework import serializers
 
 from Django_xm.apps.approvals.models import Approval
-
-
-class ApprovedBySerializer(serializers.Serializer):
-    """审批人简要信息。"""
-
-    id = serializers.IntegerField()
-    username = serializers.CharField()
-
-
-class ApprovalReadSerializer(serializers.ModelSerializer):
-    """审批读序列化器。
-
-    用于所有 GET 端点（list/detail/state），暴露全部展示字段。
-    全部字段标记 read_only，客户端无法通过任何端点修改审批字段。
-    """
-
-    approved_by = ApprovedBySerializer(read_only=True)
-
-    class Meta:
-        model = Approval
-        fields = [
-            "interrupt_id",
-            "source",
-            "source_id",
-            "chat_session_id",
-            "tool_name",
-            "title",
-            "description",
-            "action",
-            "operation",
-            "danger_level",
-            "parameters",
-            "state",
-            "user_input",
-            "approved_by",
-            "extra",
-            "created_at",
-            "resolved_at",
-        ]
-        # 全部 read_only：list/detail 视图仅用于读取，禁止任何写入
-        read_only_fields = fields
 
 
 # 客户端不允许通过 API 设置的审批字段（白名单之外的 protected 字段）

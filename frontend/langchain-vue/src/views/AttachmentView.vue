@@ -14,6 +14,7 @@ import {
 } from '@element-plus/icons-vue'
 import { attachmentAPI } from '@/api/attachment'
 import { logger } from '@/utils/logger'
+import { formatSizeAuto, formatDateTime, formatMB, formatGB } from '@/utils/format'
 
 const activeTab = ref('files')
 
@@ -60,33 +61,6 @@ const statusMap = {
 
 const selectedIds = ref([])
 const trashSelectedIds = ref([])
-
-const formatSize = (bytes) => {
-  if (!bytes || bytes === 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB']
-  let i = 0
-  let size = bytes
-  while (size >= 1024 && i < units.length - 1) {
-    size /= 1024
-    i++
-  }
-  return `${size.toFixed(i === 0 ? 0 : 2)} ${units[i]}`
-}
-
-const formatDate = (dateStr) => {
-  if (!dateStr) return '-'
-  return new Date(dateStr).toLocaleString('zh-CN')
-}
-
-const formatMB = (bytes) => {
-  if (!bytes || isNaN(bytes)) return '0 MB'
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
-}
-
-const formatGB = (bytes) => {
-  if (!bytes || isNaN(bytes)) return '0 GB'
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
-}
 
 const diskUsagePercent = computed(() => {
   return stats.value.storage?.diskUsagePercent || 0
@@ -531,7 +505,7 @@ onMounted(() => {
             <div class="stat-label">回收站</div>
           </div>
           <div class="stat-item">
-            <div class="stat-value">{{ formatSize(stats.storage?.totalSizeBytes) }}</div>
+            <div class="stat-value">{{ formatSizeAuto(stats.storage?.totalSizeBytes) }}</div>
             <div class="stat-label">附件总大小</div>
           </div>
           <div class="stat-item disk-usage">
@@ -653,7 +627,7 @@ onMounted(() => {
               <el-table-column prop="originalName" label="文件名" min-width="180" show-overflow-tooltip />
               <el-table-column prop="fileType" label="类型" width="80" />
               <el-table-column label="大小" width="100">
-                <template #default="{ row }">{{ formatSize(row.fileSize) }}</template>
+                <template #default="{ row }">{{ formatSizeAuto(row.fileSize) }}</template>
               </el-table-column>
               <el-table-column label="状态" width="100">
                 <template #default="{ row }">
@@ -667,7 +641,7 @@ onMounted(() => {
                 <template #default="{ row }">{{ row.retentionDays || '-' }}</template>
               </el-table-column>
               <el-table-column label="上传时间" width="160">
-                <template #default="{ row }">{{ formatDate(row.createdAt) }}</template>
+                <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
               </el-table-column>
               <el-table-column label="操作" width="220" fixed="right">
                 <template #default="{ row }">
@@ -767,10 +741,10 @@ onMounted(() => {
               <el-table-column prop="originalName" label="文件名" min-width="180" show-overflow-tooltip />
               <el-table-column prop="fileType" label="类型" width="80" />
               <el-table-column label="大小" width="100">
-                <template #default="{ row }">{{ formatSize(row.fileSize) }}</template>
+                <template #default="{ row }">{{ formatSizeAuto(row.fileSize) }}</template>
               </el-table-column>
               <el-table-column label="删除时间" width="160">
-                <template #default="{ row }">{{ formatDate(row.deletedAt) }}</template>
+                <template #default="{ row }">{{ formatDateTime(row.deletedAt) }}</template>
               </el-table-column>
               <el-table-column label="所属会话" min-width="140" show-overflow-tooltip>
                 <template #default="{ row }">{{ row.sessionTitle || row.sessionId || '-' }}</template>
@@ -849,7 +823,7 @@ onMounted(() => {
             </template>
           </el-table-column>
           <el-table-column label="时间" width="160">
-            <template #default="{ row }">{{ formatDate(row.createdAt) }}</template>
+            <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
           </el-table-column>
           <el-table-column label="操作" width="160">
             <template #default="{ row }">
@@ -896,7 +870,7 @@ onMounted(() => {
           </el-table-column>
           <el-table-column prop="triggeredBy" label="触发方式" width="100" />
           <el-table-column label="执行时间" min-width="160">
-            <template #default="{ row }">{{ formatDate(row.startedAt) }}</template>
+            <template #default="{ row }">{{ formatDateTime(row.startedAt) }}</template>
           </el-table-column>
         </el-table>
       </el-card>

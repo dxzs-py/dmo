@@ -5,13 +5,6 @@ import { useSessionStore } from '@/stores/session'
 import { StreamState } from '@/types'
 import { logger } from '../utils/logger'
 
-export const CONNECTION_STATUS = {
-  CONNECTED: 'connected',
-  DISCONNECTED: 'disconnected',
-  RECONNECTING: 'reconnecting',
-  CONNECTING: 'connecting',
-}
-
 /** 消息流结束状态轮询间隔（ms） */
 const STREAM_END_POLL_INTERVAL_MS = 300
 
@@ -134,7 +127,6 @@ function waitForStreamEnd(sessionId, messageId, signal) {
 export function useStreamChat() {
   const isStreaming = ref(false)
   const abortController = ref(null)
-  const connectionStatus = ref(CONNECTION_STATUS.DISCONNECTED)
   const lastError = ref(null)
 
   function abort() {
@@ -143,7 +135,6 @@ export function useStreamChat() {
     }
     isStreaming.value = false
     abortController.value = null
-    connectionStatus.value = CONNECTION_STATUS.DISCONNECTED
   }
 
   function resetState() {
@@ -166,7 +157,6 @@ export function useStreamChat() {
     const controller = new AbortController()
     abortController.value = controller
     isStreaming.value = true
-    connectionStatus.value = CONNECTION_STATUS.CONNECTING
     resetState()
 
     try {
@@ -174,30 +164,24 @@ export function useStreamChat() {
         signal: controller.signal,
       })
 
-      connectionStatus.value = CONNECTION_STATUS.CONNECTED
-
       const resData = response.data?.data || {}
       if (resData.status !== 'started') {
         const error = new Error(resData.message || response.data?.message || '消息发送失败')
         logger.error('[StreamChat] 聊天执行启动失败:', error.message)
         lastError.value = error.message
-        connectionStatus.value = CONNECTION_STATUS.DISCONNECTED
         throw error
       }
 
       const messageId = resData.messageId || null
       await waitForStreamEnd(requestData.sessionId, messageId, controller.signal)
 
-      connectionStatus.value = CONNECTION_STATUS.DISCONNECTED
       return { success: true }
     } catch (error) {
       if (error.name === 'AbortError') {
-        connectionStatus.value = CONNECTION_STATUS.DISCONNECTED
         return { success: false, aborted: true }
       }
       logger.error('[StreamChat] 异常:', error.message)
       lastError.value = error.message
-      connectionStatus.value = CONNECTION_STATUS.DISCONNECTED
       return { success: false, error }
     } finally {
       isStreaming.value = false
@@ -210,7 +194,6 @@ export function useStreamChat() {
     abortController,
     abort,
     streamChat,
-    connectionStatus: readonly(connectionStatus),
     lastError: readonly(lastError),
   }
 }

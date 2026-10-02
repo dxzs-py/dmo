@@ -1,11 +1,7 @@
 """统一审批 API 视图。
 
 提供单一审批端点，前端不再按 source 分支调用：
-- POST /api/v1/approvals/{interrupt_id}/resume/: 恢复审批
-- POST /api/v1/approvals/{interrupt_id}/reject/: 拒绝审批
-- GET /api/v1/approvals/?source_id=...: 查询审批历史
-- GET /api/v1/approvals/{interrupt_id}/: 查询单条审批
-- GET /api/v1/approvals/{interrupt_id}/state/: 查询审批当前状态
+- POST /api/v1/approvals/{interrupt_id}/resume/: 恢复审批（拒绝语义由 approved=false 承载）
 
 Path D 架构：
     所有审批统一走 ApprovalGateway 路由：
@@ -15,28 +11,21 @@ Path D 架构：
 
 import logging
 
-from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
-from rest_framework import generics
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from Django_xm.apps.approvals.filters import ApprovalFilter
 from Django_xm.apps.approvals.mixins import BaseApprovalAccessMixin
 from Django_xm.apps.approvals.models import Approval
-from Django_xm.apps.approvals.serializers import (
-    ApprovalReadSerializer,
-    ApprovalWriteSerializer,
-)
+from Django_xm.apps.approvals.serializers import ApprovalWriteSerializer
 from Django_xm.apps.approvals.services import approval_service
 from Django_xm.apps.approvals.services.approval_gateway import CircuitBreakerError, gateway
 from Django_xm.apps.core.throttling import SensitiveOperationRateThrottle
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.exceptions import BaseAppError
-from Django_xm.common.pagination import ProjectPagination
 from Django_xm.common.responses import success_response
 
 logger = logging.getLogger(__name__)
@@ -250,46 +239,6 @@ def _check_batch_and_route(
     )
 
 
-class ApprovalListView(generics.ListAPIView):
-    """审批列表（dj-15：真分页 + django-filter，替代 [:100] 硬截断）。"""
-
-    permission_classes = [IsAuthenticated]
-    serializer_class = ApprovalReadSerializer
-    # 显式空 queryset：drf-spectacular 生成 schema 时无请求上下文，会以 AnonymousUser
-    # 求值 get_queryset() 触发告警；实际查询仍由下方 get_queryset() 覆写提供。
-    queryset = Approval.objects.none()
-    filter_backends = [DjangoFilterBackend]
-    filterset_class = ApprovalFilter
-    pagination_class = ProjectPagination
-
-    @extend_schema(operation_id="approvals_list", responses={200: ApprovalReadSerializer(many=True)})
-    def get(self, request, *args, **kwargs):
-        return self.list(request, *args, **kwargs)
-
-    def get_queryset(self):
-        # select_related("approved_by")：序列化器嵌套输出审批人 id/username；
-        # user 字段不参与序列化，无需 join
-        return (
-            Approval.objects.filter(user=self.request.user)
-            .select_related("approved_by")
-            .order_by("-created_at")
-        )
-
-
-class ApprovalDetailView(BaseApprovalAccessMixin, APIView):
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(responses={200: ApprovalReadSerializer})
-    def get(self, request, interrupt_id):
-        try:
-            approval = Approval.objects.get(interrupt_id=interrupt_id)
-        except Approval.DoesNotExist:
-            raise NotFound("审批不存在") from None
-        self._assert_ownership(approval, request.user)
-        serializer = ApprovalReadSerializer(approval)
-        return success_response(data=serializer.data)
-
-
 class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
     """恢复审批：通过 ApprovalGateway 统一路由（Path D）。
 
@@ -303,7 +252,25 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
 
     @extend_schema(
         request=ApprovalWriteSerializer,
-        responses={200: ApprovalReadSerializer},
+        responses={
+            200: {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "integer", "example": 0},
+                    "message": {"type": "string", "example": "审批恢复任务已启动"},
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "interrupt_id": {"type": "string"},
+                            "source": {"type": "string"},
+                            "status": {"type": "string", "example": "resumed"},
+                            "graph_interrupt_id": {"type": "string"},
+                            "langgraph_resume_id": {"type": "string"},
+                        },
+                    },
+                },
+            }
+        },
     )
     def post(self, request, interrupt_id):
         write_serializer = ApprovalWriteSerializer(data=request.data)
@@ -379,162 +346,3 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
             interrupt_id,
             log_prefix="[ApprovalResume]",
         )
-
-
-class ApprovalRejectView(BaseApprovalAccessMixin, APIView):
-    """拒绝审批：通过 ApprovalGateway 统一路由（Path D）。
-
-    chat / deep_research → Redis 信令唤醒执行服务。
-    """
-
-    permission_classes = [IsAuthenticated]
-    throttle_classes = [SensitiveOperationRateThrottle]
-    renderer_classes = [JSONRenderer]
-
-    @extend_schema(
-        request=ApprovalWriteSerializer,
-        responses={200: ApprovalReadSerializer},
-    )
-    def post(self, request, interrupt_id):
-        write_serializer = ApprovalWriteSerializer(data=request.data)
-        if not write_serializer.is_valid():
-            raise BaseAppError(
-                "请求参数校验失败",
-                business_code=ErrorCode.VALIDATION_FAILED,
-                data={"details": write_serializer.errors},
-            )
-
-        try:
-            approval = Approval.objects.get(interrupt_id=interrupt_id)
-        except Approval.DoesNotExist:
-            approval = None
-        else:
-            self._assert_ownership(approval, request.user)
-
-        try:
-            result = approval_service.resume_approval(
-                interrupt_id=interrupt_id,
-                approved=False,
-                approved_by=request.user,
-            )
-        except ValueError:
-            logger.exception(f"[ApprovalRejectView] resume_approval 内部契约错误: interrupt_id={interrupt_id}")
-            raise BaseAppError("请求处理失败，请稍后重试", business_code=ErrorCode.VALIDATION_FAILED) from None
-
-        approval = result["approval"]
-        resume_value = result["resume_value"]
-        is_idempotent = result.get("idempotent", False)
-        not_found = result.get("not_found", False)
-
-        if not_found or approval is None:
-            raise NotFound("审批不存在")
-
-        # 幂等响应
-        if is_idempotent:
-            idempotent_data = _build_idempotent_data(interrupt_id)
-            if idempotent_data.get("state") == "waiting":
-                return _json_response(
-                    {
-                        "code": 0,
-                        "message": "审批已处理（幂等）",
-                        "data": idempotent_data,
-                    }
-                )
-            return success_response(data=idempotent_data)
-
-        # service 层检测到同批次还有其他 pending，返回 waiting 状态
-        if result.get("state") == "waiting":
-            return _json_response(
-                _build_waiting_data(
-                    interrupt_id,
-                    approval,
-                    False,
-                    message="本工具已拒绝，等待同批次其他工具审批完成后开始执行...",
-                )
-            )
-
-        # 统一路由：Gateway 根据 source 路由到 Redis 信令唤醒执行服务
-        return _check_batch_and_route(
-            request,
-            approval,
-            resume_value,
-            False,
-            interrupt_id,
-            log_prefix="[ApprovalReject]",
-        )
-
-
-class ApprovalStateView(BaseApprovalAccessMixin, APIView):
-    """查询审批当前状态。
-
-    GET /api/v1/approvals/{interrupt_id}/state/
-    返回指定审批的当前状态（state、resume_value 等），供前端轮询或断线恢复时使用。
-    """
-
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(exclude=True)
-    def get(self, request, interrupt_id):
-        try:
-            approval = Approval.objects.select_related("approved_by").get(interrupt_id=interrupt_id)
-        except Approval.DoesNotExist:
-            raise NotFound("审批不存在") from None
-
-        if not self._user_owns_approval(request.user, approval):
-            raise BaseAppError("无权查看该审批", business_code=ErrorCode.PERMISSION_DENIED)
-
-        extra_data = approval.extra or {}
-        resume_value = extra_data.get("_resume_value") if isinstance(extra_data, dict) else None
-
-        approved_by_info = None
-        if approval.approved_by:
-            approved_by_info = {
-                "id": approval.approved_by.id,
-                "username": approval.approved_by.username,
-            }
-
-        data = {
-            "interrupt_id": approval.interrupt_id,
-            "source": approval.source,
-            "source_id": approval.source_id,
-            "chat_session_id": approval.chat_session_id,
-            "state": approval.state,
-            "resume_value": resume_value,
-            "user_input": approval.user_input,
-            "approved_by": approved_by_info,
-            "tool_name": approval.tool_name,
-            "title": approval.title,
-            "description": approval.description,
-            "action": approval.action,
-            "operation": approval.operation,
-            "danger_level": approval.danger_level,
-            "parameters": approval.parameters,
-            "created_at": approval.created_at.isoformat() if approval.created_at else None,
-            "resolved_at": approval.resolved_at.isoformat() if approval.resolved_at else None,
-        }
-        return success_response(data=data)
-
-
-class ApprovalMetricsView(APIView):
-    """审批可观测性指标端点（F2）。
-
-    GET /api/v1/approvals/metrics/
-    返回审批体系的实时指标快照，供监控系统与运维面板使用。
-
-    指标包含：
-    - pending_count: 当前待审批数
-    - total: 累计创建/通过/拒绝/超时/自动通过数
-    - risk_distribution: 风险等级分布（safe/controlled/high）
-    - sandbox: 沙箱执行成功率
-    - latency: 平均审批耗时
-    - thresholds: 熔断阈值配置
-    """
-
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(exclude=True)
-    def get(self, request):
-        from Django_xm.common.observability.approval_metrics import approval_metrics
-
-        snapshot = approval_metrics.snapshot()
-        return success_response(data=snapshot)

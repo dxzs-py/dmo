@@ -10,12 +10,10 @@ from .content_filters import ContentFilter, ContentSafetyLevel, FilterResult
 from .input_validators import InputValidationResult, InputValidator
 from .middleware import (
     GuardrailsMiddleware,
-    HumanInTheLoopMiddleware,
     PIIMiddleware,
     RateLimitMiddleware,
     build_middleware_stack,
     create_guardrails_middleware,
-    create_human_in_the_loop_middleware,
     create_pii_middleware,
     create_rate_limit_middleware,
 )
@@ -95,7 +93,6 @@ __all__ = [
     "ContentSafetyLevel",
     "FilterResult",
     "GuardrailsMiddleware",
-    "HumanInTheLoopMiddleware",
     "InputValidationResult",
     "InputValidator",
     "OutputValidationResult",
@@ -104,7 +101,6 @@ __all__ = [
     "RateLimitMiddleware",
     "build_middleware_stack",
     "create_guardrails_middleware",
-    "create_human_in_the_loop_middleware",
     "create_pii_middleware",
     "create_rate_limit_middleware",
     "create_standard_guardrails",

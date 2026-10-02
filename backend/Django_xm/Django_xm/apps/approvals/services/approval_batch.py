@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -255,3 +256,119 @@ def assert_non_empty_decision(result) -> None:
         raise RuntimeError(
             "审批创建失败：审批中断回调返回空决策，无审批批次可等待（任务终止）"
         )
+
+
+def self_heal_expired_approvals(source: str, source_id: str, graph_interrupt_id: str) -> int:
+    """批次自愈：对批次内已过期且仍为 pending 的审批终态化为 TIMEOUT。
+
+    B⑦ 收敛：chat 与 research 双链路统一实现（source 参数化）。chat 链路
+    此前缺失自愈语义（与 research 版行为不一致），现统一补齐。过期判定：
+    - ``expires_at`` 已过；或
+    - ``expires_at`` 缺失且 ``created_at`` 距今超过 300 秒（兜底）。
+
+    Args:
+        source: 审批来源（``Approval.Source.CHAT`` / ``Approval.Source.DEEP_RESEARCH``）。
+        source_id: 会话/任务 ID（chat=session_id, deep_research=thread_id）。
+        graph_interrupt_id: 批次 ID。
+
+    Returns:
+        int: 自愈终态化数量
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from django.db.models import Q
+
+    from Django_xm.apps.approvals.services.approval_service import timeout_approval
+
+    now = datetime.now(UTC)
+    expired_ids = list(
+        Approval.objects.filter(
+            source=source,
+            source_id=source_id,
+            extra__graph_interrupt_id=graph_interrupt_id,
+            state=Approval.State.PENDING,
+        )
+        .filter(
+            Q(expires_at__lt=now)
+            | Q(expires_at__isnull=True, created_at__lt=now - timedelta(seconds=300))
+        )
+        .values_list("interrupt_id", flat=True)
+    )
+    for interrupt_id in expired_ids:
+        timeout_approval(interrupt_id, dispatch_resume=False)
+    if expired_ids:
+        logger.info(
+            f"[ApprovalBatch] 批次自愈终态化 {len(expired_ids)} 条过期审批: "
+            f"source={source}, source_id={source_id}, graph_interrupt_id={graph_interrupt_id}"
+        )
+    return len(expired_ids)
+
+
+async def await_wait_for_batch_decision(
+    executor,
+    *,
+    source: str,
+    source_id: str,
+    graph_interrupt_id: str,
+    poll_interval: int = 5,
+    log_label: str = "ApprovalBatch",
+    id_label: str = "source_id",
+) -> dict:
+    """挂起等待同批次全部审批决断，返回 Command(resume=...) 的 decisions。
+
+    chat（``chat_executor_core._wait_for_chat_batch_decision``）与 research
+    （``SessionExecutor._wait_for_batch_decision``）双链路唯一实现（B⑦ 收敛），
+    仅 source / source_id / 轮询间隔 / 日志标签差异（参数化）。机制：
+
+    - 优先检查 DB 批次完整性（可能已被前端提前全部确认）；
+    - 否则挂起 ``executor._pending_events`` 中的 ``asyncio.Event``，
+      由审批信令（on_approval_signal）唤醒；
+    - 挂起期间周期性自愈过期审批（终态化 TIMEOUT）并轮询 DB
+      （信令丢失最终一致兜底）；
+    - 仅当同批次全部决断才退出（避免部分决断即恢复导致重入）；
+    - 收到停止请求（``executor._stop_requested``）立即以 CancelledError 退出，
+      由外层 finally 落库并广播。
+
+    Args:
+        executor: 执行器实例（提供 ``_pending_events`` / ``_stop_requested``，
+            chat 与 research 执行器同构）。
+        source: 审批来源（``Approval.Source.CHAT`` / ``Approval.Source.DEEP_RESEARCH``）。
+        source_id: 会话/任务 ID（chat=session_id, deep_research=thread_id）。
+        graph_interrupt_id: 批次 ID。
+        poll_interval: 信令等待超时（秒），超时后轮询 DB（自愈/兜底）。
+        log_label: 日志前缀（区分链路）。
+        id_label: 日志中 source_id 的字段名（"session" / "thread_id"）。
+
+    Returns:
+        resume_by_interrupt: {langgraph_resume_id: {tool_call_id: bool|TIMEOUT_DECISION}}
+    """
+    event = asyncio.Event()
+    executor._pending_events[graph_interrupt_id] = event
+    try:
+        while True:
+            # 安全点（Task 9）：收到停止请求立即退出等待，由外层 finally 落库并广播
+            if executor._stop_requested:
+                raise asyncio.CancelledError("用户停止生成")
+            resume_by_interrupt, all_resolved = await sync_to_async(collect_batch_decisions)(
+                source, source_id, graph_interrupt_id
+            )
+            if all_resolved:
+                break
+            # 批次自愈：过期 pending 终态化为 TIMEOUT（chat/research 统一，B⑦）
+            await sync_to_async(self_heal_expired_approvals)(source, source_id, graph_interrupt_id)
+            # 等待审批信令（周期轮询兜底）。信令唤醒或轮询超时均重新读取 DB，
+            # 只有全部决断才退出循环——保证 Command(resume=...) 携带完整批次决策。
+            event.clear()
+            try:
+                await asyncio.wait_for(event.wait(), timeout=poll_interval)
+            except TimeoutError:
+                pass  # 未收到信令：继续轮询校验
+    finally:
+        executor._pending_events.pop(graph_interrupt_id, None)
+
+    logger.info(
+        f"[{log_label}] 批次全部决断，恢复执行: {id_label}={source_id}, "
+        f"graph_interrupt_id={graph_interrupt_id}, decisions={resume_by_interrupt}"
+    )
+    await sync_to_async(finalize_batch_approvals)(resume_by_interrupt, source, source_id)
+    return resume_by_interrupt

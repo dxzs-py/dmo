@@ -37,7 +37,6 @@ from .serializers import (
     WorkflowAttemptSerializer,
     WorkflowQuestionSerializer,
     WorkflowQuestionUpdateSerializer,
-    WorkflowResponseSerializer,
     WorkflowSessionSerializer,
     WorkflowStartSerializer,
     WorkflowSubmitSerializer,
@@ -99,56 +98,6 @@ class _WorkflowJSONEncoder(json.JSONEncoder):
         if hasattr(obj, "__dict__"):
             return str(obj)
         return super().default(obj)
-
-
-class WorkflowStartView(APIView):
-    """启动学习工作流视图"""
-
-    permission_classes = [IsAuthenticated]
-    throttle_classes = [LearningRateThrottle]
-
-    @extend_schema(request=WorkflowStartSerializer, responses={200: WorkflowResponseSerializer})
-    def post(self, request):
-        """
-        启动学习工作流
-
-        工作流会自动执行以下步骤：
-        1. 分析用户问题，生成学习计划
-        2. 检索相关文档
-        3. 生成练习题
-        4. 暂停，等待用户提交答案
-        """
-        serializer = WorkflowStartSerializer(data=request.data)
-        if not serializer.is_valid():
-            raise ValidationError(serializer.errors)
-
-        user_question = serializer.validated_data.get("user_question") or serializer.validated_data.get("query")
-        result = WorkflowService.start_workflow(
-            user_question=user_question,
-            thread_id=serializer.validated_data.get("thread_id"),
-            user_id=request.user.id,
-            knowledge_base_ids=serializer.validated_data.get("knowledge_base_ids"),
-            provider_id=serializer.validated_data.get("provider_id"),
-            model_name=serializer.validated_data.get("model_name"),
-            temperature=serializer.validated_data.get("temperature"),
-            max_tokens=serializer.validated_data.get("max_tokens"),
-            special_params=serializer.validated_data.get("special_params"),
-            enable_deep_thinking=serializer.validated_data.get("use_deep_thinking", False),
-            use_web_search=serializer.validated_data.get("use_web_search", False),
-        )
-
-        try:
-            from .services.persistence_service import get_persistence_service
-
-            persistence_service = get_persistence_service()
-            persistence_service.save_workflow_state(
-                thread_id=result["thread_id"], state=result, user_id=request.user.id
-            )
-        except Exception as persist_err:
-            logger.warning(f"持久化工作流会话失败: {persist_err}")
-
-        response_serializer = WorkflowResponseSerializer(result)
-        return success_response(data=response_serializer.data, message="操作成功")
 
 
 class WorkflowStartStreamView(APIView):
@@ -866,23 +815,6 @@ class WorkflowStatusView(APIView):
                 "updated_at": state.get("updated_at", ""),
             }
         )
-
-
-class WorkflowHistoryView(APIView):
-    """获取工作流历史视图"""
-
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(responses={200: EmptySerializer})
-    def get(self, request, thread_id):
-        session = WorkflowSession.objects.filter(
-            thread_id=thread_id, created_by=request.user, is_deleted=False
-        ).first()
-        if not session:
-            raise NotFound("工作流会话不存在或无权访问")
-
-        history = WorkflowService.get_workflow_history(thread_id)
-        return success_response(data={"thread_id": thread_id, "history": history})
 
 
 class WorkflowTaskDeleteView(APIView):

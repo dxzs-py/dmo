@@ -315,57 +315,9 @@ def finalize_research(
 
 # ---------------------------------------------------------------------------
 # 审批批次决策与执行器恢复辅助
-# （collect_batch_decisions / finalize_batch_approvals 已收敛到
-#   approvals.services.approval_batch，仅保留 self_heal_expired_approvals 研究专属）
+# （collect_batch_decisions / finalize_batch_approvals / self_heal_expired_approvals
+#   已全部收敛到 approvals.services.approval_batch 共享实现，本模块不再保留副本）
 # ---------------------------------------------------------------------------
-
-
-def self_heal_expired_approvals(thread_id: str, graph_interrupt_id: str) -> int:
-    """批次自愈：对批次内已过期且仍为 pending 的审批终态化为 TIMEOUT。
-
-    Args:
-        thread_id: 研究任务 ID
-        graph_interrupt_id: 批次 ID
-
-    Returns:
-        int: 自愈终态化数量
-    """
-    from datetime import UTC as _UTC
-    from datetime import datetime as _datetime
-    from datetime import timedelta as _timedelta
-
-    from django.db.models import Q as _Q
-
-    from Django_xm.apps.approvals.models import Approval as _Approval
-    from Django_xm.apps.approvals.services.approval_service import (
-        timeout_approval as _timeout_approval,
-    )
-
-    _now = _datetime.now(_UTC)
-    _expired_ids = list(
-        _Approval.objects.filter(
-            source=_Approval.Source.DEEP_RESEARCH,
-            source_id=thread_id,
-            extra__graph_interrupt_id=graph_interrupt_id,
-            state=_Approval.State.PENDING,
-        )
-        .filter(
-            _Q(expires_at__lt=_now)
-            | _Q(
-                expires_at__isnull=True,
-                created_at__lt=_now - _timedelta(seconds=300),
-            )
-        )
-        .values_list("interrupt_id", flat=True)
-    )
-    for _interrupt_id in _expired_ids:
-        _timeout_approval(_interrupt_id, dispatch_resume=False)
-    if _expired_ids:
-        logger.info(
-            f"[Resume] 批次自愈终态化 {len(_expired_ids)} 条过期审批: "
-            f"thread_id={thread_id}, graph_interrupt_id={graph_interrupt_id}"
-        )
-    return len(_expired_ids)
 
 
 def cleanup_research_sandbox(thread_id: str) -> dict:

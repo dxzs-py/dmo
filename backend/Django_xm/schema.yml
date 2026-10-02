@@ -95,146 +95,6 @@ paths:
       responses:
         '200':
           description: 页面浏览已记录
-  /api/v1/approvals/:
-    get:
-      operationId: approvals_list
-      description: 审批列表（dj-15：真分页 + django-filter，替代 [:100] 硬截断）。
-      parameters:
-      - in: query
-        name: chat_session_id
-        schema:
-          type: string
-      - name: page
-        required: false
-        in: query
-        description: 分页结果集中的页码。
-        schema:
-          type: integer
-      - name: page_size
-        required: false
-        in: query
-        description: 每页返回的结果数量。
-        schema:
-          type: integer
-      - in: query
-        name: source
-        schema:
-          type: string
-          enum:
-          - chat
-          - deep_research
-        description: |-
-          * `chat` - Chat
-          * `deep_research` - Deep Research
-      - in: query
-        name: source_id
-        schema:
-          type: string
-      - in: query
-        name: state
-        schema:
-          type: string
-          enum:
-          - approved
-          - pending
-          - processing
-          - rejected
-          - timeout
-          - waiting
-        description: |-
-          * `pending` - Pending
-          * `processing` - Processing
-          * `waiting` - Waiting
-          * `approved` - Approved
-          * `rejected` - Rejected
-          * `timeout` - Timeout
-      tags:
-      - approvals
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaginatedApprovalReadList'
-          description: ''
-  /api/v1/approvals/{interrupt_id}/:
-    get:
-      operationId: approvals_retrieve
-      description: |-
-        审批归属校验 Mixin。
-
-        使用方式::
-
-            class ApprovalDetailView(BaseApprovalAccessMixin, APIView):
-                def get(self, request, interrupt_id):
-                    approval = Approval.objects.get(interrupt_id=interrupt_id)
-                    self._assert_ownership(approval, request.user)
-                    # ...
-
-        或直接通过 `_get_owned_approval` 查询并校验::
-
-            approval = self._get_owned_approval(interrupt_id, request.user)
-            self._assert_ownership(approval, request.user)
-      parameters:
-      - in: path
-        name: interrupt_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - approvals
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApprovalRead'
-          description: ''
-  /api/v1/approvals/{interrupt_id}/reject/:
-    post:
-      operationId: approvals_reject_create
-      description: |-
-        拒绝审批：通过 ApprovalGateway 统一路由（Path D）。
-
-        chat / deep_research → Redis 信令唤醒执行服务。
-      parameters:
-      - in: path
-        name: interrupt_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - approvals
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ApprovalWrite'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/ApprovalWrite'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/ApprovalWrite'
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApprovalRead'
-          description: ''
   /api/v1/approvals/{interrupt_id}/resume/:
     post:
       operationId: approvals_resume_create
@@ -271,7 +131,28 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApprovalRead'
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                  message:
+                    type: string
+                    example: 审批恢复任务已启动
+                  data:
+                    type: object
+                    properties:
+                      interrupt_id:
+                        type: string
+                      source:
+                        type: string
+                      status:
+                        type: string
+                        example: resumed
+                      graph_interrupt_id:
+                        type: string
+                      langgraph_resume_id:
+                        type: string
           description: ''
   /api/v1/attachments/admin/:
     get:
@@ -608,124 +489,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ChatSessionDetail'
-          description: ''
-  /api/v1/context/capability-config/:
-    get:
-      operationId: context_capability_config_retrieve
-      tags:
-      - context
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      - {}
-      responses:
-        '200':
-          description: No response body
-  /api/v1/context/compress/:
-    post:
-      operationId: context_compress_create
-      description: 手动触发上下文压缩
-      tags:
-      - context
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ContextCompressRequest'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/ContextCompressRequest'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/ContextCompressRequest'
-        required: true
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ContextCompressResponse'
-          description: ''
-  /api/v1/context/knowledge-graph/:
-    delete:
-      operationId: context_knowledge_graph_destroy
-      tags:
-      - context
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/context/knowledge-graph/detail/:
-    get:
-      operationId: context_knowledge_graph_detail_retrieve
-      description: 获取知识图谱实体和关系详情
-      parameters:
-      - in: query
-        name: session_id
-        schema:
-          type: string
-          minLength: 1
-        description: 会话ID
-      tags:
-      - context
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/KnowledgeGraphDetailResponse'
-          description: ''
-  /api/v1/context/stats/:
-    get:
-      operationId: context_stats_retrieve
-      tags:
-      - context
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ContextStats'
-          description: ''
-  /api/v1/context/token-budget/:
-    get:
-      operationId: context_token_budget_retrieve
-      description: 获取 Token 预算使用情况
-      parameters:
-      - in: query
-        name: session_id
-        schema:
-          type: string
-          minLength: 1
-        description: 会话ID
-      tags:
-      - context
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokenBudgetResponse'
           description: ''
   /api/v1/core/:
     get:
@@ -1198,60 +961,6 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/learning/history/{thread_id}/:
-    get:
-      operationId: learning_history_retrieve
-      description: 获取工作流历史视图
-      parameters:
-      - in: path
-        name: thread_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - learning
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/learning/start/:
-    post:
-      operationId: learning_start_create
-      description: |-
-        启动学习工作流
-
-        工作流会自动执行以下步骤：
-        1. 分析用户问题，生成学习计划
-        2. 检索相关文档
-        3. 生成练习题
-        4. 暂停，等待用户提交答案
-      tags:
-      - learning
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/WorkflowStart'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/WorkflowStart'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/WorkflowStart'
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/WorkflowResponse'
-          description: ''
   /api/v1/learning/start/stream/:
     post:
       operationId: learning_start_stream_create
@@ -1872,30 +1581,6 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/mcp/servers/discover/:
-    post:
-      operationId: tools_mcp_servers_discover_create
-      tags:
-      - tools
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/tools/mcp/status/:
-    get:
-      operationId: tools_mcp_status_retrieve
-      tags:
-      - tools
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
   /api/v1/tools/mcp/tools/:
     get:
       operationId: tools_mcp_tools_retrieve
@@ -2132,20 +1817,6 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/users/captcha/verify/:
-    post:
-      operationId: users_captcha_verify_create
-      description: 验证图形验证码
-      tags:
-      - users
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      - {}
-      responses:
-        '200':
-          description: No response body
   /api/v1/users/change-password/:
     post:
       operationId: users_change_password_create
@@ -2236,33 +1907,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenRefresh'
-          description: ''
-  /api/v1/users/login/verify/:
-    post:
-      operationId: users_login_verify_create
-      description: |-
-        Takes a token and indicates if it is valid.  This view provides no
-        information about a token's fitness for a particular use.
-      tags:
-      - users
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TokenVerify'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/TokenVerify'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/TokenVerify'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokenVerify'
           description: ''
   /api/v1/users/preferences/:
     get:
@@ -2360,89 +2004,6 @@ paths:
           description: No response body
 components:
   schemas:
-    ApprovalRead:
-      type: object
-      description: |-
-        审批读序列化器。
-
-        用于所有 GET 端点（list/detail/state），暴露全部展示字段。
-        全部字段标记 read_only，客户端无法通过任何端点修改审批字段。
-      properties:
-        interrupt_id:
-          type: string
-          readOnly: true
-        source:
-          allOf:
-          - $ref: '#/components/schemas/SourceEnum'
-          readOnly: true
-        source_id:
-          type: string
-          readOnly: true
-        chat_session_id:
-          type: string
-          readOnly: true
-          nullable: true
-        tool_name:
-          type: string
-          readOnly: true
-        title:
-          type: string
-          readOnly: true
-        description:
-          type: string
-          readOnly: true
-        action:
-          type: string
-          readOnly: true
-        operation:
-          type: string
-          readOnly: true
-        danger_level:
-          type: string
-          readOnly: true
-        parameters:
-          readOnly: true
-        state:
-          allOf:
-          - $ref: '#/components/schemas/StateEnum'
-          readOnly: true
-        user_input:
-          type: string
-          readOnly: true
-          nullable: true
-        approved_by:
-          allOf:
-          - $ref: '#/components/schemas/ApprovedBy'
-          readOnly: true
-        extra:
-          readOnly: true
-        created_at:
-          type: string
-          format: date-time
-          readOnly: true
-        resolved_at:
-          type: string
-          format: date-time
-          readOnly: true
-          nullable: true
-      required:
-      - action
-      - approved_by
-      - chat_session_id
-      - created_at
-      - danger_level
-      - description
-      - extra
-      - interrupt_id
-      - operation
-      - parameters
-      - resolved_at
-      - source
-      - source_id
-      - state
-      - title
-      - tool_name
-      - user_input
     ApprovalWrite:
       type: object
       description: |-
@@ -2464,17 +2025,6 @@ components:
           type: string
           nullable: true
           maxLength: 10000
-    ApprovedBy:
-      type: object
-      description: 审批人简要信息。
-      properties:
-        id:
-          type: integer
-        username:
-          type: string
-      required:
-      - id
-      - username
     ChatMessage:
       type: object
       description: |-
@@ -2507,8 +2057,6 @@ components:
           title: 来源
         plan:
           title: 计划
-        chain_of_thought:
-          readOnly: true
         tool_calls:
           readOnly: true
         approval:
@@ -2579,7 +2127,6 @@ components:
       required:
       - attachment_ids
       - attachments
-      - chain_of_thought
       - created_at
       - id
       - research_task_deleted
@@ -2907,54 +2454,6 @@ components:
       - selected_knowledge_bases
       - session_id
       - updated_at
-    ContextCompressRequest:
-      type: object
-      properties:
-        session_id:
-          type: string
-          description: 会话ID
-      required:
-      - session_id
-    ContextCompressResponse:
-      type: object
-      properties:
-        original_tokens:
-          type: integer
-        compressed_tokens:
-          type: integer
-        compression_ratio:
-          type: number
-          format: double
-        messages_removed:
-          type: integer
-      required:
-      - compressed_tokens
-      - compression_ratio
-      - messages_removed
-      - original_tokens
-    ContextStats:
-      type: object
-      properties:
-        user_id:
-          type: integer
-          nullable: true
-        compression_enabled:
-          type: boolean
-        knowledge_graph_enabled:
-          type: boolean
-        cross_session_enabled:
-          type: boolean
-        kg_entity_count:
-          type: integer
-          default: 0
-        kg_relation_count:
-          type: integer
-          default: 0
-      required:
-      - compression_enabled
-      - cross_session_enabled
-      - knowledge_graph_enabled
-      - user_id
     CreateKnowledgeBase:
       type: object
       description: 创建知识库请求序列化器（views_kb.KnowledgeBaseListView.post）。
@@ -2969,35 +2468,6 @@ components:
           description: 知识库描述
       required:
       - name
-    Entity:
-      type: object
-      properties:
-        name:
-          type: string
-        entity_type:
-          type: string
-        properties:
-          type: object
-          additionalProperties: {}
-        confidence:
-          type: number
-          format: double
-        first_seen:
-          type: number
-          format: double
-        last_seen:
-          type: number
-          format: double
-        mention_count:
-          type: integer
-      required:
-      - confidence
-      - entity_type
-      - first_seen
-      - last_seen
-      - mention_count
-      - name
-      - properties
     FeatureUse:
       type: object
       properties:
@@ -3024,26 +2494,6 @@ components:
           description: 返回结果数量
       required:
       - query
-    KnowledgeGraphDetailResponse:
-      type: object
-      properties:
-        entities:
-          type: array
-          items:
-            $ref: '#/components/schemas/Entity'
-        relations:
-          type: array
-          items:
-            $ref: '#/components/schemas/Relation'
-        entity_count:
-          type: integer
-        relation_count:
-          type: integer
-      required:
-      - entities
-      - entity_count
-      - relation_count
-      - relations
     Message:
       type: object
       description: 聊天历史消息项 - 用于请求输入中的 chat_history 字段验证
@@ -3113,29 +2563,6 @@ components:
           maxLength: 200
       required:
       - path
-    PaginatedApprovalReadList:
-      type: object
-      required:
-      - count
-      - results
-      properties:
-        count:
-          type: integer
-          example: 123
-        next:
-          type: string
-          nullable: true
-          format: uri
-          example: http://api.example.org/accounts/?page=4
-        previous:
-          type: string
-          nullable: true
-          format: uri
-          example: http://api.example.org/accounts/?page=2
-        results:
-          type: array
-          items:
-            $ref: '#/components/schemas/ApprovalRead'
     PatchedChatMessage:
       type: object
       description: |-
@@ -3168,8 +2595,6 @@ components:
           title: 来源
         plan:
           title: 计划
-        chain_of_thought:
-          readOnly: true
         tool_calls:
           readOnly: true
         approval:
@@ -3304,31 +2729,6 @@ components:
           nullable: true
       required:
       - answer
-    Relation:
-      type: object
-      properties:
-        source:
-          type: string
-        target:
-          type: string
-        relation_type:
-          type: string
-        properties:
-          type: object
-          additionalProperties: {}
-        confidence:
-          type: number
-          format: double
-        created_at:
-          type: number
-          format: double
-      required:
-      - confidence
-      - created_at
-      - properties
-      - relation_type
-      - source
-      - target
     ResearchContinue:
       type: object
       properties:
@@ -3529,47 +2929,6 @@ components:
       required:
       - content
       - metadata
-    SourceEnum:
-      enum:
-      - chat
-      - deep_research
-      type: string
-      description: |-
-        * `chat` - Chat
-        * `deep_research` - Deep Research
-    StateEnum:
-      enum:
-      - pending
-      - processing
-      - waiting
-      - approved
-      - rejected
-      - timeout
-      type: string
-      description: |-
-        * `pending` - Pending
-        * `processing` - Processing
-        * `waiting` - Waiting
-        * `approved` - Approved
-        * `rejected` - Rejected
-        * `timeout` - Timeout
-    TokenBudgetResponse:
-      type: object
-      properties:
-        total_budget:
-          type: integer
-        used:
-          type: integer
-        remaining:
-          type: integer
-        utilization_percent:
-          type: number
-          format: double
-      required:
-      - remaining
-      - total_budget
-      - used
-      - utilization_percent
     TokenRefresh:
       type: object
       properties:
@@ -3581,14 +2940,6 @@ components:
       required:
       - access
       - refresh
-    TokenVerify:
-      type: object
-      properties:
-        token:
-          type: string
-          writeOnly: true
-      required:
-      - token
     UserEventWrite:
       type: object
       properties:
@@ -3674,43 +3025,6 @@ components:
           description: 用户答案文本
       required:
       - user_answer
-    WorkflowResponse:
-      type: object
-      description: 工作流通用响应
-      properties:
-        thread_id:
-          type: string
-        status:
-          type: string
-        message:
-          type: string
-        current_step:
-          type: string
-        learning_plan:
-          type: object
-          additionalProperties: {}
-          nullable: true
-        quiz:
-          type: object
-          additionalProperties: {}
-          nullable: true
-        score:
-          type: integer
-          nullable: true
-        score_details:
-          type: object
-          additionalProperties: {}
-          nullable: true
-        feedback:
-          type: string
-        should_retry:
-          type: boolean
-          default: false
-        error:
-          type: string
-      required:
-      - status
-      - thread_id
     WorkflowStart:
       type: object
       description: 启动工作流请求

@@ -216,6 +216,12 @@ def _maybe_rewrite_query(query: str, model: Any | None, use_hyde: bool) -> str:
 async def _amaybe_rewrite_query(query: str, model: Any | None, use_hyde: bool) -> str:
     """入口级 HyDE 查询改写（异步）：未启用时原样返回
 
+    真差异判定（B⑪，与 _maybe_rewrite_query 不可合并）：
+    二者分别调用 RetrievalAugmenter 的 async / sync 改写内核
+    （hyde_rewrite vs hyde_rewrite_sync），属底层双协议 API 的分叉，
+    共同骨架（use_hyde 判断 / llm 解析 / 日志收尾）已由
+    _log_hyde_outcome 等辅助函数共享。
+
     Args:
         query: 原始查询
         model: 入口 model 参数（字符串 / BaseChatModel 实例 / None）
@@ -310,6 +316,11 @@ async def _aretrieve_with_fallback(
 
     Raises:
         Exception: 非 embedding 类异常原样上抛
+
+    真差异判定（B⑪，与 _retrieve_with_fallback 不可合并）：
+        仅降级分支经 asyncio.to_thread（关键词检索是重 IO，必须离开事件循环）；
+        初始 Pipeline 检索有意保持在事件循环内同步执行（与原实现一致，见上）。
+        整体 to_thread 委托同步核心会改变初始检索的执行上下文，故保留双实现。
     """
     from Django_xm.apps.knowledge.services.retrieval_service import (
         _is_embedding_error,
@@ -359,27 +370,14 @@ def _handle_empty_result(query: str, collection_name: str) -> tuple[str, bool]:
 
 
 async def _ahandle_empty_result(query: str, collection_name: str) -> tuple[str, bool]:
-    """无检索结果处理（异步）：IO 经 asyncio.to_thread 执行避免阻塞事件循环
+    """无检索结果处理（异步薄壳，B⑪ 收敛）：整体经 asyncio.to_thread 委托同步核心
 
-    Args:
-        query: 原始用户查询
-        collection_name: 知识库 collection 名称
-
-    Returns:
-        (answer, used_kb_pipeline)：used_kb_pipeline 为 True 表示答案来自
-        知识库全量降级管道（调用方应将 degraded 置 True）
+    原实现与同步版逻辑逐字相同，仅对 load_kb_documents 与 pipeline.search
+    两处 IO 分别 to_thread。UnifiedRagPipeline 无状态且线程安全（见其
+    docstring），故整体委托同步核心、单次线程切换即可——输出与原实现
+    完全一致，且避免双路径漂移。
     """
-    from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline, load_kb_documents
-
-    if collection_name:
-        kb_docs, kb_tokens = await asyncio.to_thread(load_kb_documents, [collection_name])
-    else:
-        kb_docs, kb_tokens = [], 0
-    if kb_docs:
-        pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-        answer = await asyncio.to_thread(pipeline.search, query, kb_docs, kb_tokens)
-        return answer, True
-    return NO_RESULT_ANSWER, False
+    return await asyncio.to_thread(_handle_empty_result, query, collection_name)
 
 
 def _is_degraded_result(degraded: bool, docs: list[Document]) -> bool:

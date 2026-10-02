@@ -290,12 +290,11 @@ import { Upload, Document } from '@element-plus/icons-vue'
 import { formatDate, formatFileSize } from '../utils/format'
 import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
 import { logger } from '../utils/logger'
-import { readSSEStream } from '../utils/sse'
-import { extractSSEError } from '../utils/apiErrorHandler'
 import { confirmDelete, confirmAction } from '../utils/dialog'
 import { useSessionStore } from '../stores/session'
 import { useRealtimeSync } from '../composables/useRealtimeSync'
 import { useApiTask } from '../composables/useApiTask'
+import { useSSEStream } from '../composables/useSSEStream'
 import { buildUploadFormData, notifyEmbeddingFallback, getUploadErrorMessage, trackUploadTask } from '../utils/knowledgeUpload'
 
 const sessionStore = useSessionStore()
@@ -312,7 +311,8 @@ const createFormRef = ref(null)
 const uploadFiles = ref([])
 const showCreateDialog = ref(false)
 const streamingAnswer = ref('')
-let abortController = null
+// SSE 连接骨架委托 useSSEStream（onEvent 惰性转发 handleStreamEvent，避免定义顺序 TDZ）
+const sseStream = useSSEStream({ onEvent: (parsed) => handleStreamEvent(parsed) })
 
 const selectedIndexName = ref('')
 
@@ -577,35 +577,23 @@ const executeStreamQuery = async () => {
   errorMessage.value = ''
   streamingAnswer.value = ''
 
-  abortController = new AbortController()
-
   try {
-    const response = await ragAPI.streamQuery({
-      indexName: selectedIndexName.value,
-      query: queryForm.query,
-      k: queryForm.k,
-      returnSources: true
-    }, {
-      signal: abortController.signal,
-    })
+    const streamResult = await sseStream.start((signal) =>
+      ragAPI.streamQuery({
+        indexName: selectedIndexName.value,
+        query: queryForm.query,
+        k: queryForm.k,
+        returnSources: true
+      }, { signal })
+    )
 
-    if (!response.ok) {
-      // rd-06：错误响应解析统一到 apiErrorHandler.extractSSEError
-      throw await extractSSEError(response)
-    }
-
-    await readSSEStream(response, (parsed) => {
-      if (!isStreaming.value) return
-      handleStreamEvent(parsed)
-    }, abortController.signal)
-
-    ElMessage.success('查询完成')
-  } catch (error) {
-    if (error.name === 'AbortError') {
+    if (streamResult.status === 'completed') {
+      ElMessage.success('查询完成')
+    } else if (streamResult.status === 'aborted') {
       ElMessage.info('已停止生成')
     } else {
-      logger.error('流式查询失败:', error)
-      const errorMsg = error.message || '流式查询失败'
+      logger.error('流式查询失败:', streamResult.error)
+      const errorMsg = streamResult.error?.message || '流式查询失败'
       errorMessage.value = errorMsg
       ElMessage.error(errorMsg)
       if (!result.value || !streamingAnswer.value) {
@@ -615,7 +603,6 @@ const executeStreamQuery = async () => {
   } finally {
     isLoading.value = false
     isStreaming.value = false
-    abortController = null
     if (result.value && streamingAnswer.value) {
       result.value.answer = streamingAnswer.value
     }
@@ -671,9 +658,7 @@ const handleStreamEvent = (convertedData) => {
 }
 
 const stopStreaming = () => {
-  if (abortController) {
-    abortController.abort()
-  }
+  sseStream.abort()
   isStreaming.value = false
 }
 

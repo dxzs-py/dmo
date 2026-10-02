@@ -4,7 +4,6 @@ import { User, ChatDotRound, Refresh, CopyDocument, Check, InfoFilled, Search, L
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
-import ChainOfThought from './ChainOfThought.vue'
 import Sources from './Sources.vue'
 import Plan from './Plan.vue'
 import AgentContentPipeline from '../common/AgentContentPipeline.vue'
@@ -15,7 +14,7 @@ import AiControls from '../ai-elements/AiControls.vue'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { logger } from '../../utils/logger'
-import { formatFileSize } from '../../utils/format'
+import { formatFileSize, getFileIcon } from '../../utils/format'
 import { isApprovalDisabled } from '../../utils/approvalGate'
 import { buildSubagentsFromMessage } from '../../utils/subagentAggregation'
 import { filterMainToolCalls } from '../../utils/inlineContent'
@@ -177,8 +176,7 @@ const hasMetadata = computed(() => {
     (m.sources && m.sources.length > 0) ||
     (m.toolCalls && m.toolCalls.length > 0) ||
     (m.reasoning && m.reasoning.content) ||
-    (m.plan && typeof m.plan === 'object' && Object.keys(m.plan).length > 0) ||
-    (Array.isArray(m.chainOfThought) && m.chainOfThought.length > 0)
+    (m.plan && typeof m.plan === 'object' && Object.keys(m.plan).length > 0)
   )
 })
 
@@ -189,17 +187,6 @@ const formattedTime = computed(() => {
   const date = new Date(props.message.timestamp)
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 })
-
-function getFileIcon(type) {
-  const iconMap = {
-    pdf: '📄', doc: '📝', docx: '📝', txt: '📃',
-    png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', webp: '🖼️', svg: '🖼️',
-    xls: '📊', xlsx: '📊', csv: '📊',
-    py: '🐍', js: '📜', ts: '📜', html: '🌐', css: '🎨',
-    json: '📋', xml: '📋', md: '📝',
-  }
-  return iconMap[type] || '📎'
-}
 
 const attachments = computed(() => {
   if (props.message.attachments && props.message.attachments.length > 0) {
@@ -504,10 +491,6 @@ function handleBranchChange(versionIndex) {
         :steps="message.plan.steps"
         :is-streaming="isStreaming && isLast"
       />
-
-      <div v-if="message.role !== 'user' && Array.isArray(message.chainOfThought) && message.chainOfThought.length > 0" class="message-cot">
-        <ChainOfThought :steps="message.chainOfThought" />
-      </div>
 
       <!-- 深度研究进度卡片 -->
       <div
@@ -918,10 +901,6 @@ function handleBranchChange(versionIndex) {
 .source-badge:hover {
   background: color-mix(in srgb, var(--sidebar-primary) 15%, transparent);
   box-shadow: var(--shadow-sm);
-}
-
-.message-cot {
-  margin-top: 12px;
 }
 
 .deep-research-card {

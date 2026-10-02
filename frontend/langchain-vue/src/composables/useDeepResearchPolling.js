@@ -3,12 +3,12 @@ import { ElMessage } from 'element-plus'
 import { deepResearchAPI } from '@/api/research'
 import { ResearchTaskStatus } from '@/types'
 import { logger } from '@/utils/logger'
+import { usePollingBackoff } from './usePollingBackoff'
 
-/** 轮询上限与退避配置（无状态常量，非实例状态） */
+/** 轮询次数上限（无状态常量，非实例状态） */
 const MAX_POLL_COUNT = 600
-const BASE_POLL_INTERVAL = 3000
-const MAX_POLL_INTERVAL = 30000
-const POLL_BACKOFF_FACTOR = 1.5
+/** 轮询退避参数：基础 3s / 上限 30s / 1.5 倍退避 */
+const POLLING_BACKOFF_OPTIONS = { baseDelay: 3000, maxDelay: 30000, multiplier: 1.5 }
 
 /**
  * 深度研究任务轮询 composable（实例安全）
@@ -47,7 +47,8 @@ export function useDeepResearchPolling({
   /** @type {ReturnType<typeof setInterval>|null} */
   let elapsedTimer = null
   let pollCount = 0
-  let currentPollInterval = BASE_POLL_INTERVAL
+  // 退避骨架：当前间隔 / 退避一步 / 重置（usePollingBackoff 统一实现）
+  const { currentDelay: currentPollInterval, backoff: backoffPollInterval, reset: resetPollInterval } = usePollingBackoff(POLLING_BACKOFF_OPTIONS)
 
   const isTerminalStatus = (s) => s === ResearchTaskStatus.COMPLETED || s === ResearchTaskStatus.FAILED
 
@@ -78,15 +79,12 @@ export function useDeepResearchPolling({
       }
 
       if (prevStatus === ResearchTaskStatus.PENDING && task.value.status === ResearchTaskStatus.RUNNING) {
-        currentPollInterval = BASE_POLL_INTERVAL
+        resetPollInterval()
       } else {
-        currentPollInterval = Math.min(
-          Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
-          MAX_POLL_INTERVAL
-        )
+        backoffPollInterval()
       }
 
-      pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
+      pollingTimer = setTimeout(pollTaskStatus, currentPollInterval.value)
     } catch (error) {
       logger.error('获取任务状态失败:', error)
       if (error?.response?.status === 404) {
@@ -94,11 +92,8 @@ export function useDeepResearchPolling({
         stopPolling()
         return
       }
-      currentPollInterval = Math.min(
-        Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
-        MAX_POLL_INTERVAL
-      )
-      pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
+      backoffPollInterval()
+      pollingTimer = setTimeout(pollTaskStatus, currentPollInterval.value)
     }
   }
 
@@ -107,12 +102,12 @@ export function useDeepResearchPolling({
       clearTimeout(pollingTimer)
       pollingTimer = null
     }
-    currentPollInterval = BASE_POLL_INTERVAL
+    resetPollInterval()
   }
 
   /** 以当前轮询间隔调度下一轮轮询（SSE 断开/结束后的回退入口） */
   const startPolling = () => {
-    pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
+    pollingTimer = setTimeout(pollTaskStatus, currentPollInterval.value)
   }
 
   const startElapsedTimer = () => {
@@ -132,7 +127,7 @@ export function useDeepResearchPolling({
   /** 重置轮询计数、间隔与用时计时（启动新任务前调用） */
   const resetPollingState = () => {
     pollCount = 0
-    currentPollInterval = BASE_POLL_INTERVAL
+    resetPollInterval()
     elapsedSeconds.value = 0
   }
 

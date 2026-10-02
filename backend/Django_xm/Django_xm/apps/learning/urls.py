@@ -5,11 +5,9 @@ from . import views
 app_name = "learning"
 
 urlpatterns = [
-    path("start/", views.WorkflowStartView.as_view(), name="start"),
     path("start/stream/", views.WorkflowStartStreamView.as_view(), name="start_stream"),
     path("submit/", views.WorkflowSubmitView.as_view(), name="submit"),
     path("status/<str:thread_id>/", views.WorkflowStatusView.as_view(), name="status"),
-    path("history/<str:thread_id>/", views.WorkflowHistoryView.as_view(), name="history"),
     path("stream/<str:thread_id>/", views.workflow_stream, name="stream"),
     path("tasks/<str:thread_id>/", views.WorkflowTaskDeleteView.as_view(), name="tasks_delete"),
     path("<str:thread_id>/restart/stream/", views.WorkflowRestartStreamView.as_view(), name="restart_stream"),

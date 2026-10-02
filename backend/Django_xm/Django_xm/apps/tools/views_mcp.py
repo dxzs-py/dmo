@@ -147,39 +147,6 @@ class McpToolsView(APIView):
         return success_response(data=data)
 
 
-class McpStatusView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(responses={200: EmptySerializer})
-    def get(self, request):
-        try:
-            from Django_xm.apps.tools.mcp import (
-                get_pooled_client_count,
-                get_server_info_list,
-                is_mcp_available,
-            )
-
-            available = is_mcp_available()
-            servers = _get_merged_mcp_servers(user=request.user) if available else []
-            server_info = get_server_info_list() if available else []
-            pool_count = get_pooled_client_count() if available else 0
-        except ImportError:
-            available = False
-            servers = []
-            server_info = []
-            pool_count = 0
-
-        return success_response(
-            data={
-                "available": available,
-                "servers_configured": len(servers),
-                "server_names": [s.get("name", "unknown") for s in servers],
-                "servers": server_info,
-                "pooled_clients": pool_count,
-            }
-        )
-
-
 class McpServerTestView(APIView):
     """MCP Server 连接测试（资源动作）
 
@@ -388,35 +355,6 @@ class McpServerStatusView(APIView):
             result,
             result.get("message", "状态切换成功"),
             data={"name": name, "status": result.get("status")},
-        )
-
-
-class McpServerDiscoverView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
-        from Django_xm.apps.tools.serializers import McpServerDiscoverSerializer
-
-        serializer = McpServerDiscoverSerializer(data=request.data)
-        if not serializer.is_valid():
-            raise BaseAppError(
-                "数据验证失败",
-                business_code=ErrorCode.VALIDATION_FAILED,
-                data={"details": serializer.errors},
-            )
-        registry_url = serializer.validated_data["registry_url"]
-
-        from Django_xm.apps.tools.mcp.discovery import get_mcp_discovery
-
-        discovery = get_mcp_discovery()
-        servers = run_async(discovery.discover_from_registry(registry_url))
-        return success_response(
-            data={
-                "registry_url": registry_url,
-                "servers": servers,
-                "total": len(servers),
-            }
         )
 
 

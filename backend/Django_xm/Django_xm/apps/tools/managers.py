@@ -303,19 +303,20 @@ class McpToolManager(BaseToolManager):
     def _get_allowed_server_names(user) -> list[str]:
         """收集非管理员用户可加载的 MCP Server 名称
 
-        系统级 Server（config 模块，管理员维护）全部保留（含 stdio）；
+        B⑧ 收敛：合并逻辑统一走 ``mcp.resolve_servers.resolve_mcp_servers``
+        （系统级 + 用户级 status=active、去重键 name、系统级优先、
+        exclude_user_stdio=True 跳过用户自建 stdio）。
+        系统级 Server（config 模块，管理员维护）全部保留（含 stdio，可信）；
         用户级仅排除自建（source="user"）的 stdio Server。
         """
-        from Django_xm.apps.tools.mcp import _get_mcp_servers_config
-        from Django_xm.apps.tools.models import McpServerConfig
+        from Django_xm.apps.tools.mcp.resolve_servers import resolve_mcp_servers
 
-        allowed = [s.get("name") for s in _get_mcp_servers_config() if s.get("name")]
-        user_servers = McpServerConfig.objects.filter(user=user, status="active").exclude(
-            transport="stdio", source="user"
-        )
-        allowed.extend(obj.name for obj in user_servers)
-        # 保序去重（同名时 _load_mcp_tools_async 合并以系统级优先，自动跳过同名用户级）
-        return list(dict.fromkeys(allowed))
+        # resolve 内已按 name 去重（系统级优先，同名用户级自动跳过）
+        return [
+            s["name"]
+            for s in resolve_mcp_servers(user_id=user.id, exclude_user_stdio=True)
+            if s.get("name")
+        ]
 
     def get_tool_info_list(self, user) -> list[dict[str, Any]]:
         from Django_xm.apps.tools.mcp import _get_mcp_servers_config

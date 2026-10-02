@@ -18,9 +18,9 @@
       因此**开发与生产的默认结果相同**（均为这 2 个）
     - 若生产环境不希望加载内置 Server，须**显式**设置
       ``MCP_SYSTEM_SERVERS_JSON="[]"``；自定义则设为对应 JSON 数组
-    - 注册中心动态发现是**独立能力**：由前端调用
-      ``/tools/mcp/servers/discover/``（``McpServerDiscoverView`` →
-      ``MCPServerDiscovery.discover_from_registry()``）触发，**不会**自动并入本文件返回值
+    - 注册中心动态发现是**独立能力**：历史上有 REST 端点
+      ``/tools/mcp/servers/discover/`` 触发 ``MCPServerDiscovery.discover_from_registry()``；
+      该端点已随死接口下线移除（2026-10），发现结果**不会**自动并入本文件返回值
 
 环境变量：
     - ``NPM_NPX_PATH`` / ``NPM_NPX_ALT_PATH``：npx 可执行文件路径（缺失时回退 "npx"）

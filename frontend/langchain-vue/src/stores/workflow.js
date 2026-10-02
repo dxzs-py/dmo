@@ -1,6 +1,5 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { toCamelCase } from '@/utils/sessionTransformers'
 import { logger } from '@/utils/logger'
 
 /**
@@ -153,7 +152,9 @@ export const useWorkflowStore = defineStore('workflow', () => {
    */
   const updateWorkflowFromEvent = (eventType, payload, taskId) => {
     if (!taskId || !payload) return null
-    const data = toCamelCase(payload)
+    // 入站已转换：workflow_* 事件 payload 在 useRealtimeSync dispatcher 边界经
+    // parseProtocolEvent 整体 toCamelCase，此处不再二次转换
+    const data = payload
     const patch = {}
 
     switch (eventType) {

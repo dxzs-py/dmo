@@ -74,22 +74,6 @@ class WorkflowStatusSerializer(serializers.Serializer):
     updated_at = serializers.CharField(required=False, allow_blank=True)
 
 
-class WorkflowResponseSerializer(serializers.Serializer):
-    """工作流通用响应"""
-
-    thread_id = serializers.CharField()
-    status = serializers.CharField()
-    message = serializers.CharField(required=False, allow_blank=True)
-    current_step = serializers.CharField(required=False, allow_blank=True)
-    learning_plan = serializers.DictField(required=False, allow_null=True)
-    quiz = serializers.DictField(required=False, allow_null=True)
-    score = serializers.IntegerField(required=False, allow_null=True)
-    score_details = serializers.DictField(required=False, allow_null=True)
-    feedback = serializers.CharField(required=False, allow_blank=True)
-    should_retry = serializers.BooleanField(required=False, default=False)
-    error = serializers.CharField(required=False, allow_blank=True)
-
-
 class LearningPlanSerializer(serializers.Serializer):
     """学习计划序列化器"""
 

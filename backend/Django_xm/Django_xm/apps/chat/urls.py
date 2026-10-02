@@ -1,7 +1,6 @@
 from django.urls import path
 
 from . import views
-from .suggestion_views import SuggestionsView
 
 app_name = "chat"
 
@@ -33,5 +32,4 @@ urlpatterns = [
     path("commands/execute/", views.ChatCommandExecuteView.as_view(), name="chat_commands_execute"),
     path("finalize/", views.ChatFinalizeView.as_view(), name="chat_finalize"),
     path("project-context/", views.ProjectContextView.as_view(), name="chat_project_context"),
-    path("suggestions/", SuggestionsView.as_view(), name="chat_suggestions"),
 ]

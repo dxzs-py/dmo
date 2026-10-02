@@ -584,9 +584,9 @@ def _publish_tool_call_running_event(approval: Approval):
 def _count_remaining_pending(graph_interrupt_id: str, exclude_interrupt_id: str) -> int:
     """统计同批次剩余 pending 审批数量（sync ORM 查询）。
 
-    供 sync 路径（_build_approval_event_params）与 async 路径
-    （_build_approval_event_params_async，经 sync_to_async 包装复用）共享，
-    避免双路径各自内联 ORM 查询导致逻辑漂移。
+    供 sync 路径（_resolve_remaining_pending_count_sync）与 async 路径
+    （_resolve_remaining_pending_count_async 薄壳，经 sync_to_async 包装复用）
+    共享，避免双路径各自内联 ORM 查询导致逻辑漂移。
     """
     return (
         Approval.objects.filter(
@@ -596,9 +596,6 @@ def _count_remaining_pending(graph_interrupt_id: str, exclude_interrupt_id: str)
         .exclude(interrupt_id=exclude_interrupt_id)
         .count()
     )
-
-
-_count_remaining_pending_async = sync_to_async(_count_remaining_pending)
 
 
 def _remaining_pending_condition(approval: Approval, state: str) -> tuple[str, str] | None:
@@ -633,7 +630,7 @@ def _log_remaining_pending_failure(approval: Approval, err: Exception) -> int:
 
 
 def _resolve_remaining_pending_count_sync(approval: Approval, state: str) -> Any:
-    """同步路径：计算 remaining_pending_count（仅 APPROVED + 批次场景，否则返回 _UNSET）。"""
+    """同步核心：计算 remaining_pending_count（仅 APPROVED + 批次场景，否则返回 _UNSET）。"""
     condition = _remaining_pending_condition(approval, state)
     if condition is None:
         return _UNSET
@@ -647,21 +644,19 @@ def _resolve_remaining_pending_count_sync(approval: Approval, state: str) -> Any
 
 
 async def _resolve_remaining_pending_count_async(approval: Approval, state: str) -> Any:
-    """异步路径：await sync_to_async count（修复 async context 直接调 sync ORM 的报错）。"""
-    condition = _remaining_pending_condition(approval, state)
-    if condition is None:
-        return _UNSET
-    graph_interrupt_id, interrupt_id = condition
-    try:
-        count = await _count_remaining_pending_async(graph_interrupt_id, interrupt_id)
-        _log_remaining_pending_success(approval, graph_interrupt_id, count)
-        return count
-    except Exception as e:
-        return _log_remaining_pending_failure(approval, e)
+    """异步薄壳（B⑪ 收敛）：整体委托同步核心。
+
+    原实现复制了同步核心的 condition 判断/异常回退骨架，仅 ORM count
+    一处经 sync_to_async 包装——骨架逐字重复，存在复制漂移风险。
+    现改为薄壳：函数体内运行时引用同步核心（便于测试替换），
+    经 sync_to_async 在工作线程执行（async context 直接调 sync ORM
+    会被 Django 拒绝，与原修复语义一致）；同步核心修改后异步路径自动同步。
+    """
+    return await sync_to_async(_resolve_remaining_pending_count_sync)(approval, state)
 
 
 def _build_approval_event_params(approval: Approval, state: str, extra: dict | None = None) -> dict:
-    """构建 publish_approval_sync 调用参数（同步版，供直接发布与 outbox 补偿复用）。
+    """构建 publish_approval_sync 调用参数（同步核心，供直接发布与 outbox 补偿复用）。
 
     统一参数构建出口，确保直接发布与 outbox 补偿使用完全相同的参数集。
     字段逻辑收敛到 build_approval_payload（broadcast scope），本函数仅负责
@@ -677,19 +672,15 @@ def _build_approval_event_params(approval: Approval, state: str, extra: dict | N
 
 
 async def _build_approval_event_params_async(approval: Approval, state: str, extra: dict | None = None) -> dict:
-    """构建 publish_approval 调用参数（异步版）。
+    """构建 publish_approval 调用参数（异步薄壳，B⑪ 收敛）。
 
-    修复 remaining_pending_count async 报错（根因：sync ORM count 在 async context
-    直接调用被 Django 拒绝）：count 查询经 sync_to_async 包装后 await 执行，
-    与同步版共用 _remaining_pending_condition / 日志收尾，避免双路径逻辑漂移。
+    原实现与同步版仅 remaining_pending_count 的执行方式不同（sync ORM
+    count 在 async context 直接调用会被 Django 拒绝），其余构建逻辑逐字
+    复制。现改为薄壳：整体经 sync_to_async 委托同步核心
+    _build_approval_event_params——payload 构建为纯函数、count 在工作线程
+    执行，输出与原实现完全一致，避免双路径逻辑漂移。
     """
-    return build_approval_payload(
-        approval,
-        state,
-        "broadcast",
-        extra,
-        remaining_pending_count=await _resolve_remaining_pending_count_async(approval, state),
-    )
+    return await sync_to_async(_build_approval_event_params)(approval, state, extra)
 
 
 def _create_outbox_entry(approval: Approval, params: dict) -> ApprovalOutboxEntry | None:
@@ -785,10 +776,17 @@ async def _broadcast_approval_changed_async(approval: Approval, state: str, extr
     """统一发布审批事件（异步版，通过 publish_approval 异步入口）。
 
     Phase C 集成：与同步版对称的双写 + 补偿模式。
-    参数构建复用 _build_approval_event_params_async（remaining_pending_count 的
-    sync ORM count 经 sync_to_async 包装 await 执行，修复 async context 报错），
+    参数构建复用 _build_approval_event_params_async（B⑪ 薄壳，委托同步核心），
     确保同步/异步路径参数一致。
     outbox 创建使用 sync_to_async 包装（Django ORM 是同步的）。
+
+    真差异判定（B⑪，不可薄壳化合并为 sync_to_async(同步版)）：
+    本函数必须 ``await publish_approval`` 在当前事件循环内发布——
+    publish_event 内部 _ordered_ensure_future 按 channel 串行化依赖主 loop；
+    若经线程包装调用同步版，publish_approval_sync 会落入 async_to_sync
+    临时 loop，与主 loop 上的 tool_call 事件失去全局 seq 顺序保证
+    （前端按 seq 排序会出现 running 覆盖 completed 等错乱）。
+    故 sync/async 双实现为有意保留，差异仅在发布通道的执行上下文。
     """
     from Django_xm.common.realtime_sync import publish_approval
 
@@ -1227,6 +1225,14 @@ async def persist_and_broadcast_async(approval: Approval, state: str, extra: dic
     统一底层修复（Z1 次根因）：
     与同步版对称，对所有状态（包括非终态）调用 _sync_approval_state_to_chat_message_async，
     使 ChatMessage.tool_calls[].approval.state 反映中间态。
+
+    真差异判定（B⑪，不可整体薄壳化为 sync_to_async(persist_and_broadcast)）：
+    内部 _broadcast_approval_changed_async 与工具事件联动（publish_tool_call_sync
+    在事件循环内为 fire-and-forget 主 loop 发布）必须留在当前事件循环执行，
+    以保持 per-channel seq 顺序保证（见 _broadcast_approval_changed_async
+    docstring）；整体线程化会使这些事件落入 async_to_sync 临时 loop，
+    与主 loop 事件失去全局顺序。仅 ORM 段（ChatMessage 同步）经
+    sync_to_async 局部包装。其余步骤与同步版逐字对齐属有意保留的双实现。
     """
     is_terminal = state in (Approval.State.APPROVED, Approval.State.REJECTED, Approval.State.TIMEOUT)
 

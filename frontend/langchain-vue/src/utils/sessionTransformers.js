@@ -189,9 +189,9 @@ function _mergeConsecutiveAssistantMessages(messages) {
           )
           merged.toolCalls = [...(merged.toolCalls || []), ...nextToolCalls]
         }
-        // 合并其他字段（plan, chainOfThought, reasoning 等）
+        // 合并其他字段（plan, reasoning 等）
         for (const field of ['researchTaskId', 'reasoning', 'suggestions', 'sources', 'plan',
-          'chainOfThought', 'model', 'streamState', 'isStreaming', 'researchContext', 'subagentContents']) {
+          'model', 'streamState', 'isStreaming', 'researchContext', 'subagentContents']) {
           if (!merged[field] && nextMsg[field]) {
             merged[field] = nextMsg[field]
           }
@@ -267,7 +267,6 @@ export function transformBackendMessageToFrontend(msg) {
       content: v.content || '',
       sources: v.sources || [],
       plan: v.plan || null,
-      chainOfThought: v.chainOfThought || null,
       toolCalls: v.toolCalls || [],
       subagentContents: v.subagentContents || {},
       reasoning: v.reasoning || null,
@@ -280,7 +279,6 @@ export function transformBackendMessageToFrontend(msg) {
       content: msgObj.content || '',
       sources: msgObj.sources || [],
       plan: msgObj.plan || null,
-      chainOfThought: msgObj.chainOfThought || null,
       toolCalls: msgObj.toolCalls || [],
       subagentContents: msgObj.subagentContents || {},
       reasoning: msgObj.reasoning || null,
@@ -313,7 +311,6 @@ export function transformBackendMessageToFrontend(msg) {
     content: msgObj.content || activeVersion.content || '',
     sources: msgObj.sources || activeVersion.sources || [],
     plan: msgObj.plan || activeVersion.plan || null,
-    chainOfThought: msgObj.chainOfThought || activeVersion.chainOfThought || null,
     toolCalls: toolCalls,
     // 顶层 subagent_contents 是后端持久化权威（persist_stream_result 维护），
     // versions 快照兜底（消息创建时初始快照）
@@ -351,7 +348,6 @@ export function transformFrontendMessageToBackend(msg) {
         sources: v.sources || [],
         // 后端 JSONField(default=dict, blank=True) 禁止 null，缺省时以空集合兜底
         plan: v.plan || {},
-        chainOfThought: v.chainOfThought || [],
         toolCalls: v.toolCalls || [],
         subagentContents: v.subagentContents || {},
         reasoning: v.reasoning || {},
@@ -363,7 +359,6 @@ export function transformFrontendMessageToBackend(msg) {
         content: msg.content || '',
         sources: msg.sources || [],
         plan: msg.plan || {},
-        chainOfThought: msg.chainOfThought || [],
         toolCalls: msg.toolCalls || [],
         subagentContents: msg.subagentContents || {},
         reasoning: msg.reasoning || {},
@@ -378,7 +373,6 @@ export function transformFrontendMessageToBackend(msg) {
   // transformBackendMessageToFrontend 刷新后从 activeVersion 恢复工具调用数据。
   // subagent_contents 同样为 read_only，顶层不发送；versions[].subagentContents
   // 用于刷新后从 activeVersion 恢复子代理图层正文快照。
-  // chain_of_thought 亦为 read_only，顶层不发送（同 tool_calls 契约）；
   // context 不在 ChatMessageSerializer.fields 中，发送纯属无效负载，顶层一并移除。
   // plan/approval/reasoning/suggestions：后端为 JSONField(default=dict/blank=True)、
   // 禁止 null（null 会触发 400 ValidationError），缺省时以空集合兜底。

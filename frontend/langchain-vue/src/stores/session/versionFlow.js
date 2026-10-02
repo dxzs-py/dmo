@@ -197,7 +197,6 @@ export const createVersionFlowSlice = (sessionList, runtimeDeps) => {
       message.content = version.content
       message.sources = version.sources
       message.plan = version.plan
-      message.chainOfThought = version.chainOfThought
       message.toolCalls = version.toolCalls
       message.reasoning = version.reasoning
       message.suggestions = version.suggestions
@@ -222,7 +221,6 @@ export const createVersionFlowSlice = (sessionList, runtimeDeps) => {
         message.content = version.content
         message.sources = version.sources
         message.plan = version.plan
-        message.chainOfThought = version.chainOfThought
         message.toolCalls = version.toolCalls
         message.reasoning = version.reasoning
         message.suggestions = version.suggestions

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import { useStreamChat, CONNECTION_STATUS } from '../composables/useStreamChat'
+import { useStreamChat } from '../composables/useStreamChat'
 import { useStreamFinalizer } from '../composables/useStreamFinalizer'
 import { useSessionStore } from './session'
 import { useModelStore } from './model'
@@ -57,13 +57,8 @@ export const useChatStore = defineStore('chat', () => {
     abortController,
     abort: abortStreamChat,
     streamChat,
-    connectionStatus,
     lastError,
   } = useStreamChat()
-
-  const isConnected = computed(() => connectionStatus.value === CONNECTION_STATUS.CONNECTED)
-  const isReconnecting = computed(() => connectionStatus.value === CONNECTION_STATUS.RECONNECTING)
-  const isConnecting = computed(() => connectionStatus.value === CONNECTION_STATUS.CONNECTING)
 
   // 当前流式类型（Task 9）：区分「普通发送」与「重新生成」，
   // 用户停止时据此标记 stopped（允许固化）/ incomplete（禁止固化）
@@ -215,7 +210,6 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: new Date().toISOString(),
       sources: [],
       plan: null,
-      chainOfThought: null,
       toolCalls: [],
       reasoning: null,
       suggestions: null,
@@ -377,7 +371,6 @@ export const useChatStore = defineStore('chat', () => {
           content: currentMessage.content,
           sources: currentMessage.sources || [],
           plan: currentMessage.plan || null,
-          chainOfThought: currentMessage.chainOfThought || null,
           toolCalls: currentMessage.toolCalls || [],
           reasoning: currentMessage.reasoning || null,
           suggestions: currentMessage.suggestions || null,
@@ -393,7 +386,6 @@ export const useChatStore = defineStore('chat', () => {
       content: '',
       sources: [],
       plan: null,
-      chainOfThought: null,
       toolCalls: [],
       reasoning: null,
       suggestions: null,
@@ -409,7 +401,6 @@ export const useChatStore = defineStore('chat', () => {
     currentMessage.content = ''
     currentMessage.sources = []
     currentMessage.plan = null
-    currentMessage.chainOfThought = null
     currentMessage.toolCalls = []
     currentMessage.reasoning = null
     currentMessage.suggestions = null
@@ -592,11 +583,7 @@ export const useChatStore = defineStore('chat', () => {
     abortController,
     lastStreamError,
     messageCount,
-    connectionStatus,
     lastError,
-    isConnected,
-    isReconnecting,
-    isConnecting,
     sendMessage,
     regenerateMessage,
     fetchModes,

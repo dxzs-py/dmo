@@ -146,15 +146,13 @@ describe('transformFrontendMessageToBackend（出站 null 契约）', () => {
     expect(out.suggestions).toStrictEqual([])
   })
 
-  it('顶层负载不含 chainOfThought、context 键（后端 read_only / 不在 serializer fields）', () => {
+  it('顶层负载不含 context 键（不在 serializer fields，发送纯属无效负载）', () => {
     const out = transformFrontendMessageToBackend({
       id: 'm1',
       role: 'assistant',
       content: 'hi',
-      chainOfThought: ['step-1'],
       context: { foo: 'bar' },
     })
-    expect(Object.prototype.hasOwnProperty.call(out, 'chainOfThought')).toBe(false)
     expect(Object.prototype.hasOwnProperty.call(out, 'context')).toBe(false)
   })
 
@@ -167,7 +165,6 @@ describe('transformFrontendMessageToBackend（出站 null 契约）', () => {
     })
     expect(out.versions).toHaveLength(1)
     expect(out.versions[0].plan).toStrictEqual({})
-    expect(out.versions[0].chainOfThought).toStrictEqual([])
     expect(out.versions[0].reasoning).toStrictEqual({})
     expect(out.versions[0].suggestions).toStrictEqual([])
     expect(out.versions[0].context).toStrictEqual({})
@@ -181,7 +178,6 @@ describe('transformFrontendMessageToBackend（出站 null 契约）', () => {
     })
     expect(out.versions).toHaveLength(1)
     expect(out.versions[0].plan).toStrictEqual({})
-    expect(out.versions[0].chainOfThought).toStrictEqual([])
     expect(out.versions[0].reasoning).toStrictEqual({})
     expect(out.versions[0].suggestions).toStrictEqual([])
     expect(out.versions[0].context).toStrictEqual({})

@@ -1,7 +1,8 @@
 /**
  * approval store REST 路径单元测试（ARCH-44 拆分前保护网）
  *
- * 被测：src/stores/approval.js —— 审批唯一状态权威（REST 侧行为）。
+ * 被测：src/stores/approval/（index.js 装配器 + 职责切片，ARCH-13 拆分）
+ *       —— 审批唯一状态权威（REST 侧行为）。
  * mock 策略：跟随现有范例（chatSandbox.test.js / approvalHandler.test.js），
  * 在 api 层 mock '@/api/approval' 的 resumeApprovalStream（不 mock axios 网络层）；
  * session / research / sync store 以稳定纯对象 + vi.fn() mock（useXxxStore() 每次
@@ -15,7 +16,8 @@
  * 2. 审批超时：approval_timeout（chat 非回放）触发 resume 恢复流（REST）、恢复 waiting
  *    不回退 pending、回放事件不触发恢复流；
  * 3. 过期清理：cleanupExpired 过期删除 + timeout 标记、clearByTaskId / clearAll；
- * 4. 审批列表填充与去重：新审批事件填充 Map（snake_case 入站转换）+ 双端推送去重 +
+ * 4. 审批列表填充与去重：新审批事件填充 Map（camelCase 入站，ARCH-13 F⑥ 后
+ *    toCamelCase 已上移至事件入口，store 不再二次转换）+ 双端推送去重 +
  *    debounce 同步后端、restoreFromSSEHistory（pending 恢复 / 去重 / 终态不入 Map /
  *    无 interruptId 告警）、restoreFromSession（pending 恢复 + 异会话清理 / 未知会话）；
  * 5. effectiveSessionId 推导：按当前行为锁定（entry.sessionId 优先、chat 回退
@@ -34,7 +36,7 @@ import { StreamState, ApprovalState } from '@/types'
 import { APPROVAL_STATE_MAP } from '@/stores/sync/constants'
 import { logger } from '@/utils/logger'
 import { ElMessage } from 'element-plus'
-import { useApprovalStore } from '../approval.js'
+import { useApprovalStore } from '../approval/index.js'
 import { resumeApprovalStream } from '@/api/approval'
 import { useSessionStore } from '@/stores/session'
 import { useResearchStore } from '@/stores/research'
@@ -423,10 +425,10 @@ describe('过期清理', () => {
 })
 
 describe('审批列表填充与去重（pendingApprovals Map）', () => {
-  it('新审批事件填充 Map（snake_case 入站转换），重复推送去重，debounce 同步后端', () => {
+  it('新审批事件填充 Map（camelCase 入站，toCamelCase 已上移至事件入口），重复推送去重，debounce 同步后端', () => {
     const store = useApprovalStore()
     const sessionStore = useSessionStore()
-    const payload = { type: 'approval_pending', interrupt_id: 'tc-n', tool_name: 'bash' }
+    const payload = { type: 'approval_pending', interruptId: 'tc-n', toolName: 'bash' }
 
     store.handleApprovalEvent(payload, { source: 'chat', sessionId: 's-fill' })
 

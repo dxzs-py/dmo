@@ -789,91 +789,6 @@ class PIIMiddleware(AgentMiddleware):
         return await handler(request)
 
 
-class HumanInTheLoopMiddleware(AgentMiddleware):
-    """
-    人工确认中间件
-
-    对指定工具调用暂停执行，等待人工确认后继续。
-    支持同步和异步模式。
-    """
-
-    def __init__(
-        self,
-        tools_requiring_approval: set | None = None,
-        auto_approve_timeout: float = 300.0,
-        on_approval_request: Callable | None = None,
-    ):
-        super().__init__()
-        self.tools_requiring_approval = tools_requiring_approval or {
-            "fs_write_file",
-            "bash_execute",
-            "repl_execute",
-            "notebook_edit",
-            "shell_exec",
-            "execute_code",
-        }
-        self.auto_approve_timeout = auto_approve_timeout
-        self.on_approval_request = on_approval_request
-
-    def wrap_tool_call(
-        self,
-        tool_call: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
-    ) -> ToolMessage | Command[Any]:
-        tool_name = tool_call.tool_call.get("name", "")
-        if tool_name not in self.tools_requiring_approval:
-            return handler(tool_call)
-
-        if self.on_approval_request is None:
-            logger.warning("Dangerous tool %s blocked: no approval callback configured", tool_name)
-            return ToolMessage(
-                content=f"工具 {tool_name} 被拒绝：未配置审批回调，危险工具默认被阻止。",
-                tool_call_id=tool_call.tool_call.get("id", ""),
-            )
-
-        approved = self.on_approval_request(
-            tool_name,
-            tool_call.tool_call.get("args", {}),
-        )
-        if not approved:
-            logger.info(f"工具 {tool_name} 被人工拒绝")
-            return ToolMessage(
-                content=f"工具 {tool_name} 的执行已被人工拒绝",
-                tool_call_id=tool_call.tool_call.get("id", ""),
-            )
-
-        return handler(tool_call)
-
-    async def awrap_tool_call(
-        self,
-        tool_call: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
-    ) -> ToolMessage | Command[Any]:
-        tool_name = tool_call.tool_call.get("name", "")
-        if tool_name not in self.tools_requiring_approval:
-            return await handler(tool_call)
-
-        if self.on_approval_request is None:
-            logger.warning("Dangerous tool %s blocked: no approval callback configured", tool_name)
-            return ToolMessage(
-                content=f"工具 {tool_name} 被拒绝：未配置审批回调，危险工具默认被阻止。",
-                tool_call_id=tool_call.tool_call.get("id", ""),
-            )
-
-        approved = self.on_approval_request(
-            tool_name,
-            tool_call.tool_call.get("args", {}),
-        )
-        if not approved:
-            logger.info(f"工具 {tool_name} 被人工拒绝(异步)")
-            return ToolMessage(
-                content=f"工具 {tool_name} 的执行已被人工拒绝",
-                tool_call_id=tool_call.tool_call.get("id", ""),
-            )
-
-        return await handler(tool_call)
-
-
 def create_guardrails_middleware(
     input_validator: InputValidator | None = None,
     output_validator: OutputValidator | None = None,
@@ -914,20 +829,9 @@ def create_pii_middleware(
     return PIIMiddleware(mask_pii=mask_pii, reject_on_pii=reject_on_pii)
 
 
-def create_human_in_the_loop_middleware(
-    tools_requiring_approval: set | None = None,
-    on_approval_request: Callable | None = None,
-) -> HumanInTheLoopMiddleware:
-    return HumanInTheLoopMiddleware(
-        tools_requiring_approval=tools_requiring_approval,
-        on_approval_request=on_approval_request,
-    )
-
-
 def build_middleware_stack(
     enable_guardrails: bool = True,
     enable_pii: bool = False,
-    enable_human_in_loop: bool = False,
     enable_rate_limit: bool = True,
     guardrails_strict: bool = False,
     pii_reject: bool = False,
@@ -937,7 +841,7 @@ def build_middleware_stack(
 ) -> list[AgentMiddleware]:
     """
     构建 Middleware 栈，按优先级排列：
-    RateLimitMiddleware -> PIIMiddleware -> GuardrailsMiddleware -> HumanInTheLoopMiddleware
+    RateLimitMiddleware -> PIIMiddleware -> GuardrailsMiddleware
     """
     stack: list[AgentMiddleware] = []
 
@@ -952,14 +856,6 @@ def build_middleware_stack(
             create_guardrails_middleware(
                 strict_mode=guardrails_strict,
                 raise_on_error=guardrails_strict,
-            )
-        )
-
-    if enable_human_in_loop:
-        stack.append(
-            create_human_in_the_loop_middleware(
-                tools_requiring_approval=approval_tools,
-                on_approval_request=on_approval_request,
             )
         )
 

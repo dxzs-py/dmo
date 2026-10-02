@@ -653,6 +653,11 @@ class StructuredModelWithFallback:
     手动遍历模型列表，连接/认证错误时切换下一个模型。
     懒加载候选在运行时按需创建。
 
+    与 JsonModeStructuredModel 的边界（B⑩ 判定，非同语义双实现）：
+    本类是**多模型 fallback 编排器**；JsonModeStructuredModel（llm_factory.py）
+    是 DeepSeek thinking 场景的**单模型 JSON mode 兼容适配器**，
+    其实例可作为本类 _models 的元素参与降级，二者为组合关系，不可合并。
+
     设计：通过 `factory` 参数接收模型创建函数（依赖注入），
     避免 llm_fallback → llm_factory 的循环导入。
     """

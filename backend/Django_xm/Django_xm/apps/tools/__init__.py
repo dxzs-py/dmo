@@ -151,31 +151,17 @@ async def _load_mcp_tools_async(
     selected_servers: list[str] | None = None, user_id: int | None = None, selected_tools: list[str] | None = None
 ) -> list[BaseTool]:
     try:
-        from Django_xm.apps.tools.mcp import _get_mcp_servers_config, get_mcp_tools, is_mcp_available
+        from asgiref.sync import sync_to_async
+
+        from Django_xm.apps.tools.mcp import get_mcp_tools, is_mcp_available
+        from Django_xm.apps.tools.mcp.resolve_servers import resolve_mcp_servers
 
         if not is_mcp_available():
             logger.warning("MCP 不可用: langchain-mcp-adapters 未安装")
             return []
-        # 合并系统级和用户级 MCP Server
-        servers = _get_mcp_servers_config()
-        if user_id:
-            try:
-                from asgiref.sync import sync_to_async
-
-                from Django_xm.apps.tools.models import McpServerConfig
-
-                @sync_to_async(thread_sensitive=False)
-                def _get_user_servers():
-                    return list(McpServerConfig.objects.filter(user_id=user_id, status="active"))
-
-                user_servers = await _get_user_servers()
-                seen = {s.get("name") for s in servers}
-                for srv in user_servers:
-                    if srv.name not in seen:
-                        servers.append(srv.to_config_dict())
-                        seen.add(srv.name)
-            except Exception as e:
-                logger.warning(f"加载用户 MCP Server 配置失败: {e}")
+        # 合并系统级和用户级 MCP Server（B⑧ 收敛：resolve_mcp_servers 单一实现，
+        # 去重键 name、系统级优先；stdio 安全过滤由调用方白名单负责）
+        servers = await sync_to_async(resolve_mcp_servers, thread_sensitive=False)(user_id=user_id)
 
         logger.info(f"MCP 配置加载: {len(servers)} 个服务器")
         if not servers:

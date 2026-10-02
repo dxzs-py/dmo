@@ -26,6 +26,9 @@ from Django_xm.services.fastapi_service.session_executor import SessionExecutor
 from Django_xm.services.fastapi_service.session_manager import SessionManager
 
 _MODULE = "Django_xm.services.fastapi_service.session_executor"
+# B⑦ 收敛后 _wait_for_batch_decision 薄委托到 approval_batch.await_wait_for_batch_decision，
+# 其依赖（collect/self_heal/finalize）需 patch 在 approval_batch 模块命名空间
+_AB_MODULE = "Django_xm.apps.approvals.services.approval_batch"
 
 
 def _make_executor(thread_id="t1", **kw):
@@ -62,13 +65,22 @@ class TestWaitForBatchDecision(unittest.TestCase):
     """挂起等待批次决策：信令唤醒必须重新校验批次完整性（不早退）。"""
 
     def _patch_loop(self, collect=None, heal=None, finalize=None, poll=0.01):
-        return mock.patch.multiple(
-            _MODULE,
-            collect_batch_decisions=collect if collect is not None else mock.DEFAULT,
-            self_heal_expired_approvals=heal if heal is not None else mock.DEFAULT,
-            finalize_batch_approvals=finalize if finalize is not None else mock.DEFAULT,
-            _BATCH_POLL_INTERVAL=poll,
+        """patch 共享等待循环的依赖：collect/self_heal/finalize 打在 approval_batch
+        模块（B⑦ 收敛后共享实现所在命名空间），_BATCH_POLL_INTERVAL 仍打在
+        session_executor 模块（薄委托读取模块常量传入 poll_interval）。"""
+        from contextlib import ExitStack
+
+        stack = ExitStack()
+        stack.enter_context(
+            mock.patch.multiple(
+                _AB_MODULE,
+                collect_batch_decisions=collect if collect is not None else mock.DEFAULT,
+                self_heal_expired_approvals=heal if heal is not None else mock.DEFAULT,
+                finalize_batch_approvals=finalize if finalize is not None else mock.DEFAULT,
+            )
         )
+        stack.enter_context(mock.patch(f"{_MODULE}._BATCH_POLL_INTERVAL", poll))
+        return stack
 
     def test_all_resolved_immediately(self):
         """DB 中批次已全部决断：立即返回 decisions，不做自愈。"""

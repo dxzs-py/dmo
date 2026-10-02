@@ -198,8 +198,6 @@
 import { ref, reactive, computed, watch, onUnmounted, onActivated, onDeactivated, provide } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { deepResearchAPI } from '@/api/research'
-import { readSSEStream } from '../utils/sse'
-import { extractSSEError } from '../utils/apiErrorHandler'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'
@@ -220,6 +218,7 @@ import { useTaskListRealtimeSync } from '@/composables/useTaskListRealtimeSync'
 import { useDeepResearchPolling } from '@/composables/useDeepResearchPolling'
 import { useDeepResearchKnowledge } from '@/composables/useDeepResearchKnowledge'
 import { useSandboxAvailability } from '@/composables/useSandboxAvailability'
+import { useSSEStream } from '@/composables/useSSEStream'
 import { buildResearchStartPayload } from '@/utils/researchPayload'
 import { ResearchTaskStatus } from '@/types'
 
@@ -325,9 +324,9 @@ const {
 const continueDialogVisible = ref(false)
 const continueParentTask = ref(null)
 
-// SSE 连接状态（视图内管理，委托既有 useTaskRealtimeSync 处理实时事件）
-let sseAbortController = null
-let sseReaderActive = false
+// SSE 连接骨架委托 useSSEStream（AbortController/活跃标志/读流循环/清理统一封装；
+// onEvent 惰性转发 handleSSEEvent，避免定义顺序 TDZ）
+const sseStream = useSSEStream({ onEvent: (data) => handleSSEEvent(data) })
 
 // 任务轮询/用时计时（useDeepResearchPolling，实例安全：
 // 无模块级可变状态、卸载自动清理全部 timer；审批恢复轮询 watch 在 composable 内注册）
@@ -540,40 +539,21 @@ const startResearch = () => {
 }
 
 const connectSSE = async (taskId) => {
-  closeSSE()
+  sseStream.abort()
+  const result = await sseStream.start((signal) =>
+    deepResearchAPI.streamFetch(taskId, { signal })
+  )
 
-  sseAbortController = new AbortController()
-  sseReaderActive = true
-
-  try {
-    const response = await deepResearchAPI.streamFetch(taskId, {
-      signal: sseAbortController.signal,
-    })
-
-    if (!response.ok) {
-      // rd-06：错误响应解析统一到 apiErrorHandler.extractSSEError
-      throw await extractSSEError(response)
-    }
-
-    await readSSEStream(response, (data) => {
-      if (!sseReaderActive) return
-      handleSSEEvent(data)
-    }, sseAbortController.signal)
-
-    if (sseReaderActive && task.value && !isTerminalStatus(task.value.status)) {
-      startPolling()
-    }
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      return
-    }
-    logger.error('SSE连接失败，回退到轮询:', error)
-    if (task.value && !isTerminalStatus(task.value.status)) {
-      startPolling()
-    }
-  } finally {
-    sseReaderActive = false
-    sseAbortController = null
+  if (result.status === 'aborted') return
+  if (result.status === 'error') {
+    logger.error('SSE连接失败，回退到轮询:', result.error)
+  }
+  // 回退轮询：completed 仅在流未被主动关闭（active）时回退（对齐原
+  // sseReaderActive 检查）；error 与原实现一致，不检查 active 直接按任务状态判断
+  const shouldFallback = result.status === 'error'
+    || (result.status === 'completed' && result.active)
+  if (shouldFallback && task.value && !isTerminalStatus(task.value.status)) {
+    startPolling()
   }
 }
 
@@ -644,11 +624,7 @@ const handleSSEEvent = (sseData) => {
 }
 
 const closeSSE = () => {
-  sseReaderActive = false
-  if (sseAbortController) {
-    sseAbortController.abort()
-    sseAbortController = null
-  }
+  sseStream.abort()
 }
 
 const { subscribeRealtimeForTask, clearRealtimeSubscriptions } = useTaskRealtimeSync('DeepResearch', 'taskId')
