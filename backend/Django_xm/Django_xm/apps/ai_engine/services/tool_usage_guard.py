@@ -2,13 +2,18 @@
 ToolUsageGuard - 工具调用使用防护服务
 
 借鉴 Cloud Code / Claude Code 的分层防护体系：
-- PreToolUse：内容去重 + 速率限制（不阻断，提示模型自查）
-- PostToolUse：配额追踪（软警告、硬阻断、连续阻断计数）
+- PreToolUse：内容去重（ARCH-12 收敛后本服务仅负责去重与循环检测）
+- PostToolUse：配额追踪（循环阻断、连续阻断计数）
 - Token Budget：未来可扩展
+
+限流职责边界（ARCH-12 限流双轨收敛）：
+- agent 工具调用频率限制统一由 ai_engine.guardrails.RateLimitMiddleware 承担
+  （唯一限流器，阈值单源维护于 capabilities.builtin.RateLimitCapability）。
+- 本服务不再做任何频率限制，仅保留重复调用去重（dedup）与无进展循环检测。
 
 设计原则：
 1. **不限制工具能力**：合理的多文件写入、增量更新、章节拆分都应被允许
-2. **不粗暴中断**：先软警告、再渐进式阻断、最后才交由 termination_judge
+2. **不粗暴中断**：循环先识别再阻断，最后才交由 termination_judge
 3. **不浪费资源**：相同内容短时重复写入直接去重，不计调用次数
 4. **不掩盖循环**：增量 < 5% 的"打磨式"写入被识别为循环并阻断
 5. **用户友好**：所有阻断/警告都通过 SSE 事件告知前端
@@ -271,7 +276,6 @@ class ToolUsageStatus(StrEnum):
 
     ALLOW = "allow"  # 允许执行
     DEDUP = "dedup"  # 去重命中（短时相同内容），返回无变更响应
-    WARN = "warn"  # 软警告（接近阈值），仍允许执行
     BLOCK = "block"  # 硬阻断（超过阈值或打磨循环），返回阻断原因
 
 
@@ -322,18 +326,16 @@ class ToolUsageGuard:
     - _resource_cache: (thread, tool, resource_key) -> (payload_hash, ts)  [通用]
     - _resource_recent: (thread, tool, resource_key) -> Deque[(ts, payload_hash)]  [通用 loop]
     - _path_recent_contents: (thread, path) -> Deque[(ts, content)]    [fs_write_file diff]
-    - _rate_windows: thread -> deque[timestamp]
     - _consecutive_blocked: thread -> int
+
+    速率窗口（_rate_windows）已随 ARCH-12 限流收敛移除，频率限制由
+    guardrails.RateLimitMiddleware 唯一承担。
     """
 
     def __init__(
         self,
         dedup_window_seconds: int = 30,
         dedup_cache_size: int = 1000,
-        rate_limit_max: int = 30,
-        rate_limit_window: int = 60,
-        soft_warning_threshold: float = 0.5,
-        hard_stop_threshold: float = 0.9,
         same_path_max: int = 6,
         same_path_diff_ratio: float = 0.05,
         blocked_consecutive_max: int = 2,
@@ -343,10 +345,6 @@ class ToolUsageGuard:
     ):
         self.dedup_window_seconds = dedup_window_seconds
         self.dedup_cache_size = dedup_cache_size
-        self.rate_limit_max = rate_limit_max
-        self.rate_limit_window = rate_limit_window
-        self.soft_warning_threshold = soft_warning_threshold
-        self.hard_stop_threshold = hard_stop_threshold
         self.same_path_max = same_path_max
         self.same_path_diff_ratio = same_path_diff_ratio
         self.blocked_consecutive_max = blocked_consecutive_max
@@ -361,7 +359,6 @@ class ToolUsageGuard:
         self._resource_recent: dict[tuple[str, str, str], deque[tuple[float, str]]] = {}
         # 保留最近 N 次同 path 的 content 用于 diff 检测（仅 fs_write_file）
         self._path_recent_contents: dict[tuple[str, str], deque[tuple[float, str]]] = {}
-        self._rate_windows: dict[str, deque[float]] = {}
         self._consecutive_blocked: dict[str, int] = {}
         self._lock = threading.Lock()
 
@@ -381,15 +378,16 @@ class ToolUsageGuard:
         主流程（按优先级）：
         1. 白名单工具 → 直接 ALLOW
         2. 通用 dedup：基于 (tool, resource_key) + payload_hash
-        3. 速率限制（rate_limit_max/min）
-        4. 通用 loop：同 resource_key 调用次数 ≥ same_resource_max 且最近 3 次 payload_hash 相同
-        5. fs_write_file 专用 loop：content_diff 增量 < 5% 视为打磨循环
-        6. ALLOW + 记录调用
+        3. 通用 loop：同 resource_key 调用次数 ≥ same_resource_max 且最近 3 次 payload_hash 相同
+        4. fs_write_file 专用 loop：content_diff 增量 < 5% 视为打磨循环
+        5. ALLOW + 记录调用
+
+        注意（ARCH-12）：频率限制不在此处，由 guardrails.RateLimitMiddleware 唯一承担。
         """
         now = time.time()
         thread_id = thread_id or "default"
 
-        # 0. 白名单：始终 ALLOW（不计入速率/去重）
+        # 0. 白名单：始终 ALLOW（不计入去重）
         if tool_name in self.no_dedup_tools:
             return ToolUsageDecision(
                 status=ToolUsageStatus.ALLOW,
@@ -410,20 +408,14 @@ class ToolUsageGuard:
             resource_key = ""
             payload = ""
 
-        # 2. 速率限制检查（提前：先看是否已被阻断）
-        rate_decision = self._check_rate_limit(thread_id, tool_name, now)
-        if rate_decision.status == ToolUsageStatus.BLOCK:
-            return rate_decision
-        soft_warning_event = rate_decision.sse_event  # 可能是 warning
-
-        # 3. 通用资源循环检测（在 dedup 之前，让循环计数先累加）
+        # 2. 通用资源循环检测（在 dedup 之前，让循环计数先累加）
         # fs_write_file 跳过通用 loop，自己有更严格的 content_diff 检测
         if self.general_dedup_enabled and resource_key and tool_name != "fs_write_file":
             loop_decision = self._check_general_resource_loop(thread_id, tool_name, resource_key, payload, now)
             if loop_decision is not None:
                 return loop_decision
 
-        # 4. 通用 dedup（resource_key + payload_hash）
+        # 3. 通用 dedup（resource_key + payload_hash）
         if self.general_dedup_enabled and resource_key:
             dedup = self._check_general_dedup(thread_id, tool_name, resource_key, payload, now)
             if dedup is not None:
@@ -435,7 +427,7 @@ class ToolUsageGuard:
             if fs_loop is not None:
                 return fs_loop
 
-        # 5. 通过：记录调用 + 附加软警告
+        # 5. 通过：记录调用
         self._record_call(
             thread_id,
             tool_name,
@@ -443,12 +435,6 @@ class ToolUsageGuard:
             resource_key=resource_key,
             payload=payload,
         )
-        if soft_warning_event is not None:
-            return ToolUsageDecision(
-                status=ToolUsageStatus.WARN,
-                reason="接近速率阈值",
-                sse_event=soft_warning_event,
-            )
         return ToolUsageDecision(status=ToolUsageStatus.ALLOW)
 
     async def acheck(
@@ -468,7 +454,6 @@ class ToolUsageGuard:
     def reset_thread(self, thread_id: str) -> None:
         """重置某个 thread 的所有状态（供测试或异常恢复）"""
         with self._lock:
-            self._rate_windows.pop(thread_id, None)
             self._consecutive_blocked.pop(thread_id, None)
             # 清理 _path_recent_contents
             for k in [k for k in self._path_recent_contents if k[0] == thread_id]:
@@ -690,14 +675,14 @@ class ToolUsageGuard:
         path: str | None = None,  # 兼容旧调用
         content: str | None = None,  # 兼容旧调用
     ) -> None:
-        """记录一次成功调用（写入速率窗口 + 通用资源缓存 + 文件缓存）
+        """记录一次成功调用（写入通用资源缓存 + 文件缓存）
+
+        ARCH-12：不再写入速率窗口（频率限制由 RateLimitMiddleware 承担）。
 
         参数优先级：resource_key/payload 优先（新版指纹机制），
         path/content 作为旧版兼容入口（仅 fs_write_file 专用）。
         """
         with self._lock:
-            window = self._rate_windows.setdefault(thread_id, deque())
-            window.append(now)
             # 连续成功时重置 consecutive_blocked 计数
             self._consecutive_blocked[thread_id] = 0
 
@@ -713,70 +698,6 @@ class ToolUsageGuard:
             if p is not None and c is not None:
                 file_cache_key = (thread_id, p)
                 self._file_cache.set(file_cache_key, (self._content_hash(c), now))
-
-    def _check_rate_limit(
-        self,
-        thread_id: str,
-        tool_name: str,
-        now: float,
-    ) -> ToolUsageDecision:
-        """检查速率限制（滑动窗口）"""
-        with self._lock:
-            window = self._rate_windows.setdefault(thread_id, deque())
-            # 清理窗口外的时间戳
-            cutoff = now - self.rate_limit_window
-            while window and window[0] < cutoff:
-                window.popleft()
-            current_count = len(window)
-
-            if current_count >= int(self.rate_limit_max * self.hard_stop_threshold):
-                # 硬阻断
-                self._consecutive_blocked[thread_id] = self._consecutive_blocked.get(thread_id, 0) + 1
-                sse_event = {
-                    "type": "tool_usage_blocked",
-                    "data": {
-                        "severity": "error",
-                        "tool_name": tool_name,
-                        "reason": "rate_limit_exceeded",
-                        "message": (
-                            f"工具调用频率过高：{self.rate_limit_window}s 内已调用 "
-                            f"{current_count}/{self.rate_limit_max} 次，本次被阻断"
-                        ),
-                        "consecutive_blocked": self._consecutive_blocked[thread_id],
-                    },
-                }
-                return ToolUsageDecision(
-                    status=ToolUsageStatus.BLOCK,
-                    reason="rate limit exceeded",
-                    sse_event=sse_event,
-                    short_circuit_response=(
-                        f"[系统提示] 工具调用频率过高（{current_count}/{self.rate_limit_max}），"
-                        "本次被系统阻断。请总结当前进度并停止工具调用，回复用户。"
-                    ),
-                    metadata={
-                        "current_count": current_count,
-                        "max": self.rate_limit_max,
-                    },
-                )
-
-            warn_event: dict[str, Any] | None = None
-            if current_count >= int(self.rate_limit_max * self.soft_warning_threshold):
-                warn_event = {
-                    "type": "tool_usage_warning",
-                    "data": {
-                        "severity": "warn",
-                        "tool_name": tool_name,
-                        "reason": "rate_limit_approaching",
-                        "message": (
-                            f"工具调用频率接近阈值：{self.rate_limit_window}s 内已调用 "
-                            f"{current_count}/{self.rate_limit_max} 次"
-                        ),
-                    },
-                }
-            return ToolUsageDecision(
-                status=ToolUsageStatus.ALLOW,
-                sse_event=warn_event,
-            )
 
     @staticmethod
     def _content_hash(content: str) -> str:
@@ -829,10 +750,6 @@ def get_tool_usage_guard() -> ToolUsageGuard:
             _guard_instance = ToolUsageGuard(
                 dedup_window_seconds=int(getattr(settings, "tool_usage_dedup_window_seconds", 30)),
                 dedup_cache_size=int(getattr(settings, "tool_usage_dedup_cache_size", 1000)),
-                rate_limit_max=int(getattr(settings, "tool_usage_rate_limit_max", 30)),
-                rate_limit_window=int(getattr(settings, "tool_usage_rate_limit_window", 60)),
-                soft_warning_threshold=float(getattr(settings, "tool_usage_soft_warning_threshold", 0.5)),
-                hard_stop_threshold=float(getattr(settings, "tool_usage_hard_stop_threshold", 0.9)),
                 same_path_max=int(getattr(settings, "tool_usage_same_path_max", 6)),
                 same_path_diff_ratio=float(getattr(settings, "tool_usage_same_path_diff_ratio", 0.05)),
                 blocked_consecutive_max=int(getattr(settings, "tool_usage_blocked_consecutive_max", 2)),

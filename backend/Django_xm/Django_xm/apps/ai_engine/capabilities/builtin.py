@@ -230,6 +230,14 @@ class GuardrailsCapability(AgentCapability):
 
 
 class RateLimitCapability(AgentCapability):
+    """限流能力（ARCH-12 限流双轨收敛后的唯一限流器）。
+
+    agent 工具调用频率限制的阈值在此单源维护：
+    - base/subagent：max_total_calls=300，max_calls_per_second=5.0
+    - deep_research：步骤更多，放宽为 max_total_calls=500 等
+    ToolUsageGuard 已退化为重复调用去重 + 循环检测，不再限流。
+    """
+
     @property
     def name(self) -> str:
         return "rate_limit"
@@ -248,12 +256,14 @@ class RateLimitCapability(AgentCapability):
                     llm_judge_max_calls=kwargs.get("llm_judge_max_calls", 5),
                     min_calls_before_check=kwargs.get("min_calls_before_check", 25),
                     task_id=kwargs.get("task_id"),
+                    task_cancelled_checker=kwargs.get("task_cancelled_checker"),
                 )
             else:
                 middleware = create_rate_limit_middleware(
                     max_total_calls=kwargs.get("max_total_calls", 300),
                     max_calls_per_second=kwargs.get("max_calls_per_second", 5.0),
                     task_id=kwargs.get("task_id"),
+                    task_cancelled_checker=kwargs.get("task_cancelled_checker"),
                 )
             return [middleware]
         except Exception:

@@ -17,7 +17,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar
 
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from pydantic import BaseModel, Field
 
 from Django_xm.apps.core.logging_utils import get_logger
@@ -413,6 +419,73 @@ class EntityExtractor:
         return entities
 
 
+def messages_to_dicts(messages: list[BaseMessage]) -> list[dict[str, Any]]:
+    """BaseMessage → dict 适配层（统一引擎的双语义输入支持）。
+
+    保留 id / tool_calls / memory_tier / tool_call_id 字段，
+    保证压缩后经 dicts_to_messages 往返时消息身份不丢失。
+    """
+    result = []
+    for msg in messages:
+        role_map = {
+            HumanMessage: "user",
+            AIMessage: "assistant",
+            SystemMessage: "system",
+            ToolMessage: "tool",
+        }
+        role = role_map.get(type(msg), "unknown")
+        content = content_to_str(msg.content)
+        entry: dict[str, Any] = {"role": role, "content": content}
+        if hasattr(msg, "id") and msg.id:
+            entry["id"] = msg.id
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            entry["tool_calls"] = msg.tool_calls
+        if hasattr(msg, "additional_kwargs") and "memory_tier" in msg.additional_kwargs:
+            entry["memory_tier"] = msg.additional_kwargs["memory_tier"]
+        if isinstance(msg, ToolMessage):
+            entry["tool_call_id"] = msg.tool_call_id
+        result.append(entry)
+    return result
+
+
+def dicts_to_messages(dicts: list[dict[str, Any]]) -> list[BaseMessage]:
+    """dict → BaseMessage 适配层（与 messages_to_dicts 成对使用）。
+
+    保留消息 id，确保 add_messages reducer 能正确替换而非追加。
+    """
+    result = []
+    for d in dicts:
+        role = d.get("role", "unknown")
+        content = d.get("content", "")
+        msg_id = d.get("id")
+        memory_tier = d.get("memory_tier")
+
+        additional_kwargs = {}
+        if memory_tier:
+            additional_kwargs["memory_tier"] = memory_tier
+
+        if role == "user":
+            msg = HumanMessage(content=content, additional_kwargs=additional_kwargs)
+        elif role == "assistant":
+            tool_calls = d.get("tool_calls")
+            if tool_calls:
+                msg = AIMessage(content=content, tool_calls=tool_calls, additional_kwargs=additional_kwargs)
+            else:
+                msg = AIMessage(content=content, additional_kwargs=additional_kwargs)
+        elif role == "system":
+            msg = SystemMessage(content=content, additional_kwargs=additional_kwargs)
+        elif role == "tool":
+            tool_call_id = d.get("tool_call_id", "")
+            msg = ToolMessage(content=content, tool_call_id=tool_call_id, additional_kwargs=additional_kwargs)
+        else:
+            msg = HumanMessage(content=content, additional_kwargs=additional_kwargs)
+
+        if msg_id:
+            msg.id = msg_id
+        result.append(msg)
+    return result
+
+
 class ContextCompressionEngine:
     _embedding_cache: ClassVar[dict[str, list[float]]] = {}
 
@@ -588,6 +661,113 @@ class ContextCompressionEngine:
             self._persist_state()
 
         return compressed_messages, result
+
+    def compress_messages(
+        self,
+        messages: list[dict[str, Any]] | list[BaseMessage],
+    ) -> tuple[list[dict[str, Any]] | list[BaseMessage], CompressionResult]:
+        """统一压缩入口（ARCH-07 合并）：自动识别 dict / BaseMessage 两种输入语义。
+
+        - BaseMessage 输入：经适配层转 dict 压缩后转回 BaseMessage 返回；
+        - dict 输入：直接走 compress，原语义返回。
+        两条调用路径（chat 入口 ContextManager / agent 入口 ContextManagerMiddleware）
+        共用同一引擎实现与同一套配置。
+        """
+        if messages and isinstance(messages[0], BaseMessage):
+            compressed_dicts, result = self.compress(messages_to_dicts(messages))
+            return dicts_to_messages(compressed_dicts), result
+        return self.compress(messages)
+
+    def compress_aggressive(
+        self,
+        messages: list[dict[str, Any]],
+        query: str | None = None,
+    ) -> tuple[list[dict[str, Any]], CompressionResult]:
+        """激进压缩（Level 4 语义，ARCH-07 收编自 ProgressiveCompressor 去重）。
+
+        不调用 LLM 摘要（成本考虑）：规则抽取实体/决策生成上下文块，
+        保留最近 keep_recent_messages 条 SHORT_TERM 消息，query 缺失时兜底追加。
+        """
+        start_time = time.time()
+        total_tokens = TokenEstimator.estimate_dict_messages(messages)
+
+        long_term_messages = []
+        short_term_messages = []
+        for msg in messages:
+            if self._classify_memory_tier(msg) == MemoryTier.LONG_TERM:
+                long_term_messages.append(msg)
+            else:
+                short_term_messages.append(msg)
+
+        entities = (
+            self._entity_extractor.extract_from_messages(short_term_messages) if self.config.entity_aware else []
+        )
+
+        keep = self.config.keep_recent_messages
+        recent_msgs = short_term_messages[-keep:] if len(short_term_messages) >= keep else short_term_messages
+        old_messages = short_term_messages[:-keep] if len(short_term_messages) > keep else []
+
+        # 决策抽取复用引擎唯一实现（消除薄壳层重复正则）；list content 先归一化
+        normalized_old = [
+            {**m, "content": content_to_str(m.get("content", ""))} if isinstance(m.get("content"), list) else m
+            for m in old_messages
+        ]
+        decisions = self._extract_decisions(normalized_old)
+
+        compressed = list(long_term_messages)
+
+        entity_parts = []
+        if entities:
+            entity_parts.append(f"【关键实体】{', '.join(entities[:15])}")
+        if decisions:
+            entity_parts.append("【关键决策】\n" + "\n".join(f"- {d}" for d in decisions[:8]))
+        if entity_parts:
+            compressed.append(
+                {
+                    "role": "system",
+                    "content": "\n\n".join(entity_parts),
+                    "memory_tier": MemoryTier.LONG_TERM.value,
+                }
+            )
+
+        compressed.extend(recent_msgs)
+
+        if query:
+            has_user_query = any(m.get("role") == "user" and query in (m.get("content") or "") for m in compressed)
+            if not has_user_query:
+                compressed.append({"role": "user", "content": query})
+
+        result = CompressionResult(
+            compressed=True,
+            original_message_count=len(messages),
+            original_token_estimate=total_tokens,
+            compressed_token_estimate=TokenEstimator.estimate_dict_messages(compressed),
+            key_entities=entities,
+            key_decisions=decisions,
+            strategy_used=CompressionStrategy.SLIDING_WINDOW,
+            duration_ms=(time.time() - start_time) * 1000,
+        )
+        if result.original_token_estimate > 0:
+            result.compression_ratio = 1.0 - (result.compressed_token_estimate / result.original_token_estimate)
+        return compressed, result
+
+    def summarize_long_text(self, text: str, instruction: str) -> str:
+        """统一引擎文本摘要能力（ARCH-07：供 load_research_context 等旁路复用）。
+
+        使用与压缩摘要一致的模型解析链（轻量模型 → 辅助模型 → SystemConfig 默认 → 兜底），
+        消除旁路自建 get_chat_model 的双摘要实现。
+
+        异常语义：模型解析/调用失败时异常向上抛出，由调用方决定降级策略
+        （如 load_research_context 的外层 except 返回 None）；
+        摘要为空时返回空串，由调用方回退原文截断。
+        """
+        if not text or not text.strip():
+            return ""
+        model = self._get_compression_model()
+        prompt = f"{instruction}\n\n{text}"
+        response = model.invoke([{"role": "user", "content": prompt}])
+        summary = getattr(response, "content", "") or ""
+        return summary.strip()
 
     def _compress_summary(
         self,

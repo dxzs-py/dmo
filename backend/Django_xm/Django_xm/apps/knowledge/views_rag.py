@@ -36,7 +36,6 @@ from .services.embedding_service import get_embeddings
 from .services.index_service import IndexManager
 from .services.retrieval_service import create_retriever
 from .services.strict_rag_chain import query_strict_rag, stream_strict_rag
-from .vector_store import search_vector_store
 from .views_utils import get_user_index_name
 
 logger = get_logger(__name__)
@@ -145,7 +144,18 @@ class RAGSearchView(APIView):
         embeddings = get_embeddings(required_dimension=required_dim)
         vector_store = manager.load_index(user_index_name, embeddings)
 
-        results = search_vector_store(vector_store, data["query"], k=k, score_threshold=score_threshold)
+        # 检索内核统一走 UnifiedRagPipeline（ARCH-08 入口收敛）：
+        # 打分检索 + 维度不匹配自愈重试与 kb_service.search_knowledge_base 同口径
+        from .services.rag_retrieval import UnifiedRagPipeline
+
+        results = UnifiedRagPipeline.search_scored(
+            vector_store,
+            data["query"],
+            k=k,
+            score_threshold=score_threshold,
+            reload_vector_store=lambda: manager.load_index(user_index_name, embeddings),
+            required_dim=required_dim,
+        )
 
         search_results = []
         for doc, score in results:

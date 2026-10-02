@@ -8,12 +8,10 @@ from Django_xm.apps.context_manager.services.compression import (
     CompressionConfig,
     CompressionStrategy,
     ContextCompressionEngine,
-    EntityExtractor,
     MemoryTier,
     TokenEstimator,
 )
 from Django_xm.apps.context_manager.services.context_pruner import ContextPruner
-from Django_xm.common.messages import content_to_str
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +37,25 @@ class ProgressiveCompressionResult:
 
 
 class ProgressiveCompressor:
+    """渐进式压缩薄壳（ARCH-07 合并后）。
+
+    压缩语义唯一归属统一引擎 ContextCompressionEngine：
+    - Level 2 摘要 → engine.compress_incremental；
+    - Level 4 激进 → engine.compress_aggressive（原壳内重复的实体/决策
+      抽取正则与硬编码 keep_recent 已收编进引擎，配置单源 context_settings）；
+    - Level 1/3 的剪枝/相关性过滤仍复用 ContextPruner（剪枝非压缩语义）。
+
+    类名与公共方法签名（__init__ / determine_level / compress）保持不变，
+    ContextManagerMiddleware 无感复用。
+    """
+
+    # 配置单源（ARCH-07）：分级阈值唯一来源 context_settings，
+    # 消除壳内硬编码默认值（0.5/0.75/0.9）与配置项的重复定义。
     _DEFAULT_THRESHOLDS: ClassVar[dict[CompressionLevel, float]] = {
         CompressionLevel.LEVEL_1_BASELINE: 0.0,
-        CompressionLevel.LEVEL_2_SUMMARY: 0.5,
-        CompressionLevel.LEVEL_3_RELEVANCE: 0.75,
-        CompressionLevel.LEVEL_4_AGGRESSIVE: 0.9,
+        CompressionLevel.LEVEL_2_SUMMARY: context_settings.compression_level_2_threshold,
+        CompressionLevel.LEVEL_3_RELEVANCE: context_settings.compression_level_3_threshold,
+        CompressionLevel.LEVEL_4_AGGRESSIVE: context_settings.compression_level_4_threshold,
     }
 
     def __init__(
@@ -59,10 +71,9 @@ class ProgressiveCompressor:
         self._user_id = user_id
         self._thread_id = thread_id
         self._level_thresholds = level_thresholds or dict(self._DEFAULT_THRESHOLDS)
-        self._level_thresholds.setdefault(CompressionLevel.LEVEL_1_BASELINE, 0.0)
-        self._level_thresholds.setdefault(CompressionLevel.LEVEL_2_SUMMARY, 0.5)
-        self._level_thresholds.setdefault(CompressionLevel.LEVEL_3_RELEVANCE, 0.75)
-        self._level_thresholds.setdefault(CompressionLevel.LEVEL_4_AGGRESSIVE, 0.9)
+        # 显式传入的 level_thresholds 缺省项用配置单源默认值补齐
+        for level, default in self._DEFAULT_THRESHOLDS.items():
+            self._level_thresholds.setdefault(level, default)
 
         self._pruner = ContextPruner()
 
@@ -75,7 +86,6 @@ class ProgressiveCompressor:
             strategy=CompressionStrategy(context_settings.compression_strategy),
         )
         self._engine = ContextCompressionEngine(config, store=store, user_id=user_id, thread_id=thread_id)
-        self._entity_extractor = EntityExtractor()
 
     def determine_level(self, current_tokens: int, max_tokens: int) -> CompressionLevel:
         if max_tokens <= 0:
@@ -253,66 +263,18 @@ class ProgressiveCompressor:
     ) -> tuple[list[dict[str, Any]], ProgressiveCompressionResult]:
         total_tokens = TokenEstimator.estimate_dict_messages(messages)
         try:
+            # 压缩语义委托统一引擎（ARCH-07）：激进压缩 = 规则实体/决策 + 最近 N 条 + query 兜底
             marked = self._mark_long_term(messages)
-
-            long_term_msgs = [m for m in marked if m.get("memory_tier") == MemoryTier.LONG_TERM.value]
-            short_term_msgs = [m for m in marked if m.get("memory_tier") != MemoryTier.LONG_TERM.value]
-
-            entities = self._entity_extractor.extract_from_messages(short_term_msgs)
-
-            recent_count = 6
-            recent_msgs = short_term_msgs[-recent_count:] if len(short_term_msgs) >= recent_count else short_term_msgs
-
-            compressed = list(long_term_msgs)
-
-            entity_parts = []
-            if entities:
-                entity_parts.append(f"【关键实体】{', '.join(entities[:15])}")
-
-            decisions = []
-            for msg in short_term_msgs[:-recent_count] if len(short_term_msgs) > recent_count else []:
-                content = msg.get("content", "")
-                if isinstance(content, list):
-                    content = content_to_str(content)
-                if isinstance(content, str) and msg.get("role") == "assistant":
-                    import re
-
-                    patterns = [
-                        r"(?:建议|推荐|应该|决定|确认|选择)\s*[：:]\s*([^\n，。]{4,60})",
-                        r"(?:结论|结果|答案)\s*[是为]\s*([^\n，。]{4,60})",
-                    ]
-                    for pattern in patterns:
-                        matches = re.findall(pattern, content)
-                        decisions.extend(matches)
-            decisions = decisions[:10]
-            if decisions:
-                entity_parts.append("【关键决策】\n" + "\n".join(f"- {d}" for d in decisions[:8]))
-
-            if entity_parts:
-                compressed.append(
-                    {
-                        "role": "system",
-                        "content": "\n\n".join(entity_parts),
-                        "memory_tier": MemoryTier.LONG_TERM.value,
-                    }
-                )
-
-            compressed.extend(recent_msgs)
-
-            if query:
-                has_user_query = any(m.get("role") == "user" and query in (m.get("content") or "") for m in compressed)
-                if not has_user_query:
-                    compressed.append({"role": "user", "content": query})
-
-            compressed_tokens = TokenEstimator.estimate_dict_messages(compressed)
-            return compressed, ProgressiveCompressionResult(
+            compressed_dicts, engine_result = self._engine.compress_aggressive(marked, query=query)
+            compressed_tokens = TokenEstimator.estimate_dict_messages(compressed_dicts)
+            return compressed_dicts, ProgressiveCompressionResult(
                 level=CompressionLevel.LEVEL_4_AGGRESSIVE,
                 original_tokens=total_tokens,
                 compressed_tokens=compressed_tokens,
                 compression_ratio=1.0 - (compressed_tokens / total_tokens) if total_tokens > 0 else 0.0,
-                messages=compressed,
-                key_entities=entities,
-                key_decisions=decisions,
+                messages=compressed_dicts,
+                key_entities=engine_result.key_entities or [],
+                key_decisions=engine_result.key_decisions or [],
                 strategy_used="aggressive",
             )
         except Exception:

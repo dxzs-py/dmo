@@ -206,6 +206,9 @@ def get_embeddings(
         use_fallback=use_fallback,
         preferred_provider=effective_provider,
         required_dimension=required_dimension,
+        # 缓存包装器由调用方注入（ARCH-03 依赖倒置）：CachedEmbeddings 保留在
+        # knowledge 侧，ai_engine 工厂不感知本模块实现
+        cache_wrapper_factory=lambda emb: CachedEmbeddings(emb, model=model or "default"),
         **kwargs,
     )
 

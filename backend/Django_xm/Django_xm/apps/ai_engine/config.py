@@ -88,12 +88,27 @@ class Settings(ProjectSettings):
 
     agent_max_execution_time: float | None = Field(default=None, description="Agent 最大执行时间(秒)")
 
+    # ==================== 会话 Token 硬预算（COST-01）====================
+    # 会话（thread/session）级累计 token 硬熔断上限：执行循环每轮 LLM 调用后检查
+    # （会话已落库累计 + 当前请求增量），超限发布 budget_exceeded 事件并优雅终止。
+    # 数据源为会话已落库消息 token_count 汇总 + 当前请求 TokenUsageCallbackHandler 增量；
+    # 设为 0 表示不启用会话级熔断。
+    session_token_budget: int = Field(
+        default=2_000_000, ge=0, description="会话级 Token 硬预算上限（累计输入+输出+推理），0=不启用熔断"
+    )
+
+    # 唯一权威默认能力表（ARCH-06 双源合并）：全部 Agent 类型的默认 capability
+    # 统一在此维护，agent_hub/config.py 导入同一对象引用，
+    # CapabilityRegistry.get_default_capabilities fallback 亦读本字段。
+    # 同步断言由 Django_xm.apps.ai_engine.tests.test_capability_defaults 保证。
     AGENT_CAPABILITIES_DEFAULT: dict = Field(
         default={
             "base": ["context_management", "tool_injection", "guardrails", "rate_limit"],
+            "rag": ["context_management", "tool_injection"],
+            "safe_rag": ["context_management", "tool_injection", "guardrails"],
             "deep_research": ["context_management", "tool_injection", "rate_limit"],
         },
-        description="各 Agent 类型的默认能力列表",
+        description="各 Agent 类型的默认能力列表（唯一权威定义，禁止在其他模块重复硬编码）",
     )
 
     # ==================== RAG / Embedding 配置 ====================
@@ -245,8 +260,11 @@ class Settings(ProjectSettings):
     langsmith_tracing: bool = Field(default=False, description="是否启用 LangSmith 追踪")
 
     # ==================== 工具调用使用防护配置 ====================
-    # 借鉴 Cloud Code / Claude Code 的 PreToolUse 速率限制、PostToolUse
-    # 配额追踪、内容去重冷却等机制；避免粗暴"3 次就强制终止"。
+    # 借鉴 Cloud Code / Claude Code 的 PreToolUse 内容去重、PostToolUse
+    # 配额追踪等机制；避免粗暴"3 次就强制终止"。
+    # ARCH-12 限流双轨收敛：agent 工具调用频率限制统一由
+    # guardrails.RateLimitMiddleware 承担（阈值单源维护于
+    # capabilities.builtin.RateLimitCapability），此处不再保留限流阈值键。
     tool_usage_dedup_window_seconds: int = Field(
         default=30,
         ge=1,
@@ -255,16 +273,6 @@ class Settings(ProjectSettings):
         "工具返回无变更响应且不计调用次数。",
     )
     tool_usage_dedup_cache_size: int = Field(default=1000, ge=10, le=100000, description="文件写入去重 LRU 缓存容量。")
-    tool_usage_rate_limit_max: int = Field(
-        default=30, ge=1, le=1000, description="单 thread_id 滑动窗口内的最大工具调用次数。"
-    )
-    tool_usage_rate_limit_window: int = Field(default=60, ge=1, le=3600, description="滑动窗口大小（秒）。")
-    tool_usage_soft_warning_threshold: float = Field(
-        default=0.5, ge=0.0, le=1.0, description="软警告阈值（占 rate_limit_max 的比例）。"
-    )
-    tool_usage_hard_stop_threshold: float = Field(
-        default=0.9, ge=0.0, le=1.0, description="硬阻断阈值（占 rate_limit_max 的比例）。"
-    )
     tool_usage_same_path_max: int = Field(
         default=6, ge=1, le=100, description="同一 path 在去重窗口内最多允许的写入次数（含去重命中）。"
     )
@@ -279,7 +287,7 @@ class Settings(ProjectSettings):
     )
     # 通用资源防护配置（适用于所有工具，不仅 fs_write_file）
     tool_usage_general_dedup_enabled: bool = Field(
-        default=True, description="是否启用通用 dedup + 通用资源循环检测。关闭后仅 fs_write_file 和 rate_limit 仍生效。"
+        default=True, description="是否启用通用 dedup + 通用资源循环检测。关闭后仅 fs_write_file 专用循环检测仍生效。"
     )
     tool_usage_same_resource_max: int = Field(
         default=6,

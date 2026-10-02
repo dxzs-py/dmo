@@ -6,6 +6,15 @@
 - 每个知识库名称按 `user_{id}_{name}` 规则还原为完整索引名（与 kb_service.get_user_index_name 一致）
 - 对每个知识库独立加载向量库并检索，合并去重后返回
 - 未选择知识库时跳过检索，仅以 LLM 内置知识继续生成（与原硬编码 test_index 的开发模式解耦）
+
+分层说明（ARCH-08 入口收敛，分层非重复）：
+- 检索内核统一委托 UnifiedRagPipeline（retrieve_documents_from_retriever / retrieve_documents），
+  与 strict_rag_chain、SyncSafeRetrieverTool 共享同一检索与降级实现，无复制逻辑；
+- 本节点保留的仅为学习工作流特有编排：多知识库逐库检索合并、按 page_content
+  全文精确去重（口径与管线 Level 1 的 80 字符前缀去重不同，服务于跨库合并场景）、
+  key_points 补充检索与 relevance_score 递减赋值；
+- 全库降级（Level 2）经 load_kb_documents + pipeline.retrieve_documents 复用管线实现，
+  与 strict_rag_chain._handle_empty_result 同构但输出类型不同（Document 列表 vs 格式化字符串）。
 """
 
 from typing import Any

@@ -141,14 +141,22 @@ async def publish_stream_event(
                 "interrupted": EventType.STREAM_INTERRUPTED,
             }
             evt_type = stream_event_type_map.get(event_type_str, EventType.STREAM_EVENT)
+            payload = {
+                "source": EventSource.CHAT,
+                "source_id": session_id,
+                "message_id": str(message_id) if message_id else None,
+                "data": event.get("data", event),
+            }
+            # ARCH-19：包装为 STREAM_EVENT 的原始执行事件子类型（deep_research /
+            # research_task_id / model_fallback / approval）注入 payload 顶层，
+            # 前端 _handleGenericStreamEvent 据此分流；未包装进 STREAM_EVENT 的
+            # 子事件（reasoning/sources 等）有独立 EventType，不注入该字段，
+            # 避免污染前端 fieldMap 分流。
+            if evt_type is EventType.STREAM_EVENT:
+                payload["event_subtype"] = event_type_str
             await publish_event(
                 evt_type,
-                {
-                    "source": EventSource.CHAT,
-                    "source_id": session_id,
-                    "message_id": str(message_id) if message_id else None,
-                    "data": event.get("data", event),
-                },
+                payload,
                 session_id=session_id,
             )
         except Exception as e:

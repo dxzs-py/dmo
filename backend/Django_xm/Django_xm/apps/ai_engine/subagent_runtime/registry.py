@@ -2,8 +2,13 @@
 
 集中声明 ``web-researcher`` / ``doc-analyst`` / ``general-purpose`` 三类子代理：
 - ``name`` / ``description`` / ``risk_ceiling`` / ``dedicated_tool_kind``
-- ``system_prompt`` 懒加载（``research.prompts`` 为纯常量模块，无循环依赖）
+- ``system_prompt`` 经 ``prompt_provider`` 注入解析（依赖倒置）
 - 专用工具解析（web-researcher→搜索工具；doc-analyst→检索工具；general-purpose→空）
+
+依赖方向（ARCH-03 forbidden 契约）：ai_engine 禁止 import research/knowledge/learning，
+因此 research.prompts 的角色提示词与 research.services._constants 的检索工具前缀
+均由调用方（agent_hub.subagent_tools.spawn，可合法依赖 research）注入，
+本模块不感知 research 任何模块。
 
 调用方：``spawn_sub_agent`` 工具（agent_hub.subagent_tools.spawn）按 ``agent_name`` 查询注册表，
 在主 agent 工具集基础上追加专用工具，并继承角色风险上限。
@@ -12,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from langchain_core.tools import BaseTool
@@ -65,11 +71,20 @@ def get_subagent_spec(name: str) -> SubAgentSpec | None:
     return SUBAGENT_SPECS.get(name)
 
 
-def resolve_system_prompt(name: str) -> str:
-    """懒加载子代理 system_prompt。
+def resolve_system_prompt(
+    name: str,
+    prompt_provider: Callable[[str], str] | None = None,
+) -> str:
+    """解析子代理 system_prompt（依赖倒置）。
 
-    纯常量模块 ``research.prompts`` 仅含 prompt 字符串，无反向依赖；
-    运行时导入避免 ai_engine → research 的模块加载期循环依赖。
+    Args:
+        name: 子代理名称。
+        prompt_provider: 角色提示词提供器，由调用方注入（如 agent_hub 侧基于
+            ``research.prompts`` 实现），入参为 agent_name，返回提示词（可为空串）。
+            ai_engine 不得直接 import research（ARCH-03 forbidden 契约）。
+
+    general-purpose 内置通用提示词，不依赖外部 provider。
+    未注入 provider 且非 general-purpose 时返回空串（由 task 作为任务输入）。
     """
     if name == "general-purpose":
         return (
@@ -79,28 +94,29 @@ def resolve_system_prompt(name: str) -> str:
             "task. Do not make assumptions about the user's intent - if something "
             "is unclear, ask for clarification."
         )
+    if prompt_provider is None:
+        logger.warning(f"子代理 system_prompt 未注入 prompt_provider，返回空串: {name}")
+        return ""
     try:
-        from Django_xm.apps.research.prompts import (
-            DOC_ANALYST_SUBAGENT_PROMPT,
-            WEB_RESEARCHER_SUBAGENT_PROMPT,
-        )
+        return prompt_provider(name) or ""
     except Exception as e:
         logger.warning(f"加载子代理 system_prompt 失败: {name}, err={e}")
         return ""
 
-    if name == "web-researcher":
-        return WEB_RESEARCHER_SUBAGENT_PROMPT
-    if name == "doc-analyst":
-        return DOC_ANALYST_SUBAGENT_PROMPT
-    return ""
 
-
-def resolve_dedicated_tools(spec: SubAgentSpec, main_tools: list[BaseTool]) -> list[BaseTool]:
+def resolve_dedicated_tools(
+    spec: SubAgentSpec,
+    main_tools: list[BaseTool],
+    retriever_prefixes: Sequence[str] | None = None,
+) -> list[BaseTool]:
     """解析子代理专用工具（追加到主 agent 工具集，按 tool_name 去重）。
 
     Args:
         spec: 子代理注册表项。
         main_tools: 主 agent 工具集（用于识别 retriever_tool）。
+        retriever_prefixes: 检索类工具名前缀，由调用方注入（ARCH-03 依赖倒置，
+            如 agent_hub 侧传入 ``research.services._constants.RETRIEVER_TOOL_NAME_PREFIXES``）。
+            未注入时 retriever 类专用工具返回空列表。
     """
     if spec.dedicated_tool_kind == "web_search":
         try:
@@ -111,11 +127,12 @@ def resolve_dedicated_tools(spec: SubAgentSpec, main_tools: list[BaseTool]) -> l
             logger.warning(f"web-researcher 搜索工具不可用（Tavily 未配置）: {e}")
             return []
     if spec.dedicated_tool_kind == "retriever":
-        from Django_xm.apps.research.services._constants import RETRIEVER_TOOL_NAME_PREFIXES
-
+        if retriever_prefixes is None:
+            logger.warning("doc-analyst 检索工具前缀未注入 retriever_prefixes，返回空列表")
+            return []
         for t in main_tools:
             name = getattr(t, "name", "")
-            if any(name.startswith(p) or name == p for p in RETRIEVER_TOOL_NAME_PREFIXES):
+            if any(name.startswith(p) or name == p for p in retriever_prefixes):
                 return [t]
         return []
     return []

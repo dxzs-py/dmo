@@ -9,3 +9,7 @@ celery-types>=0.26.0
 types-PyYAML>=6.0.12.20250915
 types-channels
 # NOTE: types-celery does not exist on PyPI; celery stubs are provided by celery-types (above).
+
+# Testing (ARCH-20)：pytest 双轨运行（与 manage.py test 并存，共用 settings.test）
+pytest>=9.1.0
+pytest-django>=4.14.0

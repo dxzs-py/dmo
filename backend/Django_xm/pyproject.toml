@@ -129,3 +129,16 @@ ignore_missing_imports = true
 module = "langchain.agents.middleware.*"
 follow_imports = "skip"
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+# ARCH-20：pytest 入口（与 manage.py test 双轨并存，共用同一份测试配置）
+# - settings 直连 Django_xm.settings.test：与 manage.py test 经 settings/__init__
+#   sys.argv 路由到达的最终配置一致（base.py + test 覆盖项）；
+#   注意 settings 包 __init__ 仍会先导入 dev.py（包初始化副作用），无配置泄漏。
+# - python_files 仅收 test_*.py：与 Django runner 发现模式对齐
+#   （仓库无 tests.py，两轨收集面一致）。
+# - testpaths 限定内层 Django_xm 包：避免误收集根目录 data/ 等非测试目录。
+DJANGO_SETTINGS_MODULE = "Django_xm.settings.test"
+python_files = ["test_*.py"]
+testpaths = ["Django_xm"]
+addopts = "-ra"

@@ -48,6 +48,10 @@ CACHE_PREFIX_SUGGESTIONS = "suggestions"
 # （ttl=None、含 auth_token），与其 DB 体系（McpServerConfig）重复且零调用方，
 # 已于 2026-10-01 随死路径删除。教训：配置数据绝不存缓存层。
 
+# LangChain LLM Cache 前缀（langchain 级，写入方唯一：RedisLangChainCache）。
+# 统一登记以便全量清理与分类统计；RedisLangChainCache.CACHE_PREFIX 引用本常量。
+CACHE_PREFIX_LLM_CACHE = "langchain:llm_cache"
+
 CACHE_PREFIX_LABELS = {
     CACHE_PREFIX_QUERY: "RAG 查询缓存",
     CACHE_PREFIX_MODEL: "模型响应缓存",
@@ -58,6 +62,7 @@ CACHE_PREFIX_LABELS = {
     CACHE_PREFIX_CHAT: "聊天配置缓存",
     CACHE_PREFIX_PROJECT_CONTEXT: "项目上下文缓存",
     CACHE_PREFIX_SUGGESTIONS: "建议缓存",
+    CACHE_PREFIX_LLM_CACHE: "LangChain LLM 缓存",
 }
 
 
@@ -325,19 +330,26 @@ class QueryCacheService:
         return CacheService.set(key, cache_data, ttl)
 
     @classmethod
-    def invalidate_index_queries(cls, index_name: str) -> bool:
-        """使某个索引的所有查询缓存失效"""
+    def invalidate_index_queries(cls, index_name: str) -> int:
+        """清除指定索引的所有查询缓存"""
         pattern = f"{CACHE_PREFIX_QUERY}:{index_name}:*"
-        CacheService.delete_pattern(pattern)
-        logger.info(f"索引查询缓存已失效: {index_name}")
-        return True
+        count = CacheService.delete_pattern(pattern)
+        logger.info(f"索引查询缓存已失效: {index_name}, 清除 {count} 个键")
+        return count
 
 
 class ModelResponseCacheService:
     """
-    模型响应缓存服务
+    模型响应缓存服务（业务级权威缓存，ARCH-04 双轨单轨化）
 
-    缓存相同输入的 AI 回复，减少 API 调用
+    缓存相同输入的 AI 回复，减少 API 调用。
+
+    职责边界（与 RedisLangChainCache 区分）：
+    - 本服务为业务级：键含模型名与业务 mode，写入方感知用户/模型配置，
+      带独立失效策略（invalidate_model_cache 按模型失效）；
+    - RedisLangChainCache 为 langchain 框架级：纯 prompt→response 透明缓存，
+      无业务失效策略。二者键空间独立（model_response:* vs langchain:llm_cache:*），
+      连接与失效基建（CacheService / delete_pattern）共用，禁止各建一套。
     """
 
     @classmethod
@@ -364,12 +376,12 @@ class ModelResponseCacheService:
         return CacheService.set(key, cache_data, ttl)
 
     @classmethod
-    def invalidate_model_cache(cls, model_name: str) -> bool:
+    def invalidate_model_cache(cls, model_name: str) -> int:
         """使某个模型的所有缓存失效"""
         pattern = f"{CACHE_PREFIX_MODEL}:{model_name}:*"
-        CacheService.delete_pattern(pattern)
+        count = CacheService.delete_pattern(pattern)
         logger.info(f"模型缓存已失效: {model_name}")
-        return True
+        return count
 
 
 class VectorSearchCacheService:
@@ -460,13 +472,15 @@ class RedisDirectClient:
 
     @classmethod
     def _get_redis_config(cls):
-        import os
+        """Redis 连接参数（解析收敛至 common/connections.py 单一来源）。
 
-        from Django_xm.apps.core.config import settings as project_cfg
+        Returns:
+            (redis_url, redis_password) 二元组；password 空串已归一化为 None。
+        """
+        from Django_xm.common.connections import get_redis_config
 
-        redis_url = os.environ.get("REDIS_URL", project_cfg.redis_url)
-        redis_password = os.environ.get("REDIS_PASSWORD", project_cfg.redis_password) or None
-        return redis_url, redis_password
+        config = get_redis_config()
+        return config["url"], config["password"]
 
     @classmethod
     def get_client(cls):
@@ -554,11 +568,19 @@ class RedisDirectClient:
 
 class RedisLangChainCache(BaseCache):
     """
-    LangChain LLM Cache 的 Redis 实现
+    LangChain LLM Cache 的 Redis 实现（langchain 框架级缓存）
 
     正式继承 langchain_core.caches.BaseCache（官方抽象基类），
     将 LLM 的 prompt+llm_string -> Generation 序列缓存到 Redis，
     避免对相同 prompt+配置重复调用 API。
+
+    职责边界（与 ModelResponseCacheService 区分，ARCH-04 双轨单轨化）：
+    - 本类为 langchain 框架级：纯 prompt→response 透明缓存，键只含
+      (prompt, llm_string) 联合哈希，无业务失效策略（仅 TTL + clear）；
+    - ModelResponseCacheService 为业务级权威：键含模型名/业务 mode，
+      写入方感知用户/模型配置，带按模型失效策略。
+    - 连接与失效基建复用 CacheService（Django cache + delete_pattern），
+      前缀经 CACHE_PREFIX_LLM_CACHE 统一登记，不自带 Redis 解析。
 
     key 生成对齐官方语义（BaseCache.lookup docstring 要求）：
     由 prompt 与 llm_string（LLM 调用参数的序列化串，含模型名/温度/
@@ -572,7 +594,7 @@ class RedisLangChainCache(BaseCache):
         https://python.langchain.com/docs/how_to/llm_caching/
     """
 
-    CACHE_PREFIX = "langchain:llm_cache"
+    CACHE_PREFIX = CACHE_PREFIX_LLM_CACHE
 
     def __init__(self, ttl: int = CacheTTL.MODEL_MEDIUM):
         self._ttl = ttl
@@ -580,7 +602,7 @@ class RedisLangChainCache(BaseCache):
     def _make_key(self, prompt: str, llm_string: str) -> str:
         # 官方要求 key 由 (prompt, llm_string) 二元组生成；
         # 加 "\x00" 分隔符消除两段拼接的边界歧义（官方 _hash 为裸拼接）
-        combined = hashlib.sha256(f"{prompt}\x00{llm_string}".encode("utf-8"))
+        combined = hashlib.sha256(f"{prompt}\x00{llm_string}".encode())
         return f"{self.CACHE_PREFIX}:{combined.hexdigest()[:24]}"
 
     def lookup(self, prompt: str, llm_string: str) -> list[Generation] | None:
@@ -624,6 +646,11 @@ def setup_langchain_cache(enabled: bool = True) -> None:
 
     在 Django App ready() 时调用，将 Redis 缓存注册为
     LangChain 全局 LLM Cache，使所有 LLM 调用自动缓存。
+
+    职责边界（ARCH-04）：本入口只注册 langchain 框架级透明缓存
+    （RedisLangChainCache），其连接与失效基建复用 CacheService，
+    与业务级 ModelResponseCacheService 共用同一 Redis 配置
+    （common/connections.py 单一来源）与前缀登记，不建立独立失效逻辑。
 
     Args:
         enabled: 是否启用缓存

@@ -143,13 +143,21 @@ class SpawnSubAgentTool(BaseTool):
             main_tools = await self._resolve_main_tools(main_tool_names, user_id)
 
             spec = get_subagent_spec(agent_name)
-            dedicated_tools = resolve_dedicated_tools(spec, main_tools) if spec else []
+            dedicated_tools = (
+                resolve_dedicated_tools(spec, main_tools, retriever_prefixes=self._get_retriever_tool_prefixes())
+                if spec
+                else []
+            )
             extra_tools = await self._resolve_extra_tools(tools, user_id) if tools else []
 
             merged = self._merge_tools(main_tools, dedicated_tools, extra_tools)
 
             # system_prompt：注册表角色提示（命中注册表时）；否则空，由 task 作为任务输入。
-            system_prompt = resolve_system_prompt(agent_name) if spec else ""
+            # prompt_provider 由本层注入（ARCH-03 依赖倒置）：agent_hub 可合法依赖
+            # research，ai_engine 注册表不感知 research.prompts。
+            system_prompt = (
+                resolve_system_prompt(agent_name, prompt_provider=self._resolve_registry_prompt) if spec else ""
+            )
 
             agent_config = AgentConfig(
                 agent_type=AgentType.BASE,
@@ -191,6 +199,41 @@ class SpawnSubAgentTool(BaseTool):
                 {"error": f"子代理创建失败: {str(e) or repr(e)}"},
                 ensure_ascii=False,
             )
+
+    @staticmethod
+    def _resolve_registry_prompt(agent_name: str) -> str:
+        """解析注册表角色的 system_prompt（ARCH-03 依赖倒置的注入侧）。
+
+        agent_hub → research 为合法依赖方向；ai_engine 注册表不感知
+        research.prompts，由本层提供角色提示词。
+        """
+        try:
+            from Django_xm.apps.research.prompts import (
+                DOC_ANALYST_SUBAGENT_PROMPT,
+                WEB_RESEARCHER_SUBAGENT_PROMPT,
+            )
+        except Exception as e:
+            logger.warning(f"加载子代理角色提示词失败: {agent_name}, err={e}")
+            return ""
+        return {
+            "web-researcher": WEB_RESEARCHER_SUBAGENT_PROMPT,
+            "doc-analyst": DOC_ANALYST_SUBAGENT_PROMPT,
+        }.get(agent_name, "")
+
+    @staticmethod
+    def _get_retriever_tool_prefixes() -> tuple[str, ...]:
+        """获取检索类工具名前缀（ARCH-03 依赖倒置的注入侧）。
+
+        来源 research.services._constants.RETRIEVER_TOOL_NAME_PREFIXES，
+        供 ai_engine 注册表识别 doc-analyst 专用检索工具。
+        """
+        try:
+            from Django_xm.apps.research.services._constants import RETRIEVER_TOOL_NAME_PREFIXES
+
+            return RETRIEVER_TOOL_NAME_PREFIXES
+        except Exception as e:
+            logger.warning(f"加载检索工具名前缀失败: {e}")
+            return ()
 
     async def _resolve_main_tools(self, main_tool_names: list[str], user_id: int | None) -> list:
         """继承父 agent 全部工具（按工具名解析）。

@@ -22,6 +22,8 @@ from typing import Any
 from langchain_core.messages import SystemMessage
 
 from Django_xm.apps.approvals.services.approval_batch import assert_non_empty_decision
+from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
+from Django_xm.apps.ai_engine.services.usage_tracker import create_session_token_budget_guard
 from Django_xm.apps.chat.services.stream_helpers import (
     extract_interrupt_ids,
     process_stream_chunk,
@@ -31,6 +33,7 @@ from Django_xm.apps.tools.base import is_approval_interrupt, is_subagent_wait_in
 from Django_xm.apps.tools.tool_event_extractor import ToolEventExtractor
 from Django_xm.common.event_schema import EventSource, EventType
 from Django_xm.common.execution_loop import run_astream_loop
+from Django_xm.common.realtime_events import publish_event
 from Django_xm.common.tool_event_publisher import publish_tool_lifecycle_event
 
 from .context import StreamContext
@@ -207,6 +210,16 @@ async def run_stream_loop(
     # 与收敛前 stream_broadcast 的 position 语义一致）；缺失时回退 ctx 累积正文。
     content_state = data.get("_content_state_ref")
 
+    # ── COST-01：会话级 Token 硬预算守卫 ──
+    # 预算未配置（session_token_budget<=0）或无 session_id 时自动不启用。
+    # 当前请求 token 增量来源：graph callbacks 上的 TokenUsageCallbackHandler
+    # （每轮 LLM 调用结束累加）；会话累计基线由守卫首次检查时从 DB 聚合并缓存。
+    budget_guard = create_session_token_budget_guard(session_id)
+    usage_cb = next(
+        (c for c in (config.get("callbacks") or []) if isinstance(c, TokenUsageCallbackHandler)),
+        None,
+    )
+
     # 归一化工具事件的唯一提取器（长生命周期，跨 chunk / resume 复用）
     extractor = ToolEventExtractor()
 
@@ -218,6 +231,63 @@ async def run_stream_loop(
         if isinstance(content_state, dict):
             return len(content_state.get("content") or "")
         return len(ctx.current_message_content or "")
+
+    # ── COST-01：会话级 Token 硬预算熔断 ──
+    # 检查点（"每轮 LLM 调用后"的两个可观测标记）：
+    #   1. 消息 chunk 携带 usage_metadata（流式下每轮 LLM 调用结束的标记）；
+    #   2. TOOL_CALL_PENDING 事件（每轮工具调用前，agent 工具循环自我膨胀的刹车）。
+    # 超限 → 发布 budget_exceeded 事件 + 正文追加系统提示（随 finalizer 落库）
+    # → should_break 终止本轮循环（优雅结束，不抛异常，走现有 finalizer 收尾）。
+    _BUDGET_EXCEEDED_NOTICE = "\n\n[系统提示] 本会话 Token 预算已耗尽，已自动停止本次生成。"
+
+    async def _check_session_budget() -> dict[str, Any] | None:
+        """检查会话 Token 硬预算，超限时完成事件发布与正文收尾。
+
+        Returns:
+            超限时的预算 info dict；未超限/未启用/检查异常返回 None（不阻塞主流程）。
+        """
+        if not budget_guard.enabled:
+            return None
+        try:
+            info = budget_guard.check(usage_cb.total_tokens if usage_cb is not None else 0)
+        except Exception as e:
+            logger.warning(f"[Loop] 会话预算检查失败（忽略）: {e}")
+            return None
+        if not info.get("exceeded"):
+            return None
+
+        logger.warning(
+            f"[Loop] 会话 Token 预算耗尽，终止本轮生成: session={session_id}, "
+            f"total={info.get('total')}/{info.get('limit')}"
+        )
+        # 发布 budget_exceeded 事件（前端未监听不影响熔断；发布失败不阻断终止）
+        try:
+            await publish_event(
+                EventType.BUDGET_EXCEEDED,
+                {
+                    "source": EventSource.CHAT,
+                    "source_id": session_id,
+                    "session_id": session_id,
+                    "data": {
+                        "session_id": session_id,
+                        "used_tokens": info.get("total"),
+                        "budget_limit": info.get("limit"),
+                    },
+                },
+                session_id=session_id,
+            )
+        except Exception:
+            logger.exception("[Loop] budget_exceeded 事件发布失败（熔断继续）")
+        # 正文追加系统提示（finalizer 持久化该内容）
+        ctx.current_message_content += _BUDGET_EXCEEDED_NOTICE
+        data["_budget_exceeded"] = True
+        return info
+
+    async def _budget_stop_events(control) -> AsyncGenerator[dict, None]:
+        """预算超限时产出收尾事件并置位终止信号（未超限不产出任何事件）。"""
+        if await _check_session_budget() is not None:
+            yield {"type": "chunk", "content": _BUDGET_EXCEEDED_NOTICE}
+            control.should_break = True
 
     # messages 模式 chunk 处理器（公共循环注入）
     async def _process_chunk(mode_data, control, resume_values):
@@ -241,6 +311,11 @@ async def run_stream_loop(
             parameters = evt.get("parameters") or {}
 
             if event_type == EventType.TOOL_CALL_PENDING:
+                # COST-01：每轮工具调用前检查会话 Token 硬预算（工具循环自我膨胀的服务端刹车）
+                async for stop_event in _budget_stop_events(control):
+                    yield stop_event
+                if control.should_break:
+                    return
                 # 重复调用检测（注入警告到 graph state）
                 _record_duplicate_tool_call(tool_name, parameters, duplicate_detector, control.warnings)
                 # 调用计数（诊断）
@@ -299,6 +374,13 @@ async def run_stream_loop(
         except Exception as chunk_err:
             logger.warning(f"处理流式 chunk 失败: {chunk_err}")
             return
+
+        # COST-01：本轮 LLM 调用结束（流式末尾 chunk 携带 usage_metadata）后检查会话预算
+        if getattr(message, "usage_metadata", None) is not None:
+            async for stop_event in _budget_stop_events(control):
+                yield stop_event
+            if control.should_break:
+                return
 
         await asyncio.sleep(0.01)
 

@@ -151,29 +151,17 @@ def get_checkpointer(
 
 def _build_connection_string() -> str:
     """
-    构建 PostgreSQL 连接字符串
+    构建 PostgreSQL 连接字符串（解析收敛至 common/connections.py 单一来源）
 
     优先级：环境变量 CHECKPOINTER_POSTGRES_URI > settings 配置 > 拼接
 
     安全措施：
     - 优先从环境变量读取完整连接字符串，避免密码出现在代码中
-    - 日志中始终遮蔽密码
+    - 日志中始终遮蔽密码（_mask_connection_string）
     """
-    connection_string = os.environ.get("CHECKPOINTER_POSTGRES_URI")
-    if connection_string:
-        return connection_string
+    from Django_xm.common.connections import get_postgres_connection_string
 
-    connection_string = getattr(settings, "checkpointer_postgres_uri", None)
-    if connection_string:
-        return connection_string
-
-    db_host = os.environ.get("DB_HOST", getattr(settings, "db_host", "127.0.0.1"))
-    db_port = os.environ.get("DB_PORT", getattr(settings, "db_port", 5432))
-    db_name = os.environ.get("DB_NAME", getattr(settings, "db_name", "langchain_xm"))
-    db_user = os.environ.get("DB_USER", "postgres")
-    db_pass = os.environ.get("DB_PASSWORD", "")
-
-    return f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
+    return get_postgres_connection_string(uri_override=getattr(settings, "checkpointer_postgres_uri", None))
 
 
 def _create_postgres_checkpointer(connection_string: str | None = None) -> Any:

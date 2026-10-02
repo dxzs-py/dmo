@@ -4,20 +4,20 @@
 跨事件循环复用会报 "bound to a different event loop"。因此按 ``loop_id`` 缓存，
 与 ``checkpointer_factory.get_async_checkpointer`` 的缓存策略一致。
 
-连接信息复用项目现有 Django cache 的 Redis 配置（``REDIS_URL`` / ``redis_url``），
-懒加载复用连接池，不每次新建连接，避免连接泄漏。
+连接信息复用项目 Redis 连接配置单一来源（``common/connections.py``，
+env > Pydantic 配置，与 Django cache 同源），懒加载复用连接池，
+不每次新建连接，避免连接泄漏。
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 import threading
 
 import redis.asyncio as redis_async
 
-from Django_xm.apps.ai_engine.config import settings
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.common.connections import get_redis_config
 
 logger = get_logger(__name__)
 
@@ -40,11 +40,11 @@ def get_async_redis_client() -> redis_async.Redis:
         if loop_id in _client_cache:
             return _client_cache[loop_id]
 
-        url = os.environ.get("REDIS_URL", settings.redis_url)
-        password = os.environ.get("REDIS_PASSWORD", settings.redis_password) or None
+        # 连接参数统一经 common/connections.py 解析（password 空串已归一化为 None）
+        config = get_redis_config()
         client = redis_async.Redis.from_url(
-            url,
-            password=password,
+            config["url"],
+            password=config["password"],
             socket_connect_timeout=3,
             socket_timeout=3,
             decode_responses=False,

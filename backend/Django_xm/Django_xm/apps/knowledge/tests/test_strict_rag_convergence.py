@@ -46,6 +46,7 @@ from Django_xm.apps.knowledge.services.strict_rag_chain import (
     query_strict_rag,
     stream_strict_rag,
 )
+from Django_xm.common.testing import create_fake_llm
 
 _STRICT_RAG = "Django_xm.apps.knowledge.services.strict_rag_chain"
 _RETRIEVAL_SERVICE = "Django_xm.apps.knowledge.services.retrieval_service"
@@ -54,35 +55,6 @@ _RAG_RETRIEVAL = "Django_xm.apps.knowledge.services.rag_retrieval"
 _QUERY = "什么是 LangChain"
 _COLLECTION = "test_collection"
 _K = 6
-
-
-class _FakeChunk:
-    def __init__(self, content: str):
-        self.content = content
-
-
-class _FakeLLM:
-    """invoke / stream / astream 三协议替身，记录收到的 messages"""
-
-    def __init__(self, pieces=("回答甲", "回答乙")):
-        self.pieces = list(pieces)
-        self.invoke_messages = None
-        self.stream_messages = None
-        self.astream_messages = None
-
-    def invoke(self, messages):
-        self.invoke_messages = messages
-        return _FakeChunk("".join(self.pieces))
-
-    def stream(self, messages):
-        self.stream_messages = messages
-        for piece in self.pieces:
-            yield _FakeChunk(piece)
-
-    async def astream(self, messages):
-        self.astream_messages = messages
-        for piece in self.pieces:
-            yield _FakeChunk(piece)
 
 
 def _make_pipeline(retrieve_docs=None, retrieve_exc=None, search_return="管道检索回答"):
@@ -119,7 +91,7 @@ class QueryStrictRagTests(unittest.TestCase):
         use_hyde=False,
     ):
         pipeline_cls, instance = _make_pipeline(retrieve_docs=retrieve_docs, retrieve_exc=retrieve_exc)
-        fake_llm = _FakeLLM()
+        fake_llm = create_fake_llm()
         hyde_sync = mock.MagicMock(return_value="改写后的假设文档")
         with (
             mock.patch(f"{_RAG_RETRIEVAL}.UnifiedRagPipeline", pipeline_cls),
@@ -237,7 +209,7 @@ class StreamStrictRagTests(unittest.TestCase):
 
     def _collect(self, *, retrieve_docs=None, retrieve_exc=None, kb_docs=None, kb_tokens=0, use_hyde=False):
         pipeline_cls, instance = _make_pipeline(retrieve_docs=retrieve_docs, retrieve_exc=retrieve_exc)
-        fake_llm = _FakeLLM()
+        fake_llm = create_fake_llm()
         hyde_sync = mock.MagicMock(return_value="改写后的假设文档")
         with (
             mock.patch(f"{_RAG_RETRIEVAL}.UnifiedRagPipeline", pipeline_cls),
@@ -298,7 +270,7 @@ class AstreamStrictRagTests(unittest.IsolatedAsyncioTestCase):
 
     async def _collect(self, *, retrieve_docs=None, retrieve_exc=None, fallback_docs=None, kb_docs=None, kb_tokens=0):
         pipeline_cls, instance = _make_pipeline(retrieve_docs=retrieve_docs, retrieve_exc=retrieve_exc)
-        fake_llm = _FakeLLM()
+        fake_llm = create_fake_llm()
         with (
             mock.patch(f"{_RAG_RETRIEVAL}.UnifiedRagPipeline", pipeline_cls),
             mock.patch(f"{_RAG_RETRIEVAL}.load_kb_documents", return_value=(list(kb_docs or []), kb_tokens)) as load_kb,

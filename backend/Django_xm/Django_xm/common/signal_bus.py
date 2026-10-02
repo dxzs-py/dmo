@@ -36,16 +36,16 @@ SESSION_TYPE_RESEARCH = "research"
 
 
 def get_signal_redis_url() -> str:
-    """信令 Redis URL：复用 Celery broker 的 Redis 连接串。
+    """信令 Redis URL：复用 Celery broker 的 Redis 连接串（保持原 API 供发布/订阅双方导入）。
 
     说明：保证发布/订阅双方使用同一 Redis DB（Pub/Sub 按 DB 隔离），
     仅复用配置值，深度研究执行服务不依赖 Celery 功能。
-    CELERY_BROKER_URL 在 settings/base.py 无条件定义，空值时回退默认
-    （与 project_cfg.celery_broker_url 默认值一致，保持原行为）。
+    解析逻辑（env > Pydantic 合并 > 兜底默认）收敛至
+    ``Django_xm.common.connections.get_signal_redis_url`` 单一来源。
     """
-    from django.conf import settings as django_settings
+    from Django_xm.common.connections import get_signal_redis_url as _resolve_signal_redis_url
 
-    return getattr(django_settings, "CELERY_BROKER_URL", "") or "redis://127.0.0.1:6379/3"
+    return _resolve_signal_redis_url()
 
 
 def signal_channel(kind: str, thread_id: str) -> str:

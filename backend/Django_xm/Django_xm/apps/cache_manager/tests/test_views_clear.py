@@ -82,7 +82,8 @@ class CacheClearPermissionMatrixTests(TestCase):
             resp = self.client.post(CLEAR_URL, {"scope": "pattern", "pattern": "test:*"}, format="json")
         self.assertEqual(resp.status_code, 200)
         mock_delete.assert_called_once_with("test:*")
-        self.assertEqual(resp.json()["data"]["cleared"], 1)
+        # cleared 返回真实删除计数（views.py 已改为 += delete_pattern 返回值），与 mock 返回值一致
+        self.assertEqual(resp.json()["data"]["cleared"], 3)
 
     def test_pattern_scope_missing_pattern_rejected(self):
         """scope=pattern 但缺 pattern 参数 → 400（配套参数校验）。"""

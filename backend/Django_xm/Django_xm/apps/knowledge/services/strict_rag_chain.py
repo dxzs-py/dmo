@@ -109,12 +109,36 @@ def _extract_sources(docs: list[Document]) -> list[dict[str, Any]]:
     return sources
 
 
+def _resolve_hyde_llm() -> BaseChatModel | None:
+    """解析 HyDE 改写用 LLM：优先辅助轻量模型，失败回退主模型链，均不可用返回 None
+
+    HyDE 唯一实现位于 context_manager.services.retrieval_augmenter.RetrievalAugmenter
+    （改写提示词与改写内核，context_manager/manager.py 共用同一实现）；
+    本模块仅负责 LLM 解析与失败回退原始查询，sync/async 两版本共享此解析，
+    不再各自内联（ARCH-08 收敛）。
+    """
+    try:
+        from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
+
+        llm = get_helper_model()
+        if llm is not None:
+            return llm
+    except Exception:
+        # 辅助模型获取失败时回退到 _resolve_chat_model
+        logger.debug("获取辅助模型失败，回退到 _resolve_chat_model")
+    try:
+        return _resolve_chat_model(None, streaming=False)
+    except Exception as e:
+        logger.warning(f"HyDE: 获取 LLM 失败，使用原始查询 - {e}")
+        return None
+
+
 async def _hyde_rewrite_query(query: str, llm: BaseChatModel | None = None) -> str:
     """HyDE 查询改写，失败时回退到原始查询
 
     Args:
         query: 原始查询
-        llm: 可选的 LLM 实例，不提供时优先使用辅助模型（轻量任务无需主模型）
+        llm: 可选的 LLM 实例，不提供时经 _resolve_hyde_llm 解析（辅助模型优先）
 
     Returns:
         改写后的查询或原始查询
@@ -122,19 +146,9 @@ async def _hyde_rewrite_query(query: str, llm: BaseChatModel | None = None) -> s
     from Django_xm.apps.context_manager.services.retrieval_augmenter import RetrievalAugmenter
 
     if llm is None:
-        try:
-            from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
-
-            llm = get_helper_model()
-        except Exception:
-            # 辅助模型获取失败时回退到 _resolve_chat_model
-            logger.debug("获取辅助模型失败，回退到 _resolve_chat_model")
+        llm = _resolve_hyde_llm()
         if llm is None:
-            try:
-                llm = _resolve_chat_model(None, streaming=False)
-            except Exception as e:
-                logger.warning(f"HyDE: 获取 LLM 失败，使用原始查询 - {e}")
-                return query
+            return query
 
     try:
         rewritten = await RetrievalAugmenter.hyde_rewrite(query, llm)
@@ -149,7 +163,7 @@ def _hyde_rewrite_query_sync(query: str, llm: BaseChatModel | None = None) -> st
 
     Args:
         query: 原始查询
-        llm: 可选的 LLM 实例，不提供时优先使用辅助模型（轻量任务无需主模型）
+        llm: 可选的 LLM 实例，不提供时经 _resolve_hyde_llm 解析（辅助模型优先）
 
     Returns:
         改写后的查询或原始查询
@@ -157,19 +171,9 @@ def _hyde_rewrite_query_sync(query: str, llm: BaseChatModel | None = None) -> st
     from Django_xm.apps.context_manager.services.retrieval_augmenter import RetrievalAugmenter
 
     if llm is None:
-        try:
-            from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
-
-            llm = get_helper_model()
-        except Exception:
-            # 辅助模型获取失败时回退到 _resolve_chat_model
-            logger.debug("获取辅助模型失败（同步），回退到 _resolve_chat_model")
+        llm = _resolve_hyde_llm()
         if llm is None:
-            try:
-                llm = _resolve_chat_model(None, streaming=False)
-            except Exception as e:
-                logger.warning(f"HyDE: 获取 LLM 失败，使用原始查询 - {e}")
-                return query
+            return query
 
     try:
         rewritten = RetrievalAugmenter.hyde_rewrite_sync(query, llm)
@@ -237,6 +241,9 @@ def _retrieve_with_fallback(
 ) -> tuple[list[Document], bool]:
     """初始检索（同步）：embedding 服务故障时降级 PG 全文关键词检索
 
+    ARCH-08 收敛说明：初始检索与 Level 1 降级均经 UnifiedRagPipeline 执行，
+    本函数仅保留编排（embedding 降级 → PG 关键词检索），不自建检索器。
+
     向量检索使用 HyDE 改写后的 retrieval_query；
     降级关键词检索使用原始 query（与原三入口内联实现一致）。
 
@@ -284,6 +291,9 @@ async def _aretrieve_with_fallback(
     collection_name: str,
 ) -> tuple[list[Document], bool]:
     """初始检索（异步）：降级关键词检索经 asyncio.to_thread 执行避免阻塞事件循环
+
+    ARCH-08 收敛说明：初始检索与 Level 1 降级均经 UnifiedRagPipeline 执行，
+    本函数仅保留编排（embedding 降级 → PG 关键词检索经 to_thread），不自建检索器。
 
     初始 Pipeline 检索保持同步调用（与原实现一致）；
     向量检索使用 HyDE 改写后的 retrieval_query，降级检索使用原始 query。

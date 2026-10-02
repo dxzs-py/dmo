@@ -138,13 +138,13 @@ class ShellExecApprovalPolicy(ApprovalPolicy):
         - 白名单命令 → SAFE（安全命令，自动通过）
         - HIGH_RISK_KEYWORDS 命中 → HIGH（install/remove/delete/format/write）
         - 其他命令 → CONTROLLED
+
+    判定逻辑委托 shell.assess_command_risk_level（tools 侧权威实现，
+    与沙箱路由同源；本类只叠加子 agent 风险加权）。
     """
 
     tool_name = "shell_exec"
     is_write_operation = True  # 命令执行类，子 agent 中上调一级
-
-    # 触发 high 危险等级的关键字
-    _HIGH_RISK_KEYWORDS = ("install", "remove", "delete", "format", "write")
 
     def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
         """评估 shell_exec 风险等级。"""
@@ -152,27 +152,12 @@ class ShellExecApprovalPolicy(ApprovalPolicy):
         if not command:
             return RiskLevel.SAFE  # 空命令，不执行
 
-        # 延迟导入避免循环依赖
-        from Django_xm.apps.tools.langchain.shell import (
-            _is_command_blocked,
-            _is_command_whitelisted,
+        # 延迟导入避免循环依赖；依赖方向 agent_hub→tools 合法
+        from Django_xm.apps.tools.langchain.shell import _assess_command_risk_level
+
+        return self._apply_subagent_weighting(
+            _assess_command_risk_level(command), subagent_context
         )
-
-        # 黑名单命令：工具内部直接拒绝，不需审批
-        if _is_command_blocked(command):
-            return RiskLevel.SAFE
-
-        # 白名单命令：安全命令，自动通过
-        if _is_command_whitelisted(command):
-            return RiskLevel.SAFE
-
-        # 检查 HIGH_RISK_KEYWORDS
-        command_lower = command.lower()
-        for keyword in self._HIGH_RISK_KEYWORDS:
-            if keyword in command_lower:
-                return self._apply_subagent_weighting(RiskLevel.HIGH, subagent_context)
-
-        return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
 
     def assess_danger(self, args: dict) -> str:
         """旧格式危险等级（兼容 DB 字段 danger_level）。"""

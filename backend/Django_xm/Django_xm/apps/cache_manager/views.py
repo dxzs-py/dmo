@@ -141,20 +141,19 @@ class CacheClearView(APIView):
         if scope == "pattern" and pattern:
             # pattern 为 scope 值（与 get_permissions 分派对齐），
             # 非旁路参数：普通用户携带 pattern 的 query 请求不会进入此分支（越权修复 dj-01R）
-            CacheService.delete_pattern(pattern)
-            cleared = 1
+            cleared += CacheService.delete_pattern(pattern)
         elif scope == "query":
             user = request.user
             # 契约依赖：knowledge 索引命名约定为 "{user_id}_<kb_name>"，
             # generate_query_cache_key 生成的键形如 rag_query:{index_name}:{hash}:k{k}，
             # 故本模式能匹配当前用户全部 RAG 查询缓存；索引命名规则变更时需同步此处
-            CacheService.delete_pattern(f"rag_query:user_{user.id}_*")
+            cleared += CacheService.delete_pattern(f"rag_query:user_{user.id}_*")
         elif scope == "model":
             # 与唯一写入方 chat_service 同源：缓存键为 model_response:{get_model_string()}:...
             # （修复前用 get_openai_config()["model"]，纯模型名无 provider 前缀，与实际键错配，清理永不命中）
             from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
 
-            ModelResponseCacheService.invalidate_model_cache(get_model_string())
+            cleared += ModelResponseCacheService.invalidate_model_cache(get_model_string())
         elif scope == "all":
             client = get_redis_client()
             if client:

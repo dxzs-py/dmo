@@ -46,8 +46,9 @@ class ChunkLoopControl:
 
     - warnings：待注入 graph state 的重复工具调用警告消息（SystemMessage 列表）
     - retry_messages：待注入 graph state 的子代理重试指令消息（SystemMessage 列表）
-    - should_break：updates 处理器请求立即中断当前 astream（审批中断已处理，
-      交由调用方以 Command(resume) 重入）
+    - should_break：请求立即中断当前 astream（审批中断已处理，交由调用方以
+      Command(resume) 重入；或 messages 处理器请求熔断终止——如 COST-01 会话
+      Token 预算耗尽，由调用方优雅收尾）
     """
 
     warnings: list[Any] = field(default_factory=list)
@@ -136,7 +137,9 @@ async def run_astream_loop(
             if mode_name == "messages":
                 async for event in process_chunk(mode_data, control, resume_values):
                     yield event
-                if control.warnings or control.retry_messages:
+                # should_break：messages 处理器请求熔断终止（COST-01 预算耗尽等），
+                # 立即中断当前 astream，不注入韧性消息、不重入
+                if control.should_break or control.warnings or control.retry_messages:
                     break
                 continue
 

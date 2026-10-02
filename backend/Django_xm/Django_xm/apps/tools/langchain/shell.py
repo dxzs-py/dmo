@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 
 # ── 安全配置 ──────────────────────────────────────────────────────
 
+# 触发 HIGH 风险等级的关键字（审批与沙箱路由共用，权威定义处）
+_HIGH_RISK_KEYWORDS = ("install", "remove", "delete", "format", "write")
+
 # 白名单命令前缀（这些命令可直接执行，无需用户确认）
 # 注意：部分命令在 Windows 上不可用，_get_whitelist_commands 会根据平台过滤
 _UNIX_ONLY_COMMANDS = {"ls", "cat", "head", "tail", "wc", "find", "which"}
@@ -437,17 +440,22 @@ def _sandbox_result_to_standard(sandbox_result, command: str) -> StandardToolRes
 
 
 def _assess_command_risk_level(command: str) -> RiskLevel:
-    """复用审批策略评估命令风险等级（沙箱路由依据，S-02）
+    """评估命令风险等级（审批与沙箱路由同源，S-01/S-02）
 
-    与 ApprovalMiddleware 的判定同源（ShellExecApprovalPolicy.assess_risk），
-    保证沙箱路由与审批展示的风险等级一致。
+    审批侧 ShellExecApprovalPolicy.assess_risk 委托本函数（agent_hub→tools
+    为合法依赖方向），保证沙箱路由与审批展示的风险等级一致。
     注意：不含子 agent 风险加权（工具层无 subagent 上下文），
     子 agent 中被上调为 HIGH 的命令由高危子串模式兜底强制沙箱。
     """
-    # 延迟导入避免循环依赖（policies.assess_risk 内部同样延迟导入本模块）
-    from Django_xm.apps.agent_hub.approval.policies import ShellExecApprovalPolicy
-
-    return ShellExecApprovalPolicy().assess_risk({"command": command})
+    if _is_command_blocked(command):
+        return RiskLevel.SAFE  # 黑名单：工具层直接拒绝，无需审批/沙箱
+    if _is_command_whitelisted(command):
+        return RiskLevel.SAFE
+    command_lower = command.lower()
+    for keyword in _HIGH_RISK_KEYWORDS:
+        if keyword in command_lower:
+            return RiskLevel.HIGH
+    return RiskLevel.CONTROLLED
 
 
 def _execute_command(

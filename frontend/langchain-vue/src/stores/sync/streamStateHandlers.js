@@ -95,11 +95,19 @@ export const createStreamStateHandlers = (ctx) => {
    * @param {Object} payload - stream_event 事件载荷
    * @param {string} payload.messageId - 消息 ID
    * @param {string} payload.eventType - 事件类型（reasoning/sources/suggestions/context/content_update）
+   * @param {string} [payload.eventSubtype] - ARCH-19：包装为 stream_event 的原始执行事件子类型
+   *   （deep_research/research_task_id/model_fallback/approval），优先于 eventType 分流
    * @param {Object} payload.data - 事件数据
    * @param {number} [payload.seq] - 序列号（幂等保护）
    */
   const handleStreamEvent = (sessionId, payload) => {
-    const { messageId, eventType, data, seq } = payload
+    const { messageId, data, seq } = payload
+    // ARCH-19：后端 stream_broadcast 将 deep_research / research_task_id /
+    // model_fallback 等原始执行事件统一包装为 stream_event（event_type 恒为
+    // "stream_event"），并在 payload 顶层注入原始子类型 event_subtype
+    //（toCamelCase 后为 eventSubtype）。优先读注入的子类型分流；
+    // 旧事件/replay 无该字段时回退 payload.eventType，向后兼容。
+    const eventType = payload.eventSubtype || payload.eventType
     if (!messageId || !eventType) {
       // stream_event 事件在非触发浏览器的 WebSocket 重放中可能无 messageId
       // （如 approval/interrupted 等由专用 handler 处理的事件），静默跳过。
@@ -148,8 +156,10 @@ export const createStreamStateHandlers = (ctx) => {
     const field = fieldMap[eventType]
     if (!field) {
       // 通用 stream_event（deep_research / research_task_id / model_fallback）
-      // 原 SSE 通道对应回调职责（setDeepResearchTask / setResearchTaskId /
-      // setModelFallback）在执行与连接解耦后统一收敛到本处理器。
+      // 后端 stream_broadcast 包装 STREAM_EVENT 时注入 eventSubtype 原始子类型
+      //（ARCH-19），此处按子类型分流；原 SSE 通道对应回调职责
+      //（setDeepResearchTask / setResearchTaskId / setModelFallback）在执行与连接
+      // 解耦后统一收敛到本处理器。
       _handleGenericStreamEvent(sessionId, message, eventType, data, seq)
       return
     }

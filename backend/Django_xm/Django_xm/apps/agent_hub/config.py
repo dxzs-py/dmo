@@ -7,6 +7,8 @@ from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
+from Django_xm.apps.ai_engine.config import settings as _ai_engine_settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,17 +19,12 @@ class AgentType(StrEnum):
     DEEP_RESEARCH = "deep_research"
 
 
-# 能力默认表（AgentConfig.resolve_defaults 使用）。
+# 能力默认表：唯一权威定义在 ai_engine/config.py 的 Settings.AGENT_CAPABILITIES_DEFAULT
+# （ARCH-06 双源合并，已删除本地硬编码副本），此处导入同一对象引用。
 # 子代理运行时统一以 AgentType.BASE 构建（spawn.py / langgraph_adapter.py），
 # 其角色提示由 subagent_runtime/registry.py + research/prompts.py 承担。
-# 另一份能力默认表在 ai_engine/config.py 的 AGENT_CAPABILITIES_DEFAULT
-# （CapabilityRegistry.get_default_capabilities fallback 使用），双表修改需同步。
-AGENT_CAPABILITIES_DEFAULT: dict[AgentType, list[str]] = {
-    AgentType.BASE: ["context_management", "tool_injection", "guardrails", "rate_limit"],
-    AgentType.DEEP_RESEARCH: ["context_management", "tool_injection", "rate_limit"],
-    AgentType.RAG: ["context_management", "tool_injection"],
-    AgentType.SAFE_RAG: ["context_management", "tool_injection", "guardrails"],
-}
+# 同步断言由 Django_xm.apps.ai_engine.tests.test_capability_defaults 保证。
+AGENT_CAPABILITIES_DEFAULT: dict[str, list[str]] = _ai_engine_settings.AGENT_CAPABILITIES_DEFAULT
 
 _SUBAGENT_EXCLUSIVE_FIELDS = ("subagents", "skills", "memory", "permissions", "backend")
 _SIMPLE_AGENT_TYPES = {AgentType.BASE, AgentType.RAG, AgentType.SAFE_RAG}
@@ -125,7 +122,7 @@ class AgentConfig:
 
     def resolve_defaults(self) -> None:
         if self.capabilities is None:
-            self.capabilities = list(AGENT_CAPABILITIES_DEFAULT.get(self.agent_type, []))
+            self.capabilities = list(AGENT_CAPABILITIES_DEFAULT.get(self.agent_type.value, []))
 
         if self.store is None:
             try:

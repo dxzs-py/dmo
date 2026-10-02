@@ -88,6 +88,11 @@ class EventType(StrEnum):
     STREAM_SUBAGENT_CONTENT = "stream_subagent_content"
     STREAM_EVENT = "stream_event"  # 流式通用事件（approval/interrupted/model_fallback/research_task_id）
 
+    # === 预算事件（WebSocket 推送，COST-01）===
+    # 会话级 Token 硬预算耗尽：执行循环终止本轮生成前发布。
+    # data 携带 used_tokens / budget_limit / session_id；前端未监听不影响后端熔断流程。
+    BUDGET_EXCEEDED = "budget_exceeded"
+
     # === 会话/消息事件（WebSocket 推送）===
     SESSION_CREATED = "session_created"
     SESSION_UPDATED = "session_updated"
@@ -344,6 +349,7 @@ _PAYLOAD_TYPE_MAP: dict[EventType, type] = {
     EventType.STREAM_CONTENT_UPDATE: StreamPayload,
     EventType.STREAM_SUBAGENT_CONTENT: StreamPayload,
     EventType.STREAM_INTERRUPTED: StreamPayload,
+    EventType.BUDGET_EXCEEDED: StreamPayload,
     EventType.TASK_PROGRESS: TaskProgressPayload,
     # STREAM_STARTED / STREAM_COMPLETED / SESSION_* / MESSAGE_* 事件无固定 payload schema，校验时跳过必填字段检查
 }
@@ -379,6 +385,8 @@ _REQUIRED_FIELDS: dict[EventType, tuple[str, ...]] = {
     EventType.STREAM_CONTENT_UPDATE: ("source", "source_id", "data"),
     EventType.STREAM_SUBAGENT_CONTENT: ("source", "source_id", "data"),
     EventType.STREAM_INTERRUPTED: ("source", "source_id", "data"),
+    # 预算耗尽事件：source + source_id 必填，data 携带 used_tokens/budget_limit（COST-01）
+    EventType.BUDGET_EXCEEDED: ("source", "source_id", "data"),
     # STREAM_STARTED / STREAM_COMPLETED / STREAM_FINALIZED：source + source_id 必填（无 data 字段）
     EventType.STREAM_STARTED: ("source", "source_id"),
     EventType.STREAM_COMPLETED: ("source", "source_id"),
@@ -420,6 +428,7 @@ _WS_EVENT_NAME_MAP: dict[EventType, str] = {
     EventType.STREAM_COMPLETED: "stream_completed",
     EventType.STREAM_FINALIZED: "stream_finalized",
     EventType.STREAM_INTERRUPTED: "stream_interrupted",
+    EventType.BUDGET_EXCEEDED: "budget_exceeded",
     EventType.SESSION_CREATED: "session_created",
     EventType.SESSION_UPDATED: "session_updated",
     EventType.SESSION_DELETED: "session_deleted",

@@ -180,25 +180,24 @@ class ContextService:
 
             token_count = TokenEstimator.estimate(combined)
 
-            # 阈值 8000 tokens：低于此值直接返回原文，高于此值用 LLM 压缩
+            # 阈值 8000 tokens：低于此值直接返回原文，高于此值用统一引擎摘要（ARCH-07）
             if token_count <= 8000:
                 return combined
 
-            from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+            # 摘要统一走引擎能力（模型解析链单源：轻量模型→辅助模型→SystemConfig 默认），
+            # 消除旁路自建 get_chat_model 的双摘要实现；异常向上抛由外层 except 返回 None
+            from Django_xm.apps.context_manager.services.compression import ContextCompressionEngine
 
-            model = get_chat_model(temperature=0.3, max_tokens=4000)
-            prompt = (
+            instruction = (
                 "请对以下深度研究的所有文件进行结构化总结，保留关键信息以便后续讨论：\n\n"
                 "1. 【研究主题】研究的核心问题\n"
                 "2. 【研究计划】研究的方法和步骤\n"
                 "3. 【关键发现】每个方面的核心结论和数据\n"
                 "4. 【详细内容】各文件的核心要点（保留关键细节，不要过度压缩）\n"
                 "5. 【建议与展望】研究提出的建议或后续方向\n\n"
-                f"研究文件内容：\n{combined}\n\n"
                 "请用中文生成详细的结构化总结："
             )
-            response = model.invoke([{"role": "user", "content": prompt}])
-            summary = getattr(response, "content", "")
+            summary = ContextCompressionEngine().summarize_long_text(combined, instruction)
             return summary if summary else combined[:16000]
 
         except Exception:

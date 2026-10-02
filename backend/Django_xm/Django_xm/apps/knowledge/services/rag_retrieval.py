@@ -21,11 +21,12 @@ Pipeline 流程:
 from __future__ import annotations
 
 import re
+from typing import Callable
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.retrievers import BaseRetriever
-from langchain_core.vectorstores import InMemoryVectorStore
+from langchain_core.vectorstores import InMemoryVectorStore, VectorStore
 
 from Django_xm.apps.ai_engine.config import settings
 from Django_xm.apps.core.logging_utils import get_logger
@@ -511,6 +512,65 @@ class UnifiedRagPipeline:
             return self._degradation_level2(kb_docs, total_tokens)
 
         return "知识库中未找到与您问题相关的信息。"
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # 统一原始打分检索入口（Level 0）：kb_service / RAGSearchView 共用
+    # ═══════════════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def search_scored(
+        vector_store: VectorStore,
+        query: str,
+        k: int = 4,
+        score_threshold: float | None = None,
+        reload_vector_store: Callable[[], VectorStore] | None = None,
+        required_dim: int | None = None,
+    ) -> list[tuple[Document, float | None]]:
+        """原始打分检索（Level 0）：向量库相似度打分检索 + 维度不匹配自愈重试。
+
+        kb_service.search_knowledge_base 与 views_rag.RAGSearchView 的统一检索内核
+        （ARCH-08 入口收敛）：此前两处各自内联 search_vector_store 调用，
+        且仅 kb_service 持有 pgvector 维度自愈逻辑，口径不一。
+
+        Args:
+            vector_store: 已加载的向量库实例
+            query: 用户查询文本
+            k: 返回文档数量
+            score_threshold: 相似度阈值，检索后过滤低于该值的结果
+            reload_vector_store: 自愈重建向量库的回调；不提供时维度不匹配异常原样上抛
+            required_dim: 索引期望的向量维度（自愈重置 pgvector 运行时缓存用）
+
+        Returns:
+            (Document, score) 元组列表；score 可能为 None（取决于后端打分能力）
+
+        Raises:
+            Exception: 非维度不匹配异常原样上抛
+        """
+        from Django_xm.apps.knowledge.vector_store import search_vector_store
+
+        try:
+            return search_vector_store(vector_store, query, k=k, score_threshold=score_threshold)
+        except Exception as e:
+            if "different vector dimensions" not in str(e) or reload_vector_store is None:
+                raise
+            logger.warning(f"检测到维度不匹配，清理缓存后重试: {e}")
+            # 释放旧 VectorStore 的 SQLAlchemy engine 连接池
+            if hasattr(vector_store, "_engine") and vector_store._engine:
+                vector_store._engine.dispose()
+            # 关闭 Django 数据库连接
+            from django.db import connections
+
+            connections.close_all()
+            # 统一重置 PGVector 缓存（clear metadata + 重置 _classes + 重建）
+            from Django_xm.apps.knowledge.vector_store.pgvector_runtime import reset_pgvector_cache
+
+            reset_pgvector_cache(dimension=required_dim)
+            # 清理 IndexManager 缓存
+            from Django_xm.apps.knowledge.services.index_service import IndexManager
+
+            IndexManager._cache.clear()
+            rebuilt = reload_vector_store()
+            return search_vector_store(rebuilt, query, k=k, score_threshold=score_threshold)
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # 兼容入口: 基于 documents 列表（构建 InMemoryVectorStore 后委托）

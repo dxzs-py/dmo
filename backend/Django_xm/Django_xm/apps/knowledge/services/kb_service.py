@@ -490,7 +490,11 @@ def delete_document(user, kb_id: str, filename: str) -> dict[str, Any]:
 
 def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[dict[str, Any]]:
     """
-    在知识库中搜索
+    在知识库中搜索（ARCH-08 入口收敛）
+
+    检索内核（打分检索 + 维度不匹配自愈重试）统一委托
+    UnifiedRagPipeline.search_scored；本函数保留缓存读写与扁平化
+    返回结构 [{content, source, score}]（kb_service 对外契约，分层非重复）。
 
     Raises:
         ValueError: 查询内容为空
@@ -505,8 +509,6 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[
     if not manager.index_exists(user_index_name):
         raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
-    from ..vector_store import search_vector_store
-
     index_metadata = manager._load_metadata(user_index_name)
     required_dim = index_metadata.get("embedding_dimension") if index_metadata else None
     embeddings = get_embeddings(required_dimension=required_dim)
@@ -517,34 +519,16 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[
         logger.info("向量搜索缓存命中")
         return cached_results
 
-    try:
-        results = search_vector_store(vector_store, query, k=top_k)
-    except Exception as e:
-        # 维度不匹配时，可能是 SQLAlchemy MetaData 缓存了旧的列定义
-        # 需要清理 MetaData、释放连接后重试
-        err_msg = str(e)
-        if "different vector dimensions" in err_msg:
-            logger.warning(f"检测到维度不匹配，清理缓存后重试: {err_msg}")
-            # 释放旧 VectorStore 的 SQLAlchemy engine 连接池
-            if hasattr(vector_store, "_engine") and vector_store._engine:
-                vector_store._engine.dispose()
-            # 关闭 Django 数据库连接
-            from django.db import connections
+    from .rag_retrieval import UnifiedRagPipeline
 
-            connections.close_all()
-            # 统一重置 PGVector 缓存（clear metadata + 重置 _classes + 重建）
-            # 修复旧代码"只 clear metadata 不清 _classes"导致重试仍用旧维度类的缓存不一致
-            from Django_xm.apps.knowledge.vector_store.pgvector_runtime import (
-                reset_pgvector_cache,
-            )
+    results = UnifiedRagPipeline.search_scored(
+        vector_store,
+        query,
+        k=top_k,
+        reload_vector_store=lambda: manager.load_index(user_index_name, embeddings),
+        required_dim=required_dim,
+    )
 
-            reset_pgvector_cache(dimension=required_dim)
-            # 清理 IndexManager 缓存
-            IndexManager._cache.clear()
-            vector_store = manager.load_index(user_index_name, embeddings)
-            results = search_vector_store(vector_store, query, k=top_k)
-        else:
-            raise
     search_results = []
     for doc, score in results:
         item = {

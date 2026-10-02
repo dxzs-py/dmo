@@ -73,6 +73,16 @@ class RateLimitMiddleware(AgentMiddleware):
     graceful_degradation 模式（推荐用于聊天）：
     检测到循环时不抛异常，而是返回 ToolMessage 告诉 LLM 停下来总结，
     让 Agent 自然退出循环，保留已收集的上下文。
+
+    职责边界（ARCH-12 限流双轨收敛）：
+    本中间件是 agent 工具调用频率限制的唯一实现（限流器单轨），
+    ToolUsageGuard 已退化为重复调用去重 + 循环检测，不再做频率限制；
+    阈值单源维护于 capabilities.builtin.RateLimitCapability。
+
+    依赖倒置（ARCH-03 forbidden 契约）：
+    ai_engine 禁止 import research/knowledge/learning，任务取消检查
+    通过 task_cancelled_checker 由调用方注入（如 deep research 链路
+    传入基于 research.models 的检查函数），本模块不感知具体任务模型。
     """
 
     PROGRESS_TOOLS = frozenset(
@@ -105,6 +115,7 @@ class RateLimitMiddleware(AgentMiddleware):
         min_calls_before_check: int = 20,
         llm_judge_max_calls: int = 3,
         task_id: str | None = None,
+        task_cancelled_checker: Callable[[], None] | None = None,
         graceful_degradation: bool = True,
         warning_milestones: list[int] | None = None,
     ):
@@ -120,6 +131,9 @@ class RateLimitMiddleware(AgentMiddleware):
         self.min_calls_before_check = min_calls_before_check
         self.llm_judge_max_calls = llm_judge_max_calls
         self._task_id = task_id
+        # 任务取消检查器（依赖倒置，ARCH-03）：由调用方注入，抛 RuntimeError
+        # 表示任务已取消。未注入时不做取消检查（ai_engine 不感知 research 模型）。
+        self._task_cancelled_checker = task_cancelled_checker
         self.graceful_degradation = graceful_degradation
         self.warning_milestones = warning_milestones or [50, 100, 200]
         self._model_call_count = 0
@@ -135,24 +149,21 @@ class RateLimitMiddleware(AgentMiddleware):
         self._warned_milestones: set = set()
 
     def _check_task_cancelled(self) -> None:
-        if not self._task_id:
+        """任务取消检查（依赖倒置，ARCH-03）。
+
+        checker 由调用方注入；checker 内部抛 RuntimeError 表示任务已取消，
+        向上透传中断执行；其余异常降级为不检查（不阻断主流程）。
+        未注入 checker 时直接跳过。
+        """
+        if self._task_cancelled_checker is None:
             return
-
-        def _raise_if_cancelled() -> None:
-            from Django_xm.apps.research.models import ResearchTask
-
-            # 用 all_objects，默认 objects 过滤了 is_deleted=True，导致 is_deleted 检查成为死代码
-            task = ResearchTask.all_objects.filter(task_id=self._task_id).first()
-            if task is None or task.is_deleted:
-                raise RuntimeError(f"研究任务已被取消: {self._task_id}")
-
         try:
-            _raise_if_cancelled()
+            self._task_cancelled_checker()
         except RuntimeError:
             raise
         except Exception:
             # 检查任务状态失败不应阻断主流程，降级为不检查
-            logger.debug("检查研究任务取消状态失败", exc_info=True)
+            logger.debug("检查任务取消状态失败", exc_info=True)
 
     def _check_rate_limit(self, call_type: str) -> str | None:
         """检查速率和总量限制，返回循环原因字符串或 None"""
@@ -438,6 +449,7 @@ def create_rate_limit_middleware(
     min_calls_before_check: int = 15,
     llm_judge_max_calls: int = 3,
     task_id: str | None = None,
+    task_cancelled_checker: Callable[[], None] | None = None,
     graceful_degradation: bool = True,
 ) -> RateLimitMiddleware:
     return RateLimitMiddleware(
@@ -452,6 +464,7 @@ def create_rate_limit_middleware(
         min_calls_before_check=min_calls_before_check,
         llm_judge_max_calls=llm_judge_max_calls,
         task_id=task_id,
+        task_cancelled_checker=task_cancelled_checker,
         graceful_degradation=graceful_degradation,
     )
 

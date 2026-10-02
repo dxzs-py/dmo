@@ -25,14 +25,12 @@ _project_root = Path(__file__).resolve().parent.parent.parent  # # 项目根路�
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from Django_xm.apps.ai_engine.config import settings as app_cfg # Pydantic 真相源
-from Django_xm.apps.core.config import settings as project_cfg # AI 配置真相源
+from Django_xm.apps.ai_engine.config import settings as app_cfg  # Pydantic 真相源
+from Django_xm.apps.core.config import settings as project_cfg  # AI 配置真相源
 
-if app_cfg.langsmith_tracing and app_cfg.langsmith_api_key:
-    os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
-    os.environ.setdefault("LANGCHAIN_API_KEY", app_cfg.langsmith_api_key)
-    os.environ.setdefault("LANGCHAIN_PROJECT", app_cfg.langsmith_project)
-    os.environ.setdefault("LANGCHAIN_ENDPOINT", app_cfg.langsmith_endpoint)
+# LangSmith 追踪接线已收敛至唯一入口 configure_langsmith()（ARCH-10）：
+# 由 AiEngineConfig.ready() 在 Django 启动时统一调用
+# （apps/ai_engine/services/langsmith_setup.py），此处不再设置 LANGCHAIN_* 环境变量。
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BASE_DIR.parent
@@ -136,10 +134,17 @@ TIME_ZONE = "Asia/Shanghai"
 USE_I18N = True
 USE_TZ = True
 
+# ==================== Redis 连接配置（单一出口，ARCH-09 收敛） ====================
+# env > Pydantic 真相源 合并后的 Redis 连接参数，以 Django settings 属性为通道
+# 供 common/connections.py 统一读取；各消费方禁止再自行 os.environ 直读。
+REDIS_URL = os.environ.get("REDIS_URL", project_cfg.redis_url)
+REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", project_cfg.redis_password)
+REDIS_CHAT_URL = os.environ.get("REDIS_CHAT_URL", project_cfg.redis_chat_url)
+
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": os.environ.get("REDIS_URL", project_cfg.redis_url),
+        "LOCATION": REDIS_URL,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
             "CONNECTION_POOL_KWARGS": {
@@ -148,14 +153,14 @@ CACHES = {
                 "socket_timeout": 3,
                 "socket_connect_timeout": 3,
             },
-            "PASSWORD": os.environ.get("REDIS_PASSWORD", project_cfg.redis_password),
+            "PASSWORD": REDIS_PASSWORD,
         },
         "TIMEOUT": project_cfg.redis_default_timeout,
         "KEY_PREFIX": "langchain_xm",
     },
     "chat_sessions": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": os.environ.get("REDIS_CHAT_URL", project_cfg.redis_chat_url),
+        "LOCATION": REDIS_CHAT_URL,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
             "CONNECTION_POOL_KWARGS": {
@@ -164,7 +169,7 @@ CACHES = {
                 "socket_timeout": 3,
                 "socket_connect_timeout": 3,
             },
-            "PASSWORD": os.environ.get("REDIS_PASSWORD", project_cfg.redis_password),
+            "PASSWORD": REDIS_PASSWORD,
         },
         "TIMEOUT": project_cfg.redis_chat_timeout,
         "KEY_PREFIX": "chat_session",
@@ -189,7 +194,7 @@ CHANNEL_LAYERS = {
         "CONFIG": {
             "hosts": [
                 {
-                    "address": os.environ.get("REDIS_URL", project_cfg.redis_url),
+                    "address": REDIS_URL,
                     "socket_keepalive": True,
                     "health_check_interval": 30,
                     "socket_connect_timeout": 5,

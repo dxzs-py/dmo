@@ -15,6 +15,7 @@ Embedding 模型工厂
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from langchain_core.embeddings import Embeddings
@@ -380,6 +381,7 @@ def get_embeddings_with_fallback(
     preferred_provider: str | None = None,
     required_dimension: int | None = None,
     dimension: int | None = None,
+    cache_wrapper_factory: Callable[[Embeddings], Embeddings] | None = None,
     **kwargs: Any,
 ) -> Embeddings:
     """获取带 fallback 的 Embeddings 实例
@@ -393,6 +395,10 @@ def get_embeddings_with_fallback(
         required_dimension: 要求的输出维度（可选，设置后只在维度匹配的 provider 之间 fallback）
         dimension: MRL 截断目标维度（可选）。仅支持 Matryoshka 截断的 provider
             会真正生效（Ollama MRL 模型、OpenAI text-embedding-3-*）。
+        cache_wrapper_factory: 缓存包装器工厂（依赖倒置，ARCH-03）。
+            use_cache=True 时由调用方注入，如 knowledge 侧传入
+            ``lambda emb: CachedEmbeddings(emb, model=...)``。
+            ai_engine 禁止 import knowledge（forbidden 契约），未注入时跳过缓存包装。
         **kwargs: 透传给 provider factory
 
     Returns:
@@ -569,11 +575,13 @@ def get_embeddings_with_fallback(
         result = embeddings_list[0]
         logger.info(f"Embedding 单 provider 模式: {labels[0]}")
 
-    # 包装 Redis 缓存
+    # 包装缓存层（依赖倒置，ARCH-03）：包装器工厂由调用方注入，
+    # 本模块不感知 knowledge 的 CachedEmbeddings 实现
     if use_cache:
-        from Django_xm.apps.knowledge.services.embedding_service import CachedEmbeddings
-
-        result = CachedEmbeddings(result, model=model or "default")
+        if cache_wrapper_factory is not None:
+            result = cache_wrapper_factory(result)
+        else:
+            logger.debug("use_cache=True 但未注入 cache_wrapper_factory，跳过 Embedding 缓存包装")
 
     with _embedding_fallback_lock:
         _embedding_fallback_cache[cache_key] = result

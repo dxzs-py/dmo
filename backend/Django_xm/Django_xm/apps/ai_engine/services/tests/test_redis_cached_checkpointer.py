@@ -20,6 +20,7 @@ from langgraph.checkpoint.base import CheckpointTuple
 from Django_xm.apps.ai_engine.services.redis_cached_checkpointer import (
     RedisCachedCheckpointer,
 )
+from Django_xm.common.testing import create_fake_redis
 
 _CFG = {"configurable": {"thread_id": "t1", "checkpoint_id": "c1"}}
 _PARENT_CFG = {"configurable": {"thread_id": "t1", "checkpoint_id": "c0"}}
@@ -41,29 +42,6 @@ def _make_tuple(config=_CFG, parent_config=None, cid="c1"):
         parent_config=parent_config,
         pending_writes=[],
     )
-
-
-class _FakeRedis:
-    """内存版异步 Redis 客户端（模拟 get/set/delete/set-NX）。"""
-
-    def __init__(self, fail: bool = False):
-        self._store: dict[str, bytes] = {}
-        self._meta: dict[str, dict] = {}
-        self._fail = fail
-
-    async def get(self, key):
-        if self._fail:
-            raise ConnectionError("redis down")
-        return self._store.get(key)
-
-    async def set(self, key, value, ex=None, nx=False):
-        if self._fail:
-            raise ConnectionError("redis down")
-        if nx and key in self._store:
-            return False
-        self._store[key] = value
-        self._meta[key] = {"ex": ex}
-        return True
 
 
 class _FakeInner:
@@ -99,7 +77,7 @@ class _FakeInner:
 class TestRedisCachedCheckpointer(unittest.IsolatedAsyncioTestCase):
     def _make(self, inner=None, redis=None, ttl=1800, lock_ttl=5):
         inner = inner or _FakeInner()
-        redis = redis or _FakeRedis()
+        redis = redis or create_fake_redis()
         return RedisCachedCheckpointer(inner=inner, redis_client=redis, ttl=ttl, lock_ttl=lock_ttl), inner, redis
 
     async def test_aput_writes_pg_then_redis(self):
@@ -111,7 +89,7 @@ class TestRedisCachedCheckpointer(unittest.IsolatedAsyncioTestCase):
         self.assertIn(cp._cache_key("t1", "c1"), redis._store, "PG 写成功后才写 Redis")
 
     async def test_aput_redis_write_failure_does_not_break(self):
-        cp, inner, _redis = self._make(redis=_FakeRedis(fail=True))
+        cp, inner, _redis = self._make(redis=create_fake_redis(fail=True))
         checkpoint = _make_tuple().checkpoint
         result = await cp.aput(_PARENT_CFG, checkpoint, {"step": 1}, {})
         self.assertEqual(result, _CFG, "Redis 写失败不影响 PG 结果")
@@ -135,7 +113,7 @@ class TestRedisCachedCheckpointer(unittest.IsolatedAsyncioTestCase):
         self.assertIn(cp._cache_key("t1", "c1"), redis._store, "回源成功后回填缓存")
 
     async def test_aget_tuple_redis_down_falls_back_to_pg(self):
-        cp, inner, _redis = self._make(redis=_FakeRedis(fail=True))
+        cp, inner, _redis = self._make(redis=create_fake_redis(fail=True))
         inner.store["c1"] = _make_tuple()
         t = await cp.aget_tuple(_CFG)
         self.assertEqual(inner.aget_calls, 1, "Redis 宕机回源 inner")
@@ -143,7 +121,7 @@ class TestRedisCachedCheckpointer(unittest.IsolatedAsyncioTestCase):
 
     async def test_aget_tuple_lock_failure_direct_fallback(self):
         # 锁不可用（Redis 抛错）→ 不阻塞等待，直接回源 inner
-        cp, inner, _ = self._make(redis=_FakeRedis(fail=True))
+        cp, inner, _ = self._make(redis=create_fake_redis(fail=True))
         inner.store["c1"] = _make_tuple()
         with mock.patch.object(cp, "_try_acquire_lock", new_callable=mock.AsyncMock, return_value=False):
             t = await cp.aget_tuple(_CFG)
