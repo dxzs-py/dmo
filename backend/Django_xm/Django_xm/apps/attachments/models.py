@@ -90,15 +90,6 @@ class ChatAttachment(AuditModel):
         self.last_accessed_at = timezone.now()
         self.save(update_fields=["last_accessed_at"])
 
-    def increment_reference(self):
-        ChatAttachment.objects.filter(pk=self.pk).update(reference_count=models.F("reference_count") + 1)
-        self.refresh_from_db()
-
-    def decrement_reference(self):
-        if self.reference_count > 0:
-            ChatAttachment.objects.filter(pk=self.pk).update(reference_count=models.F("reference_count") - 1)
-            self.refresh_from_db()
-
     def is_expired(self):
         from django.conf import settings as django_settings
         from django.utils import timezone

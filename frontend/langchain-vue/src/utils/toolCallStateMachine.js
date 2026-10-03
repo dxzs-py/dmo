@@ -115,18 +115,6 @@ export const NON_TERMINAL_STATUSES = new Set([
 ])
 
 /**
- * 受保护状态集合（终态 + WAITING）
- * 保留导出供既有调用方使用；状态推进校验统一走 canTransition / applyToolCallState。
- */
-export const PROTECTED_STATUSES = new Set([
-  ToolCallStatus.COMPLETED,
-  ToolCallStatus.FAILED,
-  ToolCallStatus.TIMEOUT,
-  ToolCallStatus.REJECTED,
-  ToolCallStatus.WAITING,
-])
-
-/**
  * 非终态审批状态集合（唯一权威）
  *
  * 用途：流式完成 / 深度研究完成时，识别仍处于"待审批/审批中/审批等待"的

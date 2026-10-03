@@ -29,6 +29,7 @@ from langchain_core.retrievers import BaseRetriever
 from langchain_core.vectorstores import InMemoryVectorStore, VectorStore
 
 from Django_xm.apps.ai_engine.config import settings
+from Django_xm.apps.context_manager.services.compression import TokenEstimator
 from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -49,9 +50,6 @@ except ImportError:
     ADVANCED_RETRIEVERS_AVAILABLE = False
 
 # ── 常量 ───────────────────────────────────────────────────────────────────────
-
-# 中文字符 Unicode 范围
-_CJK_RANGE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]")
 
 # 关键词提取分隔符
 _KEYWORD_SPLIT_PATTERN = re.compile(r"[，。！？；：、\s,\.!\?;:\-\(\)\[\]【】《》""''｜|/\\@#$%^&*+=]+")
@@ -91,21 +89,14 @@ _STOP_WORDS = {
 
 
 def _estimate_token_count(text: str) -> int:
-    """估算文本的 token 数量。
+    """估算文本的 token 数量（收敛：委托 context_manager 权威实现，5-1.6）
 
-    启发式算法:
-    - 中文字符: 约 1 token / 字符（实际约 1.2-1.5，保守取 1）
-    - 英文/数字: 约 1 token / 4 字符
-    - 混合文本按比例加权
+    行为变化：原自造启发式（CJK 1/char + 其他 /4）已删除，改为委托
+    TokenEstimator.estimate_tokens（tiktoken → transformers → 改进启发式），
+    与上下文管理侧估算同源。cl100k 对 CJK 约 1~1.5 token/字，估算值通常
+    略高于旧公式（旧公式保守取 1），仅用于预算而非计费，可接受。
     """
-    if not text:
-        return 0
-
-    cjk_chars = len(_CJK_RANGE.findall(text))
-    other_chars = len(text) - cjk_chars
-
-    # 中文约 1 token/char，英文约 0.25 token/char
-    return cjk_chars + max(1, other_chars // 4)
+    return TokenEstimator.estimate_tokens(text)
 
 
 def _extract_keywords(query: str, max_keywords: int = 5) -> list[str]:
@@ -686,10 +677,6 @@ class UnifiedRagPipeline:
         except Exception as e:
             logger.warning(f"初始检索失败: {e}")
             return []
-
-    def _initial_search_hit_from_retriever(self, retriever: BaseRetriever, query: str) -> bool:
-        """判断 retriever 初始搜索是否命中。"""
-        return len(self._initial_search_from_retriever(retriever, query)) > 0
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # Level 1: 扩展向量检索 + 关键词召回 + 重排序

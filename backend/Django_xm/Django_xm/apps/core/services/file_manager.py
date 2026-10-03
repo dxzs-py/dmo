@@ -13,6 +13,25 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
+def is_safe_relative_filename(filename: str | None) -> bool:
+    """REST 视图层 filename 路径参数的入口净化（F-02 纵深防御）。
+
+    拒绝：空值、绝对路径（根锚定/盘符/UNC）、含 ``..`` 路径段的输入。
+    service 层 :meth:`FileManagerService.get_file_info` 另有 resolve +
+    ``is_relative_to`` 的文件系统真实边界校验；本函数仅做视图层兜底，
+    与 S-03 的 ``check_path_allowed``（agent 工具 DATA_DIR 语义）分层。
+    """
+    if not filename or not filename.strip():
+        return False
+    candidate = Path(filename)
+    if candidate.is_absolute() or candidate.drive or candidate.root:
+        # 绝对路径 / 盘符形态（含 "D:file"）/ 根锚定（Windows 下 "/x" 非 absolute 但有 root）
+        return False
+    if ".." in candidate.parts:
+        return False
+    return True
+
+
 class FileType:
     REPORT = "report"
     NOTE = "note"
@@ -86,49 +105,79 @@ class FileManagerService:
         task_dir = self._get_task_dir(task_id, task_type)
         if not task_dir.exists():
             return []
+        task_root = task_dir.resolve()
 
         files = []
-        search_dir = task_dir / subdirectory if subdirectory else task_dir
+        if subdirectory:
+            search_dir = self._resolve_within_boundary(task_dir / subdirectory, task_root)
+            if search_dir is None:
+                logger.warning(
+                    "[FileManager] 子目录越界，已拒绝列出: task=%s/%s, subdirectory=%s",
+                    task_type,
+                    task_id,
+                    subdirectory,
+                )
+                return []
+        else:
+            search_dir = task_dir
 
         if not search_dir.exists():
             return []
 
         for file_path in search_dir.rglob("*"):
-            if file_path.is_file():
-                if "sandbox" in file_path.relative_to(task_dir).parts:
-                    continue
-                file_type = self._detect_file_type(file_path)
-                files.append(
-                    FileInfo(
-                        path=file_path,
-                        base_dir=self.base_dir,
-                        file_type=file_type,
-                        task_id=task_id,
-                    )
+            if not file_path.is_file():
+                continue
+            resolved = self._resolve_within_boundary(file_path, task_root)
+            if resolved is None:
+                continue
+            if "sandbox" in resolved.relative_to(task_root).parts:
+                continue
+            file_type = self._detect_file_type(file_path)
+            files.append(
+                FileInfo(
+                    path=file_path,
+                    base_dir=self.base_dir,
+                    file_type=file_type,
+                    task_id=task_id,
                 )
+            )
 
         return sorted(files, key=lambda f: f.path.stat().st_mtime, reverse=True)
 
     def get_file_info(self, task_id: str, relative_path: str, task_type: str = "research") -> FileInfo | None:
-        """获取文件信息"""
+        """获取文件信息（F-02：resolve + containment 强校验，防路径穿越）。
+
+        命名边界说明：与 S-03 的 ``check_path_allowed``（agent 工具的 DATA_DIR
+        边界语义）同构但语义不同——此处约束对象是任务会话子目录（task_dir），
+        故在 file_manager 内实现同构校验而非复用 DATA_DIR 准入函数，避免
+        语义混用。resolve() 会展开符号链接、归一 ``..``、统一盘符大小写，
+        可拦截词法 parts 比较放行的穿越与绝对路径替换。
+        """
         task_dir = self._get_task_dir(task_id, task_type)
+        task_root = task_dir.resolve()
 
         file_path = task_dir / relative_path
-        if file_path.exists() and file_path.is_file():
-            pass
+        resolved = self._resolve_within_boundary(file_path, task_root)
+        if resolved is not None and resolved.is_file():
+            file_path = resolved
         elif "/" not in relative_path and "\\" not in relative_path:
+            # 纯文件名兜底：在任务目录内按名匹配（候选来自 rglob，逐一 containment 复核）
             for file_candidate in task_dir.rglob("*"):
-                if file_candidate.is_file() and file_candidate.name == relative_path:
-                    if "sandbox" in file_candidate.relative_to(task_dir).parts:
-                        continue
-                    file_path = file_candidate
-                    break
+                if not file_candidate.is_file() or file_candidate.name != relative_path:
+                    continue
+                candidate_resolved = self._resolve_within_boundary(file_candidate, task_root)
+                if candidate_resolved is None:
+                    continue
+                if "sandbox" in candidate_resolved.relative_to(task_root).parts:
+                    continue
+                file_path = candidate_resolved
+                break
             else:
                 return None
         else:
             return None
 
-        if "sandbox" in file_path.relative_to(task_dir).parts:
+        if "sandbox" in file_path.relative_to(task_root).parts:
             return None
 
         file_type = self._detect_file_type(file_path)
@@ -153,10 +202,19 @@ class FileManagerService:
             return None
 
     def write_file_content(self, task_id: str, relative_path: str, content: str, task_type: str = "research") -> bool:
-        """写入文件内容"""
+        """写入文件内容（F-02：与 get_file_info 同一 containment 约束，防越界写）"""
         try:
             task_dir = self._get_task_dir(task_id, task_type)
-            file_path = task_dir / relative_path
+            task_root = task_dir.resolve()
+            file_path = self._resolve_within_boundary(task_dir / relative_path, task_root)
+            if file_path is None:
+                logger.warning(
+                    "[FileManager] 写入路径越界，已拒绝: task=%s/%s, relative_path=%s",
+                    task_type,
+                    task_id,
+                    relative_path,
+                )
+                return False
             file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(content)
@@ -212,11 +270,15 @@ class FileManagerService:
 
         for task_dir in search_dirs:
             current_task_id = task_dir.name
+            task_root = task_dir.resolve()
 
             for file_path in task_dir.rglob("*"):
                 if not file_path.is_file():
                     continue
-                if "sandbox" in file_path.relative_to(task_dir).parts:
+                resolved = self._resolve_within_boundary(file_path, task_root)
+                if resolved is None:
+                    continue
+                if "sandbox" in resolved.relative_to(task_root).parts:
                     continue
 
                 file_type = self._detect_file_type(file_path)
@@ -256,6 +318,24 @@ class FileManagerService:
     def _get_task_dir(self, task_id: str, task_type: str) -> Path:
         """获取任务目录"""
         return self.base_dir / task_type / task_id
+
+    @staticmethod
+    def _resolve_within_boundary(path: Path, boundary: Path) -> Path | None:
+        """resolve 后强制路径位于 boundary 内，越界返回 None（F-02）。
+
+        与 S-03 的 ``check_path_allowed``（agent 工具 DATA_DIR 边界语义）同构
+        但边界语义不同：此处 boundary 为任务会话子目录（task_dir），故独立
+        实现而不复用 DATA_DIR 准入函数。resolve() 非严格模式对不存在的路径
+        同样归一 ``..``、展开符号链接并统一盘符大小写，杜绝词法放行。
+        """
+        try:
+            resolved = path.resolve()
+        except (OSError, ValueError):
+            # OSError：文件系统错误；ValueError：路径含非法字符（如 null byte）
+            return None
+        if not resolved.is_relative_to(boundary):
+            return None
+        return resolved
 
     def delete_task_files(self, task_id: str, task_type: str) -> bool:
         """

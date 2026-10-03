@@ -3,32 +3,17 @@ import { logger } from '@/utils/logger'
 /**
  * sync 模块通用查找辅助函数
  *
- * 抽取自 handleSessionEvent.js 中 9 类重复逻辑（按 messageId 查找 17 处、查找 session 19 处、
- * 查找最后 assistant 消息 9 处、获取当前版本 7 处、兜底拉取会话详情 3 处）。
+ * 抽取自 handleSessionEvent.js 中 9 类重复逻辑（查找 session 19 处、
+ * 获取当前版本 7 处、兜底拉取会话详情 3 处）。
  *
  * 设计原则：
  * - 纯函数式，不依赖外部闭包
  * - 接收 sessionStore 的函数显式参数化（getSession / ensureSessionLoaded）
- * - 接收 session 对象的函数不依赖 sessionStore（findMessageById / getLastAssistantMessage / getCurrentVersion）
- */
-
-/**
- * 在指定会话中按 messageId 查找消息
  *
- * 匹配规则：backendId?.toString() === messageId?.toString()
- *          || id?.toString() === messageId?.toString()
- *
- * @param {Object} session - 会话对象（含 messages 数组）
- * @param {string|number|null|undefined} messageId - 消息 ID（backendId 或 id）
- * @returns {Object|null} 找到的消息对象，未找到返回 null
+ * 消息定位能力已归一（spec unify-frontend-semantics 组 5）：findMessageById /
+ * resolveStreamTargetMessage / locateInSessions 唯一权威在
+ * utils/messageOperations.js，本模块不再提供消息定位函数。
  */
-export function findMessageById(session, messageId) {
-  if (!session?.messages || messageId == null) return null
-  return session.messages.find(m =>
-    m.backendId?.toString() === messageId?.toString() ||
-    m.id?.toString() === messageId?.toString()
-  ) || null
-}
 
 /**
  * 在 sessionStore.sessions 中按 sessionId 查找会话
@@ -40,17 +25,6 @@ export function findMessageById(session, messageId) {
 export function getSession(sessionStore, sessionId) {
   if (!sessionStore?.sessions || !sessionId) return undefined
   return sessionStore.sessions.find(s => s.id === sessionId)
-}
-
-/**
- * 获取会话最后一条 assistant 消息
- *
- * @param {Object} session - 会话对象（含 messages 数组）
- * @returns {Object|null} 最后一条 assistant 消息，未找到返回 null
- */
-export function getLastAssistantMessage(session) {
-  if (!session?.messages) return null
-  return [...session.messages].reverse().find(m => m.role === 'assistant') || null
 }
 
 /**

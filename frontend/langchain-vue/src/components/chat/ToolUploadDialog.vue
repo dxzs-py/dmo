@@ -1,13 +1,11 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { toolsAPI } from '@/api/tools'
+import { extractErrorMessage } from '@/utils/apiErrorHandler'
+import { useDialogForm } from '@/composables/useDialogForm'
 
 const props = defineProps({
-  modelValue: {
-    type: Boolean,
-    default: false,
-  },
   editingTool: {
     type: Object,
     default: null,
@@ -15,28 +13,12 @@ const props = defineProps({
 })
 
 const emit = defineEmits({
-  'update:modelValue': (val) => typeof val === 'boolean',
   success: () => true,
 })
 
-const visible = computed({
-  get: () => props.modelValue,
-  set: (val) => emit('update:modelValue', val),
-})
-
-const isEdit = computed(() => !!props.editingTool)
-
-const dialogTitle = computed(() => isEdit.value ? '编辑自定义工具' : '上传自定义工具')
-
-const form = ref({
-  name: '',
-  description: '',
-  code: '',
-  category: 'general',
-})
+const visible = defineModel('modelValue', { type: Boolean, default: false })
 
 const categories = ref([])
-const loading = ref(false)
 
 const codeTemplate = `from langchain_core.tools import tool
 
@@ -57,7 +39,55 @@ const loadCategories = async () => {
 
 onMounted(loadCategories)
 
-watch(() => props.modelValue, (val) => {
+// 校验顺序与文案原样保留（validate 整体下沉到回调，骨架不拆校验步骤）
+function validate() {
+  if (!form.value.name.trim()) return { ok: false, message: '请输入工具名称' }
+  if (!form.value.code.trim()) return { ok: false, message: '请输入工具代码' }
+  return { ok: true }
+}
+
+// 提交（编辑/上传共用 payload），失败时错误文案原样弹出并返回 false 保持打开
+async function submit() {
+  const payload = {
+    name: form.value.name.trim(),
+    description: form.value.description.trim(),
+    code: form.value.code,
+    category: form.value.category,
+  }
+  try {
+    if (isEdit.value) {
+      await toolsAPI.updateCustomTool(payload)
+    } else {
+      await toolsAPI.uploadTool(payload)
+    }
+  } catch (e) {
+    ElMessage.error((isEdit.value ? '更新失败: ' : '上传失败: ') + extractErrorMessage(e))
+    return false
+  }
+}
+
+const {
+  isEdit,
+  dialogTitle,
+  form,
+  handleClose,
+  handleSubmit,
+  submitting,
+} = useDialogForm({
+  visible,
+  isEditSource: () => props.editingTool,
+  titles: { edit: '编辑自定义工具', create: '上传自定义工具' },
+  defaultsFactory: () => ({ name: '', description: '', code: '', category: 'general' }),
+  validate,
+  submit,
+  successToast: () => isEdit.value
+    ? `工具 "${form.value.name}" 更新成功`
+    : `工具 "${form.value.name}" 上传成功`,
+  onSuccess: () => emit('success'),
+})
+
+// 编辑回填：须注册于 useDialogForm 之后，覆盖骨架打开时的重置结果
+watch(visible, (val) => {
   if (val && props.editingTool) {
     const catCode = typeof props.editingTool.category === 'object'
       ? props.editingTool.category?.code || 'general'
@@ -71,56 +101,8 @@ watch(() => props.modelValue, (val) => {
   }
 })
 
-const resetForm = () => {
-  form.value = { name: '', description: '', code: '', category: 'general' }
-}
-
 const handleUseTemplate = () => {
   form.value.code = codeTemplate
-}
-
-const handleSubmit = async () => {
-  if (!form.value.name.trim()) {
-    ElMessage.warning('请输入工具名称')
-    return
-  }
-  if (!form.value.code.trim()) {
-    ElMessage.warning('请输入工具代码')
-    return
-  }
-
-  loading.value = true
-  try {
-    if (isEdit.value) {
-      await toolsAPI.updateCustomTool({
-        name: form.value.name.trim(),
-        description: form.value.description.trim(),
-        code: form.value.code,
-        category: form.value.category,
-      })
-      ElMessage.success(`工具 "${form.value.name}" 更新成功`)
-    } else {
-      await toolsAPI.uploadTool({
-        name: form.value.name.trim(),
-        description: form.value.description.trim(),
-        code: form.value.code,
-        category: form.value.category,
-      })
-      ElMessage.success(`工具 "${form.value.name}" 上传成功`)
-    }
-    resetForm()
-    visible.value = false
-    emit('success')
-  } catch (e) {
-    ElMessage.error((isEdit.value ? '更新失败: ' : '上传失败: ') + (e.response?.data?.message || e.message))
-  } finally {
-    loading.value = false
-  }
-}
-
-const handleClose = () => {
-  resetForm()
-  visible.value = false
 }
 </script>
 
@@ -189,7 +171,7 @@ const handleClose = () => {
 
     <template #footer>
       <el-button @click="handleClose">取消</el-button>
-      <el-button type="primary" :loading="loading" @click="handleSubmit">
+      <el-button type="primary" :loading="submitting" @click="handleSubmit">
         {{ isEdit ? '保存' : '上传' }}
       </el-button>
     </template>

@@ -122,11 +122,6 @@ class TokenDetailTracker:
             else:
                 self.tool_usages[tool_name] = ToolUsage(name=tool_name, tokens=tokens)
 
-    def track_embedding(self, tokens: int, docs: int = 0):
-        with self._lock:
-            self.storage_usage.embedding_tokens += tokens
-            self.storage_usage.retrieval_docs += docs
-
     def get_total_tokens(self) -> dict[str, int]:
         totals = {
             "input_tokens": 0,

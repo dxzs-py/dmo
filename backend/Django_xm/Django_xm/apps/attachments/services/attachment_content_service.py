@@ -31,24 +31,6 @@ class AttachmentService:
 
         return {"image_ids": image_ids, "text_ids": text_ids}
 
-    def load_text_attachment_contents(self, attachment_ids: list[int]) -> str | None:
-        if not attachment_ids:
-            return None
-
-        try:
-            from Django_xm.apps.tools.langchain.file_reader import read_multiple_attachments
-
-            content = read_multiple_attachments(attachment_ids)
-            if content:
-                logger.info(f"成功加载 {len(attachment_ids)} 个文本附件内容，共 {len(content)} 字符")
-            return content if content.strip() else None
-        except Exception:
-            logger.exception("加载文本附件内容失败")
-            return None
-
-    def load_attachment_contents(self, attachment_ids: list[int]) -> str | None:
-        return self.load_text_attachment_contents(attachment_ids)
-
     def build_multimodal_message_content(
         self,
         user_message: str,
@@ -210,49 +192,3 @@ class AttachmentService:
         ChatAttachment.objects.filter(id__in=attachment_ids, session=message.session, message__isnull=True).update(
             message=message
         )
-
-    def persist_attachments_to_store(
-        self,
-        user_id: int,
-        attachment_ids: list[int],
-        store=None,
-    ) -> int:
-        if not attachment_ids or not user_id:
-            return 0
-
-        from Django_xm.apps.attachments.services.document_memory_service import DocumentMemoryService
-
-        service = DocumentMemoryService(store=store)
-        saved_count = 0
-
-        for att_id in attachment_ids:
-            try:
-                from Django_xm.apps.tools.langchain.file_reader import get_attachment_info
-
-                info = get_attachment_info(att_id)
-                if info.get("is_image"):
-                    continue
-
-                doc_name = info.get("original_name", f"attachment_{att_id}")
-                file_size = info.get("file_size", 0)
-                file_type = info.get("content_type", "")
-
-                content = self.load_text_attachment_contents([att_id])
-                if not content or not content.strip():
-                    continue
-
-                saved = service.save_document(
-                    user_id=user_id,
-                    attachment_id=att_id,
-                    doc_name=doc_name,
-                    content=content,
-                    metadata={"file_size": file_size, "file_type": file_type},
-                )
-                if saved:
-                    saved_count += 1
-            except Exception:
-                logger.exception(f"附件 {att_id} 持久化到 Store 失败")
-
-        if saved_count > 0:
-            logger.info(f"已将 {saved_count}/{len(attachment_ids)} 个附件持久化到 Store (user={user_id})")
-        return saved_count

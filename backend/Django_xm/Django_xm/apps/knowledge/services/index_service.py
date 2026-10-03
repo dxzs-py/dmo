@@ -668,13 +668,6 @@ class IndexManager:
 
         return stats
 
-    def get_index_embedding_dimension(self, name: str) -> int | None:
-        """获取索引的 Embedding 维度"""
-        metadata = self._load_metadata(name)
-        if metadata and metadata.get("embedding_dimension"):
-            return metadata["embedding_dimension"]
-        return None
-
     def read_all_documents(
         self,
         name: str,

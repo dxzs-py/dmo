@@ -73,31 +73,3 @@ class MessagePersistenceService:
         )
 
         return user_message, ai_message
-
-    async def asave_message_pair(
-        self,
-        session,
-        user_content: str,
-        ai_content: str,
-        user_role: str = "user",
-        ai_role: str = "assistant",
-        attachment_ids: list[int] | None = None,
-        token_count: int = 0,
-        token_detail: dict | None = None,
-        model: str | None = None,
-        response_time: float = 0,
-    ):
-        from asgiref.sync import sync_to_async
-
-        return await sync_to_async(self.save_message_pair)(
-            session=session,
-            user_content=user_content,
-            ai_content=ai_content,
-            user_role=user_role,
-            ai_role=ai_role,
-            attachment_ids=attachment_ids,
-            token_count=token_count,
-            token_detail=token_detail,
-            model=model,
-            response_time=response_time,
-        )

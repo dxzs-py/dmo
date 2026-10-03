@@ -31,7 +31,6 @@ const settings = {
     chatHistoryMaxItems: 50,
     sessionIdPattern: /^[a-f0-9-]{36}$/,
     allowedModes: ['agent', 'deep-research'],
-    batchCreateMaxItems: 50,
   },
 
   /**

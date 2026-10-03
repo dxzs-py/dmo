@@ -14,7 +14,7 @@ import { generateId } from '../utils/id'
 import { ChatRequestSchema, validateSchema } from '../utils/validation'
 import { logger } from '../utils/logger'
 import { transformFrontendMessageToBackend } from '../utils/sessionTransformers'
-import { getInterruptId } from '../utils/messageOperations'
+import { getInterruptId, createEmptyAssistantMessage, resolveStreamTargetMessage } from '../utils/messageOperations'
 import { resolveChatEnableSandbox } from '../utils/sandbox'
 import { StreamState } from '../types'
 
@@ -48,16 +48,13 @@ export const useChatStore = defineStore('chat', () => {
   // 聊天深度研究模式沙箱任务级开关（默认关闭；仅 deep-research 模式随请求透传 enableSandbox）
   const deepResearchSandboxEnabled = ref(false)
   const lastStreamError = ref(null)
-  const messageCount = ref(0)
   const attachmentProcessing = ref(null)
   const approvalStore = useApprovalStore()
 
   const {
     isStreaming,
-    abortController,
     abort: abortStreamChat,
     streamChat,
-    lastError,
   } = useStreamChat()
 
   // 当前流式类型（Task 9）：区分「普通发送」与「重新生成」，
@@ -85,8 +82,9 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     // 本地状态标记（触发浏览器即时反馈；非触发浏览器由后端 stream_completed(stopped) 广播同步）
-    const messages = sessionStore.getSessionMessages(sessionId) || []
-    const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant')
+    // 定位收敛（spec 组 5）：末条 assistant 定位走 resolveStreamTargetMessage（无 messageId → 扫描兜底）
+    const session = sessionStore.sessions.find(s => s.id === sessionId)
+    const lastAssistant = resolveStreamTargetMessage(session, null)
     if (lastAssistant) {
       if (_streamKind === 'regenerate') {
         // 重生成中断：当前版本标记 incomplete，禁止固化为本轮主消息
@@ -107,6 +105,45 @@ export const useChatStore = defineStore('chat', () => {
     _streamKind = null
   }
 
+  /**
+   * 构造 streamChat 公共 payload（spec D10：sendMessage/regenerate 双入口收敛）
+   *
+   * 仅收敛两入口逐字相同的公共字段（message/clientMessageId/chatHistory/mode/
+   * useDeepThinking/streaming/sessionId/selectedKnowledgeBase(s)/providerId/modelName/
+   * specialParams/temperature/maxTokens）；入口差异字段（useTools/useMcp/attachmentIds/
+   * regenerate 等）由 overrides 传入，保持各自语义不变。
+   *
+   * @param {Object} params
+   * @param {string} params.sessionId - 会话 ID
+   * @param {string} params.message - 消息正文
+   * @param {Array} params.chatHistory - 聊天历史（两入口裁剪规则不同，由调用方构造后传入）
+   * @param {string|null} params.selectedKnowledgeBaseId - 知识库 ID（由调用方按原时机捕获）
+   * @param {Object} [params.overrides] - 入口差异字段，展开在公共字段之后（同键覆盖）
+   * @returns {Object} streamChat 请求 payload
+   */
+  const buildStreamChatPayload = ({ sessionId, message, chatHistory, selectedKnowledgeBaseId, overrides = {} }) => {
+    const modelStore = useModelStore()
+    const sessionStore = useSessionStore()
+    const modelConfig = modelStore.getModelConfig()
+    return {
+      message,
+      clientMessageId: generateId(), // Task 6.2：幂等键，fetchSSE 重试复用同一 id 保证后端只受理一次
+      chatHistory,
+      mode: currentMode.value,
+      useDeepThinking: modelStore.thinkingEnabled,
+      streaming: true,
+      sessionId,
+      selectedKnowledgeBase: selectedKnowledgeBaseId,
+      selectedKnowledgeBases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
+      providerId: modelConfig.providerId || null,
+      modelName: modelConfig.modelName || null,
+      specialParams: modelConfig.specialParams ? { ...modelConfig.specialParams } : null,
+      temperature: modelConfig.temperature || null,
+      maxTokens: modelConfig.maxTokens || null,
+      ...overrides,
+    }
+  }
+
   const sendMessage = async (message, options = {}) => {
     logger.log('[ChatStore] sendMessage called')
 
@@ -121,7 +158,6 @@ export const useChatStore = defineStore('chat', () => {
     _streamKind = 'send'
 
     const sessionStore = useSessionStore()
-    const modelStore = useModelStore()
     let sessionId = sessionStore.currentSessionId
     const selectedKnowledgeBaseId = sessionStore.selectedKnowledgeBase?.id || null
     
@@ -203,21 +239,14 @@ export const useChatStore = defineStore('chat', () => {
     // 用户消息由后端 ChatStreamView 在流式开始时创建并广播，前端不再重复创建
     sessionStore.addMessageToSession(sessionId, userMessage, false)
 
-    const assistantMessage = {
+    const assistantMessage = createEmptyAssistantMessage({
       id: nanoid(),
       role: 'assistant',
-      content: '',
       timestamp: new Date().toISOString(),
-      sources: [],
       plan: null,
-      toolCalls: [],
-      reasoning: null,
-      suggestions: null,
-      context: null,
-    }
+    })
     // AI 消息由后端 SSE 流创建并广播，前端只创建本地占位
     sessionStore.addMessageToSession(sessionId, assistantMessage, false)
-    messageCount.value += 1
 
     let streamSyncTimer = null
     try {
@@ -243,41 +272,32 @@ export const useChatStore = defineStore('chat', () => {
         .filter(m => m.content && m.content.trim())
 
       logger.log('[ChatStore] streamChat 请求参数, attachmentIds:', options.attachmentIds || [])
-      const modelConfig = modelStore.getModelConfig()
-      const specialParams = modelConfig.specialParams ? { ...modelConfig.specialParams } : null
       const result = await streamChat(
-        {
+        buildStreamChatPayload({
+          sessionId,
           message,
-          clientMessageId: generateId(), // Task 6.2：幂等键（可选字段，后端缺失时行为不变），fetchSSE 重试复用同一 id 保证后端只受理一次
-          chatHistory: chatHistory,
-          mode: currentMode.value,
-          useTools: options.useTools !== false,
-          useWebSearch: options.useWebSearch || false,
-          useKnowledgeBase: options.useKnowledgeBase || false,
-          useDeepThinking: modelStore.thinkingEnabled,
-          useMcp: options.useMcp || false,
-          selectedMcpServers: options.selectedMcpServers || null,
-          selectedTools: options.selectedTools || null,
-          streaming: true,
-          sessionId: sessionId,
-          selectedKnowledgeBase: selectedKnowledgeBaseId,
-          selectedKnowledgeBases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
-          attachmentIds: options.attachmentIds || [],
-          providerId: modelConfig.providerId || null,
-          modelName: modelConfig.modelName || null,
-          specialParams: specialParams,
-          temperature: modelConfig.temperature || null,
-          maxTokens: modelConfig.maxTokens || null,
-          // 仅深度研究模式或用户显式携带研究上下文时才发送 researchTaskId。
-          // 根因修复：删除深度研究会话后残留的 researchTaskId 泄漏到代理模式请求，
-          // 导致后端错误加载旧研究上下文注入 prompt（日志：代理请求带 research_task_id）。
-          researchTaskId: (currentMode.value === 'deep-research' || currentResearchContextInfo)
-            ? currentResearchTaskId
-            : null,
-          continueTaskId: continueTaskId,
-          // 深研模式沙箱任务级开关（Spec 任务级开关；仅 deep-research 模式透传 enable_sandbox）
-          enableSandbox: resolveChatEnableSandbox(currentMode.value, deepResearchSandboxEnabled.value),
+          chatHistory,
+          selectedKnowledgeBaseId,
+          overrides: {
+            useTools: options.useTools !== false,
+            useWebSearch: options.useWebSearch || false,
+            useKnowledgeBase: options.useKnowledgeBase || false,
+            useMcp: options.useMcp || false,
+            selectedMcpServers: options.selectedMcpServers || null,
+            selectedTools: options.selectedTools || null,
+            attachmentIds: options.attachmentIds || [],
+            // 仅深度研究模式或用户显式携带研究上下文时才发送 researchTaskId。
+            // 根因修复：删除深度研究会话后残留的 researchTaskId 泄漏到代理模式请求，
+            // 导致后端错误加载旧研究上下文注入 prompt（日志：代理请求带 research_task_id）。
+            researchTaskId: (currentMode.value === 'deep-research' || currentResearchContextInfo)
+              ? currentResearchTaskId
+              : null,
+            continueTaskId,
+            // 深研模式沙箱任务级开关（Spec 任务级开关；仅 deep-research 模式透传 enable_sandbox）
+            enableSandbox: resolveChatEnableSandbox(currentMode.value, deepResearchSandboxEnabled.value),
+          },
         })
+      )
 
       if (!result.success && !result.aborted) {
         lastStreamError.value = result.error?.message || '消息发送失败'
@@ -345,7 +365,6 @@ export const useChatStore = defineStore('chat', () => {
     _streamKind = 'regenerate'
 
     const sessionStore = useSessionStore()
-    const modelStore = useModelStore()
     const sid = sessionStore.currentSessionId
     const selectedKnowledgeBaseId = sessionStore.selectedKnowledgeBase?.id || null
     const messages = sessionStore.getSessionMessages(sid)
@@ -381,32 +400,22 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     const newVersionId = nanoid()
-    currentMessage.versions.push({
+    currentMessage.versions.push(createEmptyAssistantMessage({
       id: newVersionId,
-      content: '',
-      sources: [],
       plan: null,
-      toolCalls: [],
-      reasoning: null,
-      suggestions: null,
-      context: null,
       // 与 handleMessageRegenerated 的新版本结构对齐：标记 STREAMING + isStreaming，
       // 使触发浏览器收到自身 message_regenerated 事件时幂等检查（空 STREAMING 版本）命中，
       // 避免重复归档产生多余空版本。
       streamState: StreamState.STREAMING,
       isStreaming: true,
-    })
+    }))
     currentMessage.currentVersion = currentMessage.versions.length - 1
 
-    currentMessage.content = ''
-    currentMessage.sources = []
-    currentMessage.plan = null
-    currentMessage.toolCalls = []
-    currentMessage.reasoning = null
-    currentMessage.suggestions = null
-    currentMessage.context = null
-    currentMessage.streamState = StreamState.STREAMING
-    currentMessage.isStreaming = true
+    Object.assign(currentMessage, createEmptyAssistantMessage({
+      plan: null,
+      streamState: StreamState.STREAMING,
+      isStreaming: true,
+    }))
 
     isLoading.value = true
     lastStreamError.value = null
@@ -426,33 +435,24 @@ export const useChatStore = defineStore('chat', () => {
         }))
         .filter(m => m.content && m.content.trim())
 
-      const modelConfig = modelStore.getModelConfig()
-      let regenSpecialParams = modelConfig.specialParams ? { ...modelConfig.specialParams } : null
       const result = await streamChat(
-        {
-          message: userMessage.content || '',
-          clientMessageId: generateId(), // Task 6.2：幂等键，防止重新生成时重复请求造成双流
-          chatHistory: chatHistory,
-          mode: currentMode.value,
-          useTools: true,
-          useWebSearch: false,
-          useKnowledgeBase: !!selectedKnowledgeBaseId,
-          useDeepThinking: modelStore.thinkingEnabled,
-          useMcp: false,
-          streaming: true,
+        buildStreamChatPayload({
           sessionId: sid,
-          selectedKnowledgeBase: selectedKnowledgeBaseId,
-          selectedKnowledgeBases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
-          providerId: modelConfig.providerId || null,
-          modelName: modelConfig.modelName || null,
-          specialParams: regenSpecialParams,
-          temperature: modelConfig.temperature || null,
-          maxTokens: modelConfig.maxTokens || null,
-          // 重新生成语义：复用已有消息对（user/assistant 消息 ID），后端不新建消息对
-          regenerate: true,
-          userMessageId: userMessage.backendId || userMessage.id,
-          assistantMessageId: currentMessage.backendId || currentMessage.id,
+          message: userMessage.content || '',
+          chatHistory,
+          selectedKnowledgeBaseId,
+          overrides: {
+            useTools: true,
+            useWebSearch: false,
+            useKnowledgeBase: !!selectedKnowledgeBaseId,
+            useMcp: false,
+            // 重新生成语义：复用已有消息对（user/assistant 消息 ID），后端不新建消息对
+            regenerate: true,
+            userMessageId: userMessage.backendId || userMessage.id,
+            assistantMessageId: currentMessage.backendId || currentMessage.id,
+          },
         })
+      )
 
       if (!result.success && !result.aborted) {
         lastStreamError.value = result.error?.message || '重新生成失败'
@@ -514,7 +514,6 @@ export const useChatStore = defineStore('chat', () => {
     currentMode.value = 'agent'
     availableModes.value = { 'agent': '代理', 'deep-research': '深度研究' }
     lastStreamError.value = null
-    messageCount.value = 0
     // 重置聊天深度研究桥接状态（惰性加载；clearAll / 登出场景）
     _getChatDeepResearch().then(bridge => bridge.resetChatDeepResearch()).catch(() => {})
     attachmentProcessing.value = null
@@ -580,10 +579,7 @@ export const useChatStore = defineStore('chat', () => {
     availableModes,
     deepResearchSandboxEnabled,
     setDeepResearchSandboxEnabled,
-    abortController,
     lastStreamError,
-    messageCount,
-    lastError,
     sendMessage,
     regenerateMessage,
     fetchModes,

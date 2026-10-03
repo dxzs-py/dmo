@@ -16,8 +16,8 @@ export const userAPI = {
   },
   changePassword(data) { return apiClient.post('/users/change-password/', data) },
   bindPhone(data) { return apiClient.post('/users/bind-phone/', data) },
+  getUsageStats() { return apiClient.get('/users/usage-stats/') },
   getPreferences() { return apiClient.get('/users/preferences/') },
   updatePreferences(data) { return apiClient.put('/users/preferences/', data) },
-  getUsageStats() { return apiClient.get('/users/usage-stats/') },
   deleteAccount() { return apiClient.delete('/users/account/') },
 }

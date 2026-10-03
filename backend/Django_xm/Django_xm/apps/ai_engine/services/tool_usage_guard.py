@@ -437,33 +437,10 @@ class ToolUsageGuard:
         )
         return ToolUsageDecision(status=ToolUsageStatus.ALLOW)
 
-    async def acheck(
-        self,
-        tool_name: str,
-        args: dict[str, Any],
-        thread_id: str,
-    ) -> ToolUsageDecision:
-        """异步检查（与 sync 版语义一致）"""
-        return self.check(tool_name, args, thread_id)
-
     def is_in_hard_stop_state(self, thread_id: str) -> bool:
         """给 termination_judge 用：是否已经连续 blocked 超过阈值"""
         with self._lock:
             return self._consecutive_blocked.get(thread_id, 0) >= self.blocked_consecutive_max
-
-    def reset_thread(self, thread_id: str) -> None:
-        """重置某个 thread 的所有状态（供测试或异常恢复）"""
-        with self._lock:
-            self._consecutive_blocked.pop(thread_id, None)
-            # 清理 _path_recent_contents
-            for k in [k for k in self._path_recent_contents if k[0] == thread_id]:
-                self._path_recent_contents.pop(k, None)
-            # 清理 _resource_recent
-            for key in list(self._resource_recent):
-                if key[0] == thread_id:
-                    self._resource_recent.pop(key, None)
-            # 清理 _resource_cache（注意 LRU 是 thread 隔离困难，简单重建）
-            self._resource_cache.clear()
 
     # ============== 内部方法（通用指纹机制） ==============
 
@@ -760,10 +737,3 @@ def get_tool_usage_guard() -> ToolUsageGuard:
             logger.warning(f"ToolUsageGuard 初始化失败，使用默认配置: {e}")
             _guard_instance = ToolUsageGuard()
         return _guard_instance
-
-
-def reset_tool_usage_guard() -> None:
-    """重置单例（供测试）"""
-    global _guard_instance  # noqa: PLW0603 - 模块级单例重置（供测试）
-    with _guard_lock:
-        _guard_instance = None

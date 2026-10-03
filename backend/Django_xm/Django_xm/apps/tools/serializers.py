@@ -4,9 +4,7 @@ from rest_framework import serializers
 
 from Django_xm.common.net.guards import (
     BlockedAddressError,
-    SSRF_EXEMPT_SETTING,
     assert_url_not_private,
-    is_blocked_ip as _is_blocked_ip,
 )
 
 # 资源 name 白名单：ASCII 字母 / 数字 / 中文 / 下划线 / 中划线 / 点 / 空格。
@@ -27,8 +25,6 @@ def validate_resource_name(value: str) -> None:
 # MCP Server 安全校验（S-04 stdio RCE 收敛 / S-07 URL SSRF 收敛）
 # IP 黑名单判定与 URL 内网校验已抽取到 common/net/guards.py 共享模块
 #（web_fetch 抓取等所有服务端出站请求复用），此处仅做 DRF 错误适配。
-# SSRF_EXEMPT_SETTING / _is_blocked_ip 由 guards 模块导入并保留原名，
-# 兼容既有测试与外部引用。
 # ---------------------------------------------------------------------------
 
 def is_mcp_admin(user) -> bool:
@@ -102,15 +98,6 @@ class McpToolUploadSerializer(serializers.Serializer):
         return value
 
 
-class McpServerDiscoverSerializer(serializers.Serializer):
-    registry_url = serializers.URLField(help_text="远程注册中心 URL")
-
-    def validate_registry_url(self, value):
-        # 注册中心 URL 与 Server URL 同源发起服务端请求，需同样做 SSRF 校验
-        validate_mcp_server_url(value, field="registry_url")
-        return value
-
-
 class SkillStepSerializer(serializers.Serializer):
     """Skill 步骤序列化器"""
 
@@ -151,28 +138,3 @@ class SkillCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError("Skill 名称不能以 skill_ 开头")
         validate_resource_name(value)
         return value
-
-
-class SkillToggleSerializer(serializers.Serializer):
-    """切换 Skill 状态序列化器"""
-
-    name = serializers.CharField(max_length=100, help_text="Skill 名称")
-    status = serializers.ChoiceField(choices=["active", "disabled"], required=False, help_text="目标状态")
-
-
-class SkillPackageUploadSerializer(serializers.Serializer):
-    """Skill 包上传序列化器"""
-
-    file = serializers.FileField(help_text="ZIP 格式的 Skill 包")
-
-    def validate_file(self, value):
-        if not value.name.endswith(".zip"):
-            raise serializers.ValidationError("仅支持 ZIP 格式的 Skill 包")
-        return value
-
-
-class SkillPackageOperationSerializer(serializers.Serializer):
-    """Skill 包操作序列化器"""
-
-    name = serializers.CharField(max_length=64, help_text="Skill 名称")
-    status = serializers.CharField(max_length=20, required=False, help_text="目标状态")

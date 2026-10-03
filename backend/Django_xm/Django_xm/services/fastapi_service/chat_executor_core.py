@@ -149,6 +149,20 @@ async def run_chat_session(executor, params: dict) -> None:
         stopped = True
     except Exception:
         logger.exception(f"[ChatExec] chat 会话执行异常: session={session_id}")
+        # spec D6：重新生成启动即失败（无任何输出内容）→ 回滚归档空版本并广播
+        # MESSAGE_REGENERATE_REVERTED（前端 handleMessageRegenerateReverted 镜像恢复）。
+        # 仅失败路径回滚：用户停止（CancelledError，走 incomplete 广播）与已有
+        # 部分输出（content 非空，保留失败版本）均不回滚。
+        if is_regenerate and message_id and not (content_state.get("content") or "").strip():
+            try:
+                from Django_xm.apps.chat.services.stream_persistence import revert_regenerate_archive
+
+                await revert_regenerate_archive(session_id, str(message_id))
+            except Exception:
+                logger.warning(
+                    f"[ChatExec] 重新生成失败回滚异常: session={session_id}, message={message_id}",
+                    exc_info=True,
+                )
     finally:
         # 挂起态不 finalize（会话未结束）：不落库终态、不广播 stream_completed、
         # 不释放 checkpointer（graph 恢复时从 checkpoint 续跑）
@@ -225,3 +239,49 @@ async def _finalize_chat_session(
         )
     except Exception:
         logger.warning(f"[ChatExec] 广播 stream_completed 失败: session={session_id}", exc_info=True)
+
+    # 跨会话记忆写入（spec D2）：persist_stream_result 完成后生成会话摘要落库；
+    # 失败静默降级（debug 日志），绝不阻塞会话收尾主流程
+    await _save_cross_session_memory(chat_service, data, content_state, session_id, incomplete)
+
+
+async def _save_cross_session_memory(
+    chat_service,
+    data: dict,
+    content_state: dict | None,
+    session_id: str,
+    incomplete: bool,
+) -> None:
+    """会话终态跨会话记忆写入（spec D2）：本轮对话生成摘要并调用 save_session_context。
+
+    跳过条件：重生成中断（incomplete 半成品不污染记忆）/ 用户消息或最终回答为空 /
+    无 user_id。cross_session_enabled 与容量淘汰语义由 ContextManager 负责。
+    摘要生成经 sync_to_async 走线程池（LLM 调用为同步阻塞），失败静默降级：
+    任何异常仅 debug 日志，绝不抛出阻塞会话收尾。
+    """
+    if incomplete:
+        return
+    user_message = str(data.get("message") or "")
+    assistant_content = str((content_state or {}).get("content") or "")
+    user_id = getattr(chat_service, "user_id", None)
+    if not user_message.strip() or not assistant_content.strip() or not user_id:
+        return
+    try:
+
+        def _write() -> bool:
+            from Django_xm.apps.context_manager.services.manager import create_context_manager
+
+            manager = create_context_manager(user_id=user_id)
+            return manager.save_turn_summary(
+                session_id=session_id,
+                user_message=user_message,
+                assistant_content=assistant_content,
+            )
+
+        saved = await sync_to_async(_write)()
+        if saved:
+            logger.debug(f"[ChatExec] 跨会话记忆已写入: session={session_id}")
+        else:
+            logger.debug(f"[ChatExec] 跨会话记忆跳过（未启用或条件不满足）: session={session_id}")
+    except Exception:
+        logger.debug(f"[ChatExec] 跨会话记忆写入失败（静默降级）: session={session_id}", exc_info=True)

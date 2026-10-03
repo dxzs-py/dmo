@@ -18,9 +18,8 @@ import {
   transformFrontendMessageToBackend,
 } from '../../utils/sessionTransformers'
 import {
-  getLastAssistantMessage,
+  locateInSessions,
   setLastMessageField,
-  getMessageByIndex,
   createMessageVersion,
 } from '../../utils/messageOperations'
 import { StreamState } from '../../types'
@@ -31,9 +30,10 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
 
   const userStore = useUserStore()
 
-  const _getLast = (sessionId) => getLastAssistantMessage(sessions.value, sessionId)
+  // 定位收敛（spec 组 5）：locateInSessions 为跨会话定位唯一权威；
+  // 不传 messageId 时保持原"末条消息且必须为 assistant"兜底语义
+  const _getLast = (sessionId) => locateInSessions(sessions.value, sessionId)
   const _setLastField = (sessionId, field, value) => setLastMessageField(sessions.value, sessionId, field, value)
-  const _getByIndex = (sessionId, idx) => getMessageByIndex(sessions.value, sessionId, idx)
 
   const addMessageToSession = async (sessionId, message, saveToBackend = true) => {
     const session = sessions.value.find(s => s.id === sessionId)
@@ -280,24 +280,6 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
     }
   }
 
-  /**
-   * 设置指定索引消息的 streamState，并同步到当前 version。
-   * @param {string} sessionId
-   * @param {number} idx
-   * @param {string} state
-   */
-  const setStreamStateToMessageByIdx = (sessionId, idx, state) => {
-    const result = _getByIndex(sessionId, idx)
-    if (!result) return
-    result.message.streamState = state
-    result.message.isStreaming = state === StreamState.STREAMING
-    const ver = result.message.versions?.[result.message.currentVersion]
-    if (ver) {
-      ver.streamState = state
-      ver.isStreaming = state === StreamState.STREAMING
-    }
-  }
-
   const clearCurrentSessionMessages = () => {
     const session = sessions.value.find(s => s.id === currentSessionId.value)
     if (session) {
@@ -309,17 +291,6 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
     const sessionId = currentSessionId.value
     if (sessionId) {
       runtimeDeps._removeSessionToolCallState(sessionId)
-    }
-  }
-
-  const removeMessageFromSession = (sessionId, messageId) => {
-    const session = sessions.value.find(s => s.id === sessionId)
-    if (!session) return
-    const idx = session.messages.findIndex(m => m.id === messageId)
-    if (idx !== -1) {
-      session.messages.splice(idx, 1)
-      session.messageCount = session.messages.length
-      session.updatedAt = Date.now()
     }
   }
 
@@ -394,9 +365,7 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
     appendToLastMessage,
     setApprovalToLastMessage,
     setStreamStateToLastMessage,
-    setStreamStateToMessageByIdx,
     clearCurrentSessionMessages,
-    removeMessageFromSession,
     removeMessagePairFromSession,
     updateMessageFieldByBackendId,
     removeMessagesByIds,

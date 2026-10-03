@@ -541,26 +541,3 @@ async def publish_task_status(
             f"task_id={task_id}, status={status}"
         )
         raise
-
-
-def publish_task_status_sync(**kwargs) -> None:
-    """publish_task_status 的同步版本。智能适配 async/sync 上下文（同 publish_*_sync）。
-
-    async 上下文 fire-and-forget：异常经 done_callback 记录 ERROR（失败不再无感知）。
-    """
-    try:
-        asyncio.get_running_loop()
-        _fire_and_forget(
-            publish_task_status(**kwargs),
-            task_id=kwargs.get("task_id"),
-            status=kwargs.get("status"),
-        )
-    except RuntimeError:
-        _run_sync_publish(
-            publish_task_status,
-            {
-                "task_id": kwargs.get("task_id"),
-                "status": kwargs.get("status"),
-            },
-            **kwargs,
-        )

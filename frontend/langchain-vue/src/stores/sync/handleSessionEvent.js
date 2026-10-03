@@ -5,7 +5,8 @@ import { TOOL_CALL_EVENT_TYPES, APPROVAL_EVENT_TYPES } from '@/types/realtimeEve
 import { createHandleToolCallEvent } from './toolCallHandler'
 import { createHandleApprovalEvent } from './approvalHandler'
 import { createSubagentHandlers } from './subagentHandlers'
-import { findMessageById, getSession, getLastAssistantMessage } from './helpers'
+import { resolveStreamTargetMessage } from '@/utils/messageOperations'
+import { getSession } from './helpers'
 
 /**
  * @typedef {import('@/composables/useRealtimeSync').RealtimeEvent} RealtimeEvent
@@ -19,7 +20,8 @@ import { findMessageById, getSession, getLastAssistantMessage } from './helpers'
  *   approvalHandler.js（含 APPROVAL_STATE_MAP 映射 / 批量审批联动 / streamState 转换）、
  *   subagentHandlers.js（applySubagentContent / handleSubagentStatusChange / handleResearchStatusChange）
  * - ctx 注入（sync.js 装配后传入，仅使用注入版本，无内联实现）：messageHandlers.js
- *   （6 个 handleMessage* 系列）、streamStateHandlers.js（4 个 handleStream* + applyStreamReasoning）
+ *   （6 个 handleMessage* 系列）、streamStateHandlers.js
+ *   （4 个 handleStream* + applyStreamReasoning + handleBudgetExceeded）
  *
  * 本模块保留：事件入口（payload 转换 / 会话路由 / 有序队列接入）、applySessionEvent 守卫
  * （INTERRUPTED 跳过 / 内容增长放行 / 跳号检测 / 兜底拉取）、TOOL_CALL / APPROVAL Set 提前路由、
@@ -96,13 +98,9 @@ export const createHandleSessionEvent = (ctx) => {
       ? event.payload?.messageId
       : (event.payload?.messageId || event.payload?.extra?.messageId)
 
-    if (messageId) {
-      const msg = findMessageById(session, messageId)
-      if (msg) return msg.streamState || null
-    }
-
-    const lastAssistant = getLastAssistantMessage(session)
-    return lastAssistant?.streamState || null
+    // 定位收敛（spec 组 5）：精确按 messageId，兜底末条 assistant（原内联展开等价迁移）
+    const targetMsg = resolveStreamTargetMessage(session, messageId)
+    return targetMsg?.streamState || null
   }
 
   /**
@@ -262,6 +260,11 @@ export const createHandleSessionEvent = (ctx) => {
         break
       case 'stream_finalized':
         await ctx.handleStreamFinalized(sessionId, payload)
+        break
+      // 会话 Token 预算耗尽（SessionTokenBudgetGuard 熔断，spec D6 补消费，
+      // 见 streamStateHandlers.handleBudgetExceeded）：向用户展示可见警告提示
+      case 'budget_exceeded':
+        ctx.handleBudgetExceeded(sessionId, payload)
         break
       case 'message_regenerated':
         ctx.handleMessageRegenerated(sessionId, payload)

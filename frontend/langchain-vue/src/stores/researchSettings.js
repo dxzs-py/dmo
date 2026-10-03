@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { useModelStore } from './model'
 import { modelAPI } from '../api/model'
 import { ElMessage } from 'element-plus'
+import { extractErrorMessage } from '../utils/apiErrorHandler'
 import { initSpecialParams, isThinkingEnabled, applySpecialParamChange } from '../utils/specialParams'
 
 /**
@@ -132,7 +133,7 @@ export const useResearchSettingsStore = defineStore('researchSettings', () => {
         ElMessage.error(data.message || '模型连接测试失败')
       }
     } catch (e) {
-      const msg = e.response?.data?.message || e.message || '连接测试失败'
+      const msg = extractErrorMessage(e)
       testResult.value = { success: false, message: msg }
       ElMessage.error(msg)
     } finally {

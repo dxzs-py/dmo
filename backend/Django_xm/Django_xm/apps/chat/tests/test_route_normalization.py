@@ -3,9 +3,8 @@
 覆盖：
 - 旧动词路由已死：DELETE /messages/<id>/delete/、DELETE /sessions/<sid>/messages/pair/delete/
   均不再匹配任何路由 → 404
-- 新资源路由可达：DELETE /messages/<id>/ 路由匹配成功并进入视图
-  （空库下消息不存在，视图返回 404 + 业务码 40401 信封；路由级 404 不携带该信封，
-  以此证明请求已到达 ChatMessageDeleteView.delete）
+- 消息单条删除 REST 通道（WS 化遗留）已下线：DELETE /messages/<id>/ → 405
+  （资源明细路由保留承载 PATCH 更新，DELETE 不再由视图分发）
 - 新路由 name 可 reverse 解析；旧 name（message_delete / message_pair_delete）已注销
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
@@ -26,12 +25,9 @@ from rest_framework.test import APIClient
 
 CHAT_URL = "/api/v1/chat/"
 
-# ErrorCode.NOT_FOUND 的业务码（视图级 404 信封标识，区别于路由级 404）
-NOT_FOUND_CODE = 40401
-
 
 class ChatRouteNormalizationTests(TestCase):
-    """dj-16：chat 旧动词删除路由移除，新资源路由注册且 DELETE 可达视图。"""
+    """dj-16：chat 旧动词删除路由移除，消息单条删除 REST 通道下线。"""
 
     def setUp(self):
         self.client = APIClient()
@@ -48,13 +44,12 @@ class ChatRouteNormalizationTests(TestCase):
         resp = self.client.delete(f"{CHAT_URL}sessions/some-session/messages/pair/delete/")
         self.assertEqual(resp.status_code, 404, resp.content)
 
-    def test_new_message_delete_route_reaches_view(self):
-        """DELETE /messages/<id>/ 路由匹配成功并进入视图（消息不存在 → 视图级 404 信封）。"""
-        url = reverse("chat:chat_messages_delete", kwargs={"message_id": 1})
+    def test_message_delete_rest_channel_removed(self):
+        """DELETE /messages/<id>/ → 405：路由仍在（承载 PATCH），删除方法不再分发。"""
+        url = reverse("chat:chat_messages_detail", kwargs={"message_id": 1})
         self.assertEqual(url, f"{CHAT_URL}messages/1/")
         resp = self.client.delete(url)
-        self.assertEqual(resp.status_code, 404, resp.content)
-        self.assertEqual(resp.json()["code"], NOT_FOUND_CODE)
+        self.assertEqual(resp.status_code, 405, resp.content)
 
     def test_new_route_names_resolvable(self):
         """新路由 name 可 reverse 解析（路由已注册）。"""

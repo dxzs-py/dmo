@@ -22,6 +22,7 @@ from asgiref.sync import sync_to_async
 from langchain_core.messages import AIMessage, HumanMessage
 
 from Django_xm.apps.agent_hub.services.agent_executor import AgentExecutor
+from Django_xm.apps.ai_engine.config import AGENT_RECURSION_LIMIT_CHAT
 from Django_xm.apps.ai_engine.services.agent_resilience import (
     DegradationLevel,
     get_degraded_tools,
@@ -130,9 +131,6 @@ class ChatService:
             response_time,
         )
 
-    def _build_thread_config(self, session_id: str | None = None, **kwargs) -> dict[str, Any]:
-        return self._agent_service.build_thread_config(session_id, **kwargs)
-
     async def _create_agent_with_memory(
         self,
         data: dict[str, Any],
@@ -194,9 +192,6 @@ class ChatService:
         self, research_task_id: str, user_id: int | None = None, session_id: str | None = None
     ) -> str | None:
         return self._context_service.load_research_context(research_task_id, user_id, session_id)
-
-    def _apply_compaction(self, chat_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return self._context_service.apply_compaction(chat_history)
 
     def _apply_context_engineering(
         self,
@@ -267,7 +262,9 @@ class ChatService:
 
         mode = data.get("mode", "agent")
 
-        cached_response = ModelResponseCacheService.get_cached_response(data["message"], get_model_string(), mode)
+        cached_response = ModelResponseCacheService.get_cached_response(
+            data["message"], get_model_string(), mode, user_id=self.user_id
+        )
         if cached_response is not None:
             logger.info("模型响应缓存命中")
             return cached_response["response"]
@@ -354,7 +351,8 @@ class ChatService:
                 messages.insert(0, research_system_msg)
             messages.append(human_msg)
             graph_input = {"messages": messages}
-            invoke_config = {"recursion_limit": 500}
+            # chat 单轮对话：工具循环步数适中（常量取值依据见 ai_engine/config.py）
+            invoke_config = {"recursion_limit": AGENT_RECURSION_LIMIT_CHAT}
 
         with TokenUsageCallbackHandler() as cb:
             invoke_config["callbacks"] = [cb]
@@ -400,7 +398,9 @@ class ChatService:
 
         result = {"message": response, "mode": data["mode"], "tools_used": tool_names, "success": True}
 
-        ModelResponseCacheService.cache_model_response(data["message"], result, get_model_string(), mode)
+        ModelResponseCacheService.cache_model_response(
+            data["message"], result, get_model_string(), mode, user_id=self.user_id
+        )
 
         return result
 
@@ -865,10 +865,6 @@ class ChatService:
             enable_sandbox=data.get("enable_sandbox", False),
         )
 
-    async def _get_deep_research_tools(self, data: dict) -> list:
-        """获取深度研究模式的额外工具（MCP + 用户选择）"""
-        return await self._tool_service.get_deep_research_tools(data)
-
     async def _process_normal_stream_chat(
         self,
         data: dict[str, Any],
@@ -1066,7 +1062,8 @@ class ChatService:
                 messages.insert(0, research_system_msg)
             messages.append(human_msg)
             graph_input = {"messages": messages}
-            config = {"recursion_limit": 500}
+            # chat 单轮对话：工具循环步数适中（常量取值依据见 ai_engine/config.py）
+            config = {"recursion_limit": AGENT_RECURSION_LIMIT_CHAT}
 
         return agent, graph_input, config, agent_config
 
@@ -1133,7 +1130,8 @@ class ChatService:
                     timeout=10.0,
                 )
                 if deg_config is None:
-                    deg_config = {"recursion_limit": 500}
+                    # chat 单轮对话：工具循环步数适中（常量取值依据见 ai_engine/config.py）
+                    deg_config = {"recursion_limit": AGENT_RECURSION_LIMIT_CHAT}
                 degraded_agent_holder["agent"] = deg_agent
                 degraded_agent_holder["config"] = deg_config
             except TimeoutError:
@@ -1557,23 +1555,3 @@ class ChatService:
             token_detail_tracker,
         ):
             yield event
-
-
-class ChatModeService:
-    """聊天模式服务类"""
-
-    FRONTEND_SUPPORTED_MODES = ("agent", "deep-research")
-    DEFAULT_MODE = "agent"
-
-    @classmethod
-    def get_supported_modes(cls) -> dict[str, str]:
-        from Django_xm.apps.ai_engine.prompts.system_prompts import SYSTEM_PROMPTS
-
-        modes = {}
-        for mode_name in cls.FRONTEND_SUPPORTED_MODES:
-            prompt = SYSTEM_PROMPTS.get(mode_name)
-            if prompt is None:
-                prompt = SYSTEM_PROMPTS.get("default")
-            if prompt:
-                modes[mode_name] = prompt.split("\n")[0]
-        return modes

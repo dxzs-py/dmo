@@ -20,11 +20,10 @@ import django
 
 django.setup()
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 
 from Django_xm.apps.context_manager.config import context_settings
 from Django_xm.apps.context_manager.services.compression import (
-    CompressionConfig,
     ContextCompressionEngine,
     dicts_to_messages,
     messages_to_dicts,
@@ -34,28 +33,12 @@ from Django_xm.apps.context_manager.services.progressive_compressor import (
     ProgressiveCompressor,
 )
 
-_BIG_CONTENT = "hello world " * 30
-
-
 def _fake_llm(content: str):
     response = mock.MagicMock()
     response.content = content
     model = mock.MagicMock()
     model.invoke.return_value = response
     return model
-
-
-def _small_engine() -> tuple[ContextCompressionEngine, mock.MagicMock]:
-    """小阈值统一引擎 + 假 LLM（trigger = 100 * 0.8 = 80 token）。"""
-    engine = ContextCompressionEngine(
-        CompressionConfig(
-            max_context_tokens=100,
-            token_threshold_ratio=0.8,
-            keep_recent_messages=2,
-            summary_max_length=50,
-        )
-    )
-    return engine, _fake_llm("统一摘要")
 
 
 class AdapterRoundTripTests(unittest.TestCase):
@@ -84,31 +67,6 @@ class AdapterRoundTripTests(unittest.TestCase):
         # 往返一致性：再转回 dict 内容不变
         again = messages_to_dicts(messages)
         self.assertEqual([d["content"] for d in again], ["系统提示", "问题", "回答"])
-
-
-class CompressMessagesDualSemanticsTests(unittest.TestCase):
-    """统一入口 compress_messages：双语义自动识别。"""
-
-    def test_base_message_input_returns_base_messages(self) -> None:
-        engine, fake_model = _small_engine()
-        with mock.patch.object(engine, "_get_compression_model", return_value=fake_model):
-            compressed, result = engine.compress_messages(
-                [HumanMessage(content=_BIG_CONTENT) for _ in range(4)]
-            )
-        self.assertTrue(result.compressed)
-        self.assertTrue(all(isinstance(m, BaseMessage) for m in compressed))
-        # 1 条摘要 + 最近 2 条
-        self.assertEqual(len(compressed), 3)
-
-    def test_dict_input_returns_dicts(self) -> None:
-        engine, fake_model = _small_engine()
-        with mock.patch.object(engine, "_get_compression_model", return_value=fake_model):
-            compressed, result = engine.compress_messages(
-                [{"role": "user", "content": _BIG_CONTENT} for _ in range(4)]
-            )
-        self.assertTrue(result.compressed)
-        self.assertTrue(all(isinstance(m, dict) for m in compressed))
-        self.assertEqual(len(compressed), 3)
 
 
 class SummarizeLongTextTests(unittest.TestCase):

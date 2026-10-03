@@ -104,6 +104,7 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "chat_stream": "9999/min",
     "research": "9999/min",
     "knowledge": "9999/min",
+    "learning": "9999/min",
     "sensitive": "9999/min",
     "snapshot": "9999/min",
     "meta": "9999/min",

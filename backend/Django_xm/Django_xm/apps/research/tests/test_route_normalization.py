@@ -1,9 +1,10 @@
-"""research app 路由规范化防回归测试（dj-16）。
+"""research app 路由规范化防回归测试（dj-16 + Spec D11）。
 
 覆盖：
 - 旧路由已死：GET /result/<task_id>/、DELETE /task/<task_id>/ 均不再匹配任何路由 → 404
-- 新路由已注册：tasks_delete / tasks_retry_subagent 可 reverse 解析
-- 旧路由 name（task_delete / retry_subagent / result）已注销，reverse 抛 NoReverseMatch
+- 新路由已注册：tasks_delete 可 reverse 解析
+- 已注销路由 name（task_delete / retry_subagent / tasks_retry_subagent / result）
+  reverse 抛 NoReverseMatch（tasks_retry_subagent 为 Spec D11 死端点下线）
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
     python manage.py test Django_xm.apps.research.tests.test_route_normalization --noinput
@@ -45,17 +46,14 @@ class ResearchRouteNormalizationTests(TestCase):
     def test_new_route_names_resolvable(self):
         """新路由 name 可 reverse 解析（路由已注册）。"""
         self.assertEqual(reverse("research:tasks_delete", kwargs={"task_id": "t1"}), f"{RESEARCH_URL}tasks/t1/")
-        self.assertEqual(
-            reverse("research:tasks_retry_subagent", kwargs={"task_id": "t1"}),
-            f"{RESEARCH_URL}tasks/t1/retry-subagent/",
-        )
 
     def test_old_route_names_removed(self):
-        """旧路由 name 已注销，reverse 抛 NoReverseMatch。"""
+        """已注销路由 name reverse 抛 NoReverseMatch（含 D11 下线的 tasks_retry_subagent）。"""
         cases = [
             ("research:task_delete", {"task_id": "t1"}),
             ("research:retry_subagent", {"task_id": "t1"}),
             ("research:result", {"task_id": "t1"}),
+            ("research:tasks_retry_subagent", {"task_id": "t1"}),
         ]
         for name, kwargs in cases:
             with self.subTest(name=name), self.assertRaises(NoReverseMatch):

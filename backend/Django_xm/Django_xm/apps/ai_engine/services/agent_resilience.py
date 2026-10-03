@@ -299,10 +299,6 @@ class ExecutionTimeoutManager:
             self._paused_total += time.monotonic() - self._pause_start
             self._pause_start = None
 
-    @property
-    def soft_timeout_triggered(self) -> bool:
-        return self._soft_timeout_triggered
-
     def check_soft_timeout(self) -> bool:
         """检查是否触发 soft timeout（仅触发一次）"""
         if self._soft_timeout_triggered:

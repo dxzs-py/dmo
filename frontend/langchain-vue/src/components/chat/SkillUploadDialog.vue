@@ -3,15 +3,13 @@ import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete, UploadFilled } from '@element-plus/icons-vue'
 import { toolsAPI } from '@/api/tools'
+import { extractErrorMessage } from '@/utils/apiErrorHandler'
 import { useToolsStore } from '../../stores/tools'
+import { useDialogForm } from '@/composables/useDialogForm'
 
 const toolsStore = useToolsStore()
 
 const props = defineProps({
-  modelValue: {
-    type: Boolean,
-    default: false,
-  },
   editingSkill: {
     type: Object,
     default: null,
@@ -19,35 +17,155 @@ const props = defineProps({
 })
 
 const emit = defineEmits({
-  'update:modelValue': (val) => typeof val === 'boolean',
   success: () => true,
 })
 
-const visible = computed({
-  get: () => props.modelValue,
-  set: (val) => emit('update:modelValue', val),
-})
+const visible = defineModel('modelValue', { type: Boolean, default: false })
 
-const isEdit = computed(() => !!props.editingSkill)
-
-const dialogTitle = computed(() => isEdit.value ? '编辑技能' : '添加技能')
-
-const form = ref({
-  name: '',
-  description: '',
-  steps: [
-    { toolName: '', argsTemplate: '', condition: '' },
-  ],
-})
-
-const loading = ref(false)
 const availableTools = computed(() => toolsStore.langchainTools.map(t => t.name))
 const toolsLoading = computed(() => toolsStore.langchainLoading)
+
+// 技能包/管道模式与文件为表单外域状态，重置逻辑经 onReset 注入骨架
 const mode = ref('package')
 const skillFile = ref(null)
 const skillMode = ref('pipeline')
 
-watch(() => props.modelValue, (val) => {
+/**
+ * 校验并映射执行步骤（spec D10：编辑/创建分支逐字重复块收敛）
+ * 过滤空工具名步骤；全部为空时提示并返回 null。
+ * argsTemplate 尝试 JSON.parse（失败回退 {}）；condition trim（空则保持 null）。
+ * @returns {Array<Object>|null} 映射后的 steps（校验失败返回 null）
+ */
+const buildValidatedSteps = () => {
+  const validSteps = form.value.steps.filter(s => s.toolName.trim())
+  if (validSteps.length === 0) {
+    ElMessage.warning('至少需要一个执行步骤，且工具名不能为空')
+    return null
+  }
+  return validSteps.map(s => {
+    const step = {
+      toolName: s.toolName.trim(),
+      argsTemplate: {},
+      condition: null,
+    }
+    if (s.argsTemplate.trim()) {
+      try {
+        step.argsTemplate = JSON.parse(s.argsTemplate.trim())
+      } catch {
+        step.argsTemplate = {}
+      }
+    }
+    if (s.condition.trim()) {
+      step.condition = s.condition.trim()
+    }
+    return step
+  })
+}
+
+/**
+ * 提取技能保存失败的详情文案（spec D10：编辑/创建分支重复的错误提取收敛）
+ * 优先展示后端 data.data.data 详情（JSON 序列化），回退 data.message / e.message。
+ * 注：此处为三层 detail 形态，与 extractErrorMessage 单层回退不同，故为文件局部实现。
+ */
+const skillErrorDetail = (e) => {
+  return e.response?.data?.data?.data
+    ? JSON.stringify(e.response.data.data.data)
+    : (e.response?.data?.message || e.message)
+}
+
+// 校验顺序与文案原样保留（validate 整体下沉到回调，骨架不拆校验步骤）
+function validate() {
+  if (isEdit.value) {
+    if (!form.value.name.trim()) return { ok: false, message: '请输入技能名称' }
+    return buildValidatedSteps() ? { ok: true } : { ok: false }
+  }
+
+  if (mode.value === 'package') {
+    return skillFile.value ? { ok: true } : { ok: false, message: '请选择 ZIP 文件' }
+  }
+
+  if (!form.value.name.trim()) return { ok: false, message: '请输入技能名称' }
+  if (form.value.name.trim().startsWith('skill_')) {
+    return { ok: false, message: '技能名称不能以 skill_ 开头' }
+  }
+  return buildValidatedSteps() ? { ok: true } : { ok: false }
+}
+
+// 三分支提交（编辑/技能包/工具管道），失败时错误文案原样弹出并返回 false 保持打开
+async function submit() {
+  if (isEdit.value) {
+    try {
+      await toolsAPI.updateSkill({
+        name: form.value.name.trim(),
+        description: form.value.description.trim(),
+        mode: skillMode.value,
+        steps: buildValidatedSteps(),
+      })
+    } catch (e) {
+      ElMessage.error('更新失败: ' + skillErrorDetail(e))
+      return false
+    }
+    return
+  }
+
+  if (mode.value === 'package') {
+    try {
+      const formData = new FormData()
+      formData.append('file', skillFile.value)
+      await toolsAPI.uploadSkillPackage(formData)
+    } catch (e) {
+      ElMessage.error('上传失败: ' + extractErrorMessage(e))
+      return false
+    }
+    return
+  }
+
+  try {
+    await toolsAPI.createSkill({
+      name: form.value.name.trim(),
+      description: form.value.description.trim(),
+      mode: skillMode.value,
+      steps: buildValidatedSteps(),
+    })
+  } catch (e) {
+    ElMessage.error('创建失败: ' + skillErrorDetail(e))
+    return false
+  }
+}
+
+const {
+  isEdit,
+  dialogTitle,
+  form,
+  handleClose,
+  handleSubmit,
+  submitting,
+} = useDialogForm({
+  visible,
+  isEditSource: () => props.editingSkill,
+  titles: { edit: '编辑技能', create: '添加技能' },
+  defaultsFactory: () => ({
+    name: '',
+    description: '',
+    steps: [{ toolName: '', argsTemplate: '', condition: '' }],
+  }),
+  validate,
+  submit,
+  successToast: () => {
+    if (isEdit.value) return `技能 "${form.value.name}" 更新成功`
+    if (mode.value === 'package') return '技能包上传成功'
+    return `技能 "${form.value.name}" 创建成功`
+  },
+  onReset: () => {
+    skillMode.value = 'pipeline'
+    skillFile.value = null
+    mode.value = 'package'
+  },
+  onSuccess: () => emit('success'),
+})
+
+// 编辑回填：须注册于 useDialogForm 之后，覆盖骨架打开时的重置结果
+watch(visible, (val) => {
   if (val && props.editingSkill) {
     const skill = props.editingSkill
     const rawName = (skill.name || '').replace(/^skill_/, '')
@@ -84,155 +202,6 @@ const removeStep = (index) => {
     return
   }
   form.value.steps.splice(index, 1)
-}
-
-const resetForm = () => {
-  form.value = {
-    name: '',
-    description: '',
-    steps: [{ toolName: '', argsTemplate: '', condition: '' }],
-  }
-  skillMode.value = 'pipeline'
-  skillFile.value = null
-  mode.value = 'package'
-}
-
-const handleSubmit = async () => {
-  if (isEdit.value) {
-    if (!form.value.name.trim()) {
-      ElMessage.warning('请输入技能名称')
-      return
-    }
-
-    const validSteps = form.value.steps.filter(s => s.toolName.trim())
-    if (validSteps.length === 0) {
-      ElMessage.warning('至少需要一个执行步骤，且工具名不能为空')
-      return
-    }
-
-    const steps = validSteps.map(s => {
-      const step = {
-        toolName: s.toolName.trim(),
-        argsTemplate: {},
-        condition: null,
-      }
-      if (s.argsTemplate.trim()) {
-        try {
-          step.argsTemplate = JSON.parse(s.argsTemplate.trim())
-        } catch {
-          step.argsTemplate = {}
-        }
-      }
-      if (s.condition.trim()) {
-        step.condition = s.condition.trim()
-      }
-      return step
-    })
-
-    loading.value = true
-    try {
-      await toolsAPI.updateSkill({
-        name: form.value.name.trim(),
-        description: form.value.description.trim(),
-        mode: skillMode.value,
-        steps,
-      })
-      ElMessage.success(`技能 "${form.value.name}" 更新成功`)
-      resetForm()
-      visible.value = false
-      emit('success')
-    } catch (e) {
-      const detail = e.response?.data?.data?.data
-        ? JSON.stringify(e.response.data.data.data)
-        : (e.response?.data?.message || e.message)
-      ElMessage.error('更新失败: ' + detail)
-    } finally {
-      loading.value = false
-    }
-    return
-  }
-
-  if (mode.value === 'package') {
-    if (!skillFile.value) {
-      ElMessage.warning('请选择 ZIP 文件')
-      return
-    }
-    loading.value = true
-    try {
-      const formData = new FormData()
-      formData.append('file', skillFile.value)
-      await toolsAPI.uploadSkillPackage(formData)
-      ElMessage.success('技能包上传成功')
-      resetForm()
-      visible.value = false
-      emit('success')
-    } catch (e) {
-      ElMessage.error('上传失败: ' + (e.response?.data?.message || e.message))
-    } finally {
-      loading.value = false
-    }
-    return
-  }
-
-  if (!form.value.name.trim()) {
-    ElMessage.warning('请输入技能名称')
-    return
-  }
-  if (form.value.name.trim().startsWith('skill_')) {
-    ElMessage.warning('技能名称不能以 skill_ 开头')
-    return
-  }
-
-  const validSteps = form.value.steps.filter(s => s.toolName.trim())
-  if (validSteps.length === 0) {
-    ElMessage.warning('至少需要一个执行步骤，且工具名不能为空')
-    return
-  }
-
-  const steps = validSteps.map(s => {
-    const step = {
-      toolName: s.toolName.trim(),
-      argsTemplate: {},
-      condition: null,
-    }
-    if (s.argsTemplate.trim()) {
-      try {
-        step.argsTemplate = JSON.parse(s.argsTemplate.trim())
-      } catch {
-        step.argsTemplate = {}
-      }
-    }
-    if (s.condition.trim()) {
-      step.condition = s.condition.trim()
-    }
-    return step
-  })
-
-  loading.value = true
-  try {
-    await toolsAPI.createSkill({
-      name: form.value.name.trim(),
-      description: form.value.description.trim(),
-      mode: skillMode.value,
-      steps,
-    })
-    ElMessage.success(`技能 "${form.value.name}" 创建成功`)
-    resetForm()
-    visible.value = false
-    emit('success')
-  } catch (e) {
-    const detail = e.response?.data?.data?.data
-      ? JSON.stringify(e.response.data.data.data)
-      : (e.response?.data?.message || e.message)
-    ElMessage.error('创建失败: ' + detail)
-  } finally {
-    loading.value = false
-  }
-}
-
-const handleClose = () => {
-  resetForm()
-  visible.value = false
 }
 </script>
 
@@ -388,7 +357,7 @@ const handleClose = () => {
 
     <template #footer>
       <el-button @click="handleClose">取消</el-button>
-      <el-button type="primary" :loading="loading" @click="handleSubmit">
+      <el-button type="primary" :loading="submitting" @click="handleSubmit">
         {{ isEdit ? '保存' : (mode === 'package' ? '上传' : '创建') }}
       </el-button>
     </template>

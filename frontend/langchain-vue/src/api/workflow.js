@@ -12,7 +12,15 @@ function buildSSEHeaders() {
 }
 
 /**
- * 学习工作流 SSE 直连封装（绕过 fetchSSE）
+ * 学习工作流 raw SSE 统一入口（绕过 fetchSSE）
+ *
+ * 职责边界：只负责"发起请求 + 归一请求头 + 返回响应对象"，不读流——
+ * 流读取归调用方（useSSEStream），与 useSSEStream 的边界不变。
+ * 归一内容：
+ * - 请求头：buildSSEHeaders（Accept + Authorization 注入）；有 body 时追加
+ *   Content-Type: application/json 并序列化（camelCase → snake_case）
+ * - credentials：维持 fetch 默认 same-origin（与原三处一致，无跨域凭据需求）
+ * - signal：一律不透传，错误不做捕获归一，fetch 拒绝原样向上传播（与原三处一致）
  *
  * 背景：Vite dev server 的 http-proxy 对携带 AbortSignal 的 text/event-stream 响应
  * 会整体缓冲，流结束后才一次性转发，导致 workflow_step 中间事件无法实时到达
@@ -20,13 +28,22 @@ function buildSSEHeaders() {
  * 无 signal 时 proxy 直接透传，事件实时到达；中断控制交由 readSSEStream 的 signal
  * （abort 时 break + reader.releaseLock，后端生成器随之结束）。
  */
+function rawSSEFetch(url, { method = 'GET', body } = {}) {
+  const headers = buildSSEHeaders()
+  const options = { method, headers }
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json'
+    options.body = JSON.stringify(toSnakeCase(body))
+  }
+  return fetch(url, options)
+}
+
 export const workflowAPI = {
   /** SSE 流式启动（无 signal 直连，避免 Vite proxy 缓冲，供 WorkflowView 使用） */
   startStreamRaw(data) {
-    return fetch(`${settings.apiBaseUrl}/learning/start/stream/`, {
+    return rawSSEFetch(`${settings.apiBaseUrl}/learning/start/stream/`, {
       method: 'POST',
-      headers: { ...buildSSEHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify(toSnakeCase(data)),
+      body: data,
     })
   },
   getState(threadId) { return apiClient.get(`/learning/status/${threadId}/`) },
@@ -38,9 +55,8 @@ export const workflowAPI = {
   deleteTask(threadId) { return apiClient.delete(`/learning/tasks/${threadId}/`) },
   /** 继续练习（无 signal 直连，避免 Vite proxy 缓冲，供 WorkflowView 使用） */
   restartStreamRaw(threadId) {
-    return fetch(`${settings.apiBaseUrl}/learning/${threadId}/restart/stream/`, {
+    return rawSSEFetch(`${settings.apiBaseUrl}/learning/${threadId}/restart/stream/`, {
       method: 'POST',
-      headers: buildSSEHeaders(),
     })
   },
   /** 跨轮次题目列表（支持 ?attempt_index= 过滤） */
@@ -57,9 +73,8 @@ export const workflowAPI = {
     const tokenQuery = userStore.token
       ? `?token=${encodeURIComponent(userStore.token)}`
       : ''
-    return fetch(`${settings.apiBaseUrl}/learning/stream/${threadId}/${tokenQuery}`, {
+    return rawSSEFetch(`${settings.apiBaseUrl}/learning/stream/${threadId}/${tokenQuery}`, {
       method: 'GET',
-      headers: buildSSEHeaders(),
     })
   },
 }

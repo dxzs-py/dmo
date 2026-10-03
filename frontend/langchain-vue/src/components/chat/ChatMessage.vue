@@ -18,6 +18,7 @@ import { formatFileSize, getFileIcon } from '../../utils/format'
 import { isApprovalDisabled } from '../../utils/approvalGate'
 import { buildSubagentsFromMessage } from '../../utils/subagentAggregation'
 import { filterMainToolCalls } from '../../utils/inlineContent'
+import { copyToClipboard } from '../../utils/dom'
 import { useSubagents } from '../../composables/useSubagents'
 import { useSubagentExpansion } from '../../composables/useSubagentExpansion'
 
@@ -205,12 +206,12 @@ const researchContext = computed(() => {
 })
 
 async function handleCopy() {
-  try {
-    await navigator.clipboard.writeText(props.message.content || '')
+  const ok = await copyToClipboard(props.message.content || '')
+  if (ok) {
     copied.value = true
     ElMessage.success('已复制到剪贴板')
     setTimeout(() => { copied.value = false }, 2000)
-  } catch {
+  } else {
     ElMessage.error('复制失败')
   }
 }

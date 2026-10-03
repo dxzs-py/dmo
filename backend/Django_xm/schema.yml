@@ -154,6 +154,81 @@ paths:
                       langgraph_resume_id:
                         type: string
           description: ''
+  /api/v1/approvals/metrics/snapshot/:
+    get:
+      operationId: approvals_metrics_snapshot_retrieve
+      description: |-
+        审批监控指标快照（管理员专用，Spec D3）。
+
+        暴露 approval_metrics.snapshot() 全量计数（写时累加 + 读时聚合）：
+        - pending_count / total（created/approved/rejected/timeout/auto_approved）
+        - risk_distribution（safe/controlled/high）
+        - sandbox（success/failure/success_rate）
+        - high_risk_windows（F3 熔断窗口聚合） / latency / thresholds
+
+        Redis 不可用时指标采集器静默降级，返回全 0 快照而非抛异常。
+      tags:
+      - approvals
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      pending_count:
+                        type: integer
+                      total:
+                        type: object
+                        properties:
+                          created:
+                            type: integer
+                          approved:
+                            type: integer
+                          rejected:
+                            type: integer
+                          timeout:
+                            type: integer
+                          auto_approved:
+                            type: integer
+                      risk_distribution:
+                        type: object
+                        properties:
+                          safe:
+                            type: integer
+                          controlled:
+                            type: integer
+                          high:
+                            type: integer
+                      sandbox:
+                        type: object
+                        properties:
+                          success:
+                            type: integer
+                          failure:
+                            type: integer
+                          success_rate:
+                            type: number
+                            nullable: true
+                      high_risk_windows:
+                        type: object
+                      latency:
+                        type: object
+                      thresholds:
+                        type: object
+          description: ''
   /api/v1/attachments/admin/:
     get:
       operationId: attachments_admin_list
@@ -258,43 +333,9 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/chat/:
-    post:
-      operationId: chat_create
-      tags:
-      - chat
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ChatRequest'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/ChatRequest'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/ChatRequest'
-        required: true
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ChatResponse'
-          description: ''
   /api/v1/chat/messages/{message_id}/:
     patch:
       operationId: chat_messages_partial_update
-      description: |-
-        消息资源视图（dj-16 路由规范化）。
-
-        承载 /chat/messages/<message_id>/ 资源路径的全部方法：
-        - PATCH：消息更新（继承 ChatMessageUpdateView.patch）
-        - DELETE：消息软删除（本类实现）
       parameters:
       - in: path
         name: message_id
@@ -400,39 +441,6 @@ paths:
   /api/v1/chat/sessions/{session_id}/messages/:
     post:
       operationId: chat_sessions_messages_create
-      parameters:
-      - in: path
-        name: session_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - chat
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ChatMessage'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/ChatMessage'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/ChatMessage'
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ChatMessage'
-          description: ''
-  /api/v1/chat/sessions/{session_id}/messages/batch/:
-    post:
-      operationId: chat_sessions_messages_batch_create
       parameters:
       - in: path
         name: session_id
@@ -1328,46 +1336,6 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/research/tasks/{task_id}/retry-subagent/:
-    post:
-      operationId: research_tasks_retry_subagent_create
-      description: |-
-        单独重启失败子代理（Task 3）。
-
-        校验任务归属、目标子代理存在且处于失败状态后，发布 Redis 信令
-        （SIGNAL_RETRY_SUBAGENT），由执行服务向会话注入重试指令：
-        - 会话运行中：直接注入（adapter astream 循环按 chunk 消费并注入 graph state）
-        - 会话已结束/服务重启恢复态：从 checkpoint 恢复会话后注入
-
-        POST /api/v1/research/tasks/<task_id>/retry-subagent/
-        Body: {"agent_path": ["main", "web-researcher"], "tool_call_id": "call_xxx"}
-      parameters:
-      - in: path
-        name: task_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - research
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ResearchRetrySubagent'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/ResearchRetrySubagent'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/ResearchRetrySubagent'
-        required: true
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
   /api/v1/tools/custom/:
     get:
       operationId: tools_custom_retrieve
@@ -1446,25 +1414,6 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/custom/{name}/status/:
-    patch:
-      operationId: tools_custom_status_partial_update
-      description: 自定义工具状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）
-      parameters:
-      - in: path
-        name: name
-        schema:
-          type: string
-        required: true
-      tags:
-      - tools
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
   /api/v1/tools/list/:
     get:
       operationId: tools_list_retrieve
@@ -1524,25 +1473,6 @@ paths:
     delete:
       operationId: tools_mcp_servers_destroy
       description: MCP Server 资源视图：PUT 更新 / DELETE 删除（name 经 URL path 传递）
-      parameters:
-      - in: path
-        name: name
-        schema:
-          type: string
-        required: true
-      tags:
-      - tools
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/tools/mcp/servers/{name}/status/:
-    patch:
-      operationId: tools_mcp_servers_status_partial_update
-      description: MCP Server 状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）
       parameters:
       - in: path
         name: name
@@ -1667,25 +1597,6 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/skills/{name}/status/:
-    patch:
-      operationId: tools_skills_status_partial_update
-      description: Skill 状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）
-      parameters:
-      - in: path
-        name: name
-        schema:
-          type: string
-        required: true
-      tags:
-      - tools
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
   /api/v1/tools/skills/packages/:
     get:
       operationId: tools_skills_packages_retrieve
@@ -1733,25 +1644,6 @@ paths:
     delete:
       operationId: tools_skills_packages_destroy
       description: Skill 包资源视图：GET 查看 SKILL.md 内容 / DELETE 卸载（name 经 URL path 传递）
-      parameters:
-      - in: path
-        name: name
-        schema:
-          type: string
-        required: true
-      tags:
-      - tools
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/tools/skills/packages/{name}/status/:
-    patch:
-      operationId: tools_skills_packages_status_partial_update
-      description: Skill 包状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）
       parameters:
       - in: path
         name: name
@@ -2047,7 +1939,7 @@ components:
           readOnly: true
         role:
           allOf:
-          - $ref: '#/components/schemas/ChatMessageRoleEnum'
+          - $ref: '#/components/schemas/RoleEnum'
           title: 角色
         content:
           type: string
@@ -2138,192 +2030,6 @@ components:
       - token_count
       - token_detail
       - tool_calls
-    ChatMessageRoleEnum:
-      enum:
-      - user
-      - assistant
-      - system
-      type: string
-      description: |-
-        * `user` - 用户
-        * `assistant` - 助手
-        * `system` - 系统
-    ChatRequest:
-      type: object
-      description: |-
-        聊天请求输入验证
-
-        用途：验证前端发送的聊天请求数据
-        使用 Serializer 原因：输入数据不直接对应单一模型字段，
-        需要灵活组合 message/chat_history/mode 等字段
-      properties:
-        message:
-          type: string
-          description: 用户消息内容，1-10000字符
-          maxLength: 10000
-          minLength: 1
-        client_message_id:
-          type: string
-          description: 客户端消息幂等ID（可选），同一用户短时间内相同 ID 的重复请求将被去重
-          maxLength: 64
-        chat_history:
-          type: array
-          items:
-            $ref: '#/components/schemas/Message'
-          nullable: true
-        mode:
-          type: string
-          default: agent
-          description: 对话模式标识
-          maxLength: 50
-        use_tools:
-          type: boolean
-          default: true
-          description: 是否使用工具
-        use_web_search:
-          type: boolean
-          default: false
-          description: 是否启用联网搜索
-        use_knowledge_base:
-          type: boolean
-          default: false
-          description: 是否启用知识库检索
-        use_deep_thinking:
-          type: boolean
-          default: false
-          description: 是否启用深度思考
-        enable_sandbox:
-          type: boolean
-          default: false
-          description: 是否启用沙箱执行（深度研究模式的 HIGH 级命令在容器内隔离）
-        use_mcp:
-          type: boolean
-          default: false
-          description: 是否启用 MCP 工具
-        selected_mcp_servers:
-          type: array
-          items:
-            type: string
-            maxLength: 50
-          nullable: true
-          description: 选中的 MCP Server 名称列表（每个名称最长 50 字符），为空则使用所有已配置的 Server
-        selected_tools:
-          type: array
-          items:
-            type: string
-            maxLength: 50
-          nullable: true
-          description: 选中的工具名称列表（每个名称最长 50 字符），为空则根据模式自动选择
-        streaming:
-          type: boolean
-          default: false
-          description: 是否流式输出
-        session_id:
-          type: string
-          nullable: true
-          maxLength: 100
-        selected_knowledge_base:
-          type: string
-          nullable: true
-          description: 选中的知识库ID
-          maxLength: 200
-        selected_knowledge_bases:
-          type: array
-          items:
-            type: string
-            maxLength: 200
-          nullable: true
-          description: 选中的知识库ID列表（多选）
-        attachment_ids:
-          type: array
-          items:
-            type: integer
-          nullable: true
-          description: 附件ID列表，用于基于文件内容回答问题
-        provider_id:
-          type: string
-          nullable: true
-          description: 模型提供商 ID（openai/deepseek/groq/baidu_qianfan/anthropic）
-          maxLength: 50
-        model_name:
-          type: string
-          nullable: true
-          description: 模型名称，如 gpt-4o-mini、deepseek-v4-flash
-          maxLength: 100
-        special_params:
-          type: object
-          additionalProperties: {}
-          nullable: true
-          description: 提供商专属参数，如 DeepSeek 的 thinking/reasoning_effort
-        temperature:
-          type: number
-          format: double
-          maximum: 2.0
-          minimum: 0.0
-          nullable: true
-          description: 温度参数，0-2之间
-        max_tokens:
-          type: integer
-          maximum: 32768
-          minimum: 1
-          nullable: true
-          description: 最大生成 token 数
-        research_task_id:
-          type: string
-          nullable: true
-          description: 关联的深度研究任务ID，用于注入研究上下文
-          maxLength: 100
-        continue_task_id:
-          type: string
-          nullable: true
-          description: 继续研究的任务ID，用于加载先前研究成果
-          maxLength: 100
-        regenerate:
-          type: boolean
-          default: false
-          description: 是否重新生成：复用已有消息对（不新建 user/assistant），对 assistant 消息追加新版本
-        user_message_id:
-          type: string
-          nullable: true
-          description: 重新生成目标用户消息 ID（regenerate=True 时必填）
-          maxLength: 100
-        assistant_message_id:
-          type: string
-          nullable: true
-          description: 重新生成目标助手消息 ID（regenerate=True 时必填）
-          maxLength: 100
-      required:
-      - message
-    ChatResponse:
-      type: object
-      description: |-
-        聊天响应输出格式
-
-        用途：统一非流式聊天的响应结构
-        使用 Serializer 原因：响应数据是聚合结果（含 tools_used/success 等），
-        不直接对应数据库模型
-      properties:
-        message:
-          type: string
-        mode:
-          type: string
-        tools_used:
-          type: array
-          items:
-            type: string
-        success:
-          type: boolean
-        error:
-          type: string
-          nullable: true
-        session_id:
-          type: string
-          nullable: true
-      required:
-      - message
-      - mode
-      - success
-      - tools_used
     ChatSessionCreate:
       type: object
       description: |-
@@ -2494,42 +2200,6 @@ components:
           description: 返回结果数量
       required:
       - query
-    Message:
-      type: object
-      description: 聊天历史消息项 - 用于请求输入中的 chat_history 字段验证
-      properties:
-        role:
-          allOf:
-          - $ref: '#/components/schemas/MessageRoleEnum'
-          description: |-
-            消息角色：user/assistant/system
-
-            * `user` - user
-            * `assistant` - assistant
-            * `system` - system
-        content:
-          type: string
-          description: 消息内容，最大50000字符
-          maxLength: 50000
-        attachment_ids:
-          type: array
-          items:
-            type: integer
-          nullable: true
-          description: 该消息关联的附件ID列表
-      required:
-      - content
-      - role
-    MessageRoleEnum:
-      enum:
-      - user
-      - assistant
-      - system
-      type: string
-      description: |-
-        * `user` - user
-        * `assistant` - assistant
-        * `system` - system
     ModeEnum:
       enum:
       - agent
@@ -2585,7 +2255,7 @@ components:
           readOnly: true
         role:
           allOf:
-          - $ref: '#/components/schemas/ChatMessageRoleEnum'
+          - $ref: '#/components/schemas/RoleEnum'
           title: 角色
         content:
           type: string
@@ -2782,30 +2452,6 @@ components:
           type: object
           additionalProperties: {}
           nullable: true
-    ResearchRetrySubagent:
-      type: object
-      description: |-
-        单独重启失败子代理请求序列化器（Task 3）。
-
-        字段：
-            agent_path: 目标子代理完整调用链路（如 ["main", "web-researcher"]）
-            tool_call_id: 失败子代理工具调用 ID（LLM tool_call.id）
-      properties:
-        agent_path:
-          type: array
-          items:
-            type: string
-            maxLength: 100
-          description: 目标子代理完整调用链路（如 ["main", "web-researcher"]）
-          maxItems: 10
-          minItems: 1
-        tool_call_id:
-          type: string
-          description: 失败子代理工具调用 ID
-          maxLength: 200
-      required:
-      - agent_path
-      - tool_call_id
     ResearchStart:
       type: object
       description: 深度研究启动请求序列化器。
@@ -2889,6 +2535,16 @@ components:
           description: 模型专属参数（如 thinking、reasoning_effort）
       required:
       - query
+    RoleEnum:
+      enum:
+      - user
+      - assistant
+      - system
+      type: string
+      description: |-
+        * `user` - 用户
+        * `assistant` - 助手
+        * `system` - 系统
     SearchRequest:
       type: object
       description: 检索请求序列化器。

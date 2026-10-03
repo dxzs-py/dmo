@@ -50,30 +50,6 @@ class RetrievalAugmenter:
             return query
 
     @staticmethod
-    def process_tool_result(
-        result_str: str,
-        llm: BaseChatModel | None = None,
-        max_length: int = 2000,
-    ) -> str:
-        if len(result_str) <= max_length:
-            return result_str
-
-        if RetrievalAugmenter.is_json(result_str):
-            extracted = RetrievalAugmenter._extract_json_summary(result_str)
-            if len(extracted) <= max_length:
-                return extracted
-
-        if llm is not None:
-            try:
-                summary = RetrievalAugmenter._summarize_with_llm(result_str, llm, max_length)
-                if summary:
-                    return summary
-            except Exception:
-                logger.exception("LLM 总结工具结果失败")
-
-        return result_str[:max_length] + "\n[内容已截断]"
-
-    @staticmethod
     def is_json(text: str) -> bool:
         stripped = text.strip()
         if not stripped:
@@ -85,19 +61,6 @@ class RetrievalAugmenter:
             return True
         except (json.JSONDecodeError, ValueError):
             return False
-
-    @staticmethod
-    def extract_json_keys(text: str) -> list[str]:
-        try:
-            data = json.loads(text.strip())
-        except (json.JSONDecodeError, ValueError):
-            return []
-
-        if isinstance(data, dict):
-            return list(data.keys())
-        if isinstance(data, list) and data and isinstance(data[0], dict):
-            return list(data[0].keys())
-        return []
 
     @staticmethod
     def _extract_json_summary(text: str) -> str:
@@ -139,15 +102,3 @@ class RetrievalAugmenter:
             return result
 
         return text
-
-    @staticmethod
-    def _summarize_with_llm(text: str, llm: BaseChatModel, max_length: int) -> str | None:
-        truncated_input = text[:8000] if len(text) > 8000 else text
-        prompt = (
-            f"请将以下工具返回结果总结为简洁的自然语言，保留关键信息和数据，不超过{max_length}字：\n\n{truncated_input}"
-        )
-        response = llm.invoke([{"role": "user", "content": prompt}])
-        summary = getattr(response, "content", "")
-        if summary and len(summary) > max_length:
-            summary = summary[:max_length]
-        return summary

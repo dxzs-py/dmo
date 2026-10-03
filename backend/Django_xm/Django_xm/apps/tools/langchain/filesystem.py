@@ -73,14 +73,6 @@ def is_sensitive_path(path: Path) -> bool:
     return any(part.lower() in SENSITIVE_PATH_PARTS for part in candidate.parts)
 
 
-def is_path_in_data_dir(path: Path) -> bool:
-    """判断 resolve 后的路径是否位于 DATA_DIR 边界内（防 ../ 与符号链接逃逸）。"""
-    try:
-        return Path(path).resolve().is_relative_to(get_data_dir())
-    except OSError:
-        return False
-
-
 def check_path_allowed(path: Path, anchor: Path | None = None) -> str | None:
     """路径准入统一校验：返回拒绝原因文本，None 表示放行。
 

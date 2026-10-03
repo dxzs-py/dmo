@@ -37,6 +37,7 @@ import { APPROVAL_STATE_MAP } from '@/stores/sync/constants'
 import { logger } from '@/utils/logger'
 import { ElMessage } from 'element-plus'
 import { useApprovalStore } from '../approval/index.js'
+import { CLEANUP_INTERVAL_MS } from '../approval/constants'
 import { resumeApprovalStream } from '@/api/approval'
 import { useSessionStore } from '@/stores/session'
 import { useResearchStore } from '@/stores/research'
@@ -393,7 +394,9 @@ describe('过期清理', () => {
       createdAt: now - 40 * 60 * 1000,
     })
 
-    store.cleanupExpired()
+    // cleanupExpired 已收敛为切片内部方法（不经 store 面导出），
+    // 经装配时 startCleanup 注册的自动清理定时器路径触发
+    vi.advanceTimersByTime(CLEANUP_INTERVAL_MS)
 
     expect(store.pendingApprovals.has('tc-old')).toBe(false)
     expect(store.pendingApprovals.has('tc-orphan')).toBe(false)

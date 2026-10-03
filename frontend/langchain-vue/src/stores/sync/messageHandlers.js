@@ -1,9 +1,8 @@
 import { logger } from '@/utils/logger'
 import { transformBackendMessageToFrontend } from '@/utils/sessionTransformers'
-import { mergeMessageFromBackend, createMessageVersion } from '@/utils/messageOperations'
+import { findMessageById, mergeMessageFromBackend, createMessageVersion, createEmptyAssistantMessage } from '@/utils/messageOperations'
 import { StreamState } from '@/types'
 import {
-  findMessageById,
   getSession,
   getCurrentVersion,
 } from './helpers'
@@ -274,37 +273,27 @@ export const createMessageHandlers = (ctx) => {
       }
     }
 
-    // 2. 追加新空版本（与后端 archive_current_version 的空版本结构对齐）
-    const newVersion = {
+    // 2. 追加新空版本（与后端 archive_current_version 的空版本结构对齐；
+    // 此处骨架不含 plan 字段，由 createEmptyAssistantMessage 基础骨架保持原形状）
+    const newVersion = createEmptyAssistantMessage({
       id: message.id,
-      content: '',
-      sources: [],
-      toolCalls: [],
-      reasoning: null,
-      suggestions: null,
-      context: null,
       attachmentIds: message.attachmentIds || [],
       attachments: message.attachments || [],
       streamState: StreamState.STREAMING,
       isStreaming: true,
-    }
+    })
     message.versions.push(newVersion)
 
     // 3. 设置 currentVersion 指向新空版本
     message.currentVersion = message.versions.length - 1
 
-    // 4. 清空顶层字段（流式输出会重新填充）
-    message.content = ''
-    message.toolCalls = []
-    message.sources = []
-    message.reasoning = null
-    message.suggestions = null
-    message.context = null
-    message.images = []
-
-    // 5. 标记流式状态供 UI 显示
-    message.streamState = StreamState.STREAMING
-    message.isStreaming = true
+    // 4. 清空顶层字段（流式输出会重新填充；不触碰 plan/images 之外的字段形状）
+    Object.assign(message, createEmptyAssistantMessage({
+      images: [],
+      // 5. 标记流式状态供 UI 显示
+      streamState: StreamState.STREAMING,
+      isStreaming: true,
+    }))
 
     session.updatedAt = Date.now()
     logger.info(`[Sync] 消息重新生成版本归档: session=${sessionId}, message=${messageId}, versions=${message.versions.length}`)

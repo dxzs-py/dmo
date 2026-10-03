@@ -21,7 +21,7 @@ from rest_framework.views import APIView
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.core.permissions import IsAuthenticatedOrQueryParam
-from Django_xm.apps.core.services.file_manager import get_file_manager
+from Django_xm.apps.core.services.file_manager import get_file_manager, is_safe_relative_filename
 from Django_xm.apps.core.throttling import LearningRateThrottle
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventSource, EventType
@@ -885,6 +885,10 @@ class WorkflowFileDownloadView(APIView):
         if not session:
             raise NotFound("工作流会话不存在或无权访问")
 
+        # F-02 兜底：视图层先净化 filename（URL 中 %2F/%5C 在路由前已解码为 / 与 \）
+        if not is_safe_relative_filename(filename):
+            raise ValidationError("非法的文件路径")
+
         file_info = file_manager.get_file_info(thread_id, filename, "workflow")
         if not file_info:
             raise NotFound("文件不存在")
@@ -919,6 +923,10 @@ class WorkflowFileContentView(APIView):
         if not session:
             raise NotFound("工作流会话不存在或无权访问")
 
+        # F-02 兜底：视图层先净化 filename
+        if not is_safe_relative_filename(filename):
+            raise ValidationError("非法的文件路径")
+
         file_info = file_manager.get_file_info(thread_id, filename, "workflow")
         if not file_info:
             raise NotFound("文件不存在")
@@ -948,6 +956,13 @@ def workflow_stream(request, thread_id):
 
     if not user:
         return sse_error_response("未登录或登录已过期", 401, code="40101")
+
+    # learning 限流：原生 Django 函数视图无法用 throttle_classes，手动挂 LearningRateThrottle
+    # （与 start/submit/restart 共享 learning scope，按用户计数，对齐 research 单 scope 模式）。
+    # SSE token 认证路径不回写 request.user，先回填供 get_cache_key 取 user.pk。
+    request.user = user
+    if not LearningRateThrottle().allow_request(request, None):
+        return sse_error_response("请求过于频繁，请稍后再试", 429, code="42901")
 
     try:
         session = WorkflowSession.objects.filter(thread_id=thread_id, created_by=user, is_deleted=False).first()

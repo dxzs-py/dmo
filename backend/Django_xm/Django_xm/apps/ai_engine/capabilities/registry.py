@@ -1,7 +1,6 @@
 import logging
 import threading
 from collections.abc import Sequence
-from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
@@ -107,35 +106,6 @@ class CapabilityRegistry:
                 seen.add(tool.name)
                 deduped.append(tool)
         return deduped
-
-    def build_config_for_agent(
-        self,
-        agent_type: str,
-        capabilities: Sequence[str],
-        **kwargs,
-    ) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for cap_name in capabilities:
-            cap = self.get(cap_name)
-            if cap is None:
-                logger.warning("Capability '%s' not found, skipping", cap_name)
-                continue
-            if not cap.is_compatible(agent_type):
-                logger.warning(
-                    "Capability '%s' not compatible with agent_type '%s', skipping",
-                    cap_name,
-                    agent_type,
-                )
-                continue
-            try:
-                config = cap.build_config(**kwargs)
-                result[cap_name] = config
-            except Exception:
-                logger.exception(
-                    "Failed to build config for capability '%s'",
-                    cap_name,
-                )
-        return result
 
     def get_default_capabilities(self, agent_type: str) -> list[str]:
         try:

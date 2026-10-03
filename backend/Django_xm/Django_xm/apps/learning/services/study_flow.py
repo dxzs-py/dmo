@@ -212,16 +212,6 @@ def _get_cached_study_flow(thread_id: str) -> StudyFlow:
     return study_flow
 
 
-def _invalidate_study_flow_cache(thread_id: str) -> None:
-    """清除 StudyFlow 的进程内和 Redis 缓存"""
-    _study_flow_cache.pop(thread_id, None)
-
-    from django.core.cache import cache
-
-    cache.delete(f"study_flow:active:{thread_id}")
-    logger.debug(f"StudyFlow 缓存已清除: {thread_id}")
-
-
 def _safe_publish(
     event_type: EventType,
     payload: dict,

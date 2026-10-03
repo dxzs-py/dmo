@@ -40,8 +40,7 @@ import { createStreamStateHandlers } from './sync/streamStateHandlers'
  * 工具调用状态唯一真相源：
  *   工具调用状态统一由 WebSocket 推送（tool_call_* 事件，所有浏览器一致），
  *   汇聚到 sessionStore.toolCallsMap（Map 为唯一真相源），
- *   通过 _findMatchingToolCall 的 id 精确匹配 + PROTECTED_STATUSES 状态保护
- *   实现幂等合并。
+ *   通过 _findMatchingToolCall 的 id 精确匹配实现幂等合并。
  *
  * 请求浏览器唯一剩余差异（streamingSessions）：
  *   请求浏览器在 stream_completed 后由 sendMessage 主流程执行 finalizeStream
@@ -154,7 +153,7 @@ export const useSyncStore = defineStore('sync', () => {
 
   /**
    * 当前正在通过 SSE 流式输出的会话集合。
-   * 仅用于 stream_event / stream_started / stream_completed / stream_finalized
+   * 仅用于 stream_event / stream_completed / stream_finalized
    * 的请求浏览器识别，以及 message_updated 跳过逻辑。
    * 工具调用事件（7 个 tool_call_*）不再依赖该集合跳过（SSE 已不推送工具事件）。
    * 使用 reactive(new Set()) 确保 add/delete 操作触发 Vue 响应式追踪。

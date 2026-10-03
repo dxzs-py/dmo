@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { trackFeatureUse } from '@/utils/analytics'
 
 const routes = [
   {
@@ -102,6 +103,11 @@ router.beforeEach((to, from, next) => {
 router.afterEach((to) => {
   const title = to.meta.title
   document.title = title ? `${title} - ${DEFAULT_TITLE}` : DEFAULT_TITLE
+  // 埋点：仅登录后页面（requiresAuth）上报 feature-use；fire-and-forget 静默失败，
+  // 未登录路由（login/register/not-found）跳过，避免无 token 上报 401 刷屏
+  if (to.meta.requiresAuth) {
+    trackFeatureUse(to.name || to.path, { path: to.path })
+  }
 })
 
 export default router

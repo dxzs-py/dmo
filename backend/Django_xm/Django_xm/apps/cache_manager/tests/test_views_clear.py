@@ -96,6 +96,7 @@ class CacheClearPermissionMatrixTests(TestCase):
 
         修复前用 get_openai_config()["model"]（纯模型名，无 provider 前缀），
         与实际键 model_response:{get_model_string()}:... 错配，清理永不命中。
+        D9 起单轨：模型响应缓存由 ModelResponseCacheService 唯一承担，单次调用。
         """
         from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
 

@@ -152,15 +152,6 @@ class TokenEstimator:
                 return None
         return cls._encoding_cache[encoding_name]
 
-    @staticmethod
-    def _rough_estimate(text: str) -> int:
-        """原始粗略估算（保留向后兼容）"""
-        if not text:
-            return 0
-        chinese_chars = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
-        other_chars = len(text) - chinese_chars
-        return int(chinese_chars * 1.5 + other_chars * 0.25)
-
     @classmethod
     def _estimate_with_transformers(cls, text: str, model_name: str = "") -> int:
         """尝试使用 HuggingFace transformers tokenizer 进行精确估算"""
@@ -253,21 +244,6 @@ class TokenEstimator:
     @staticmethod
     def estimate(text: str) -> int:
         return TokenEstimator.estimate_tokens(text)
-
-    @classmethod
-    def estimate_text(cls, text: str, model_name: str = "") -> int:
-        """估算文本 token 数：优先 tiktoken → transformers → 改进启发式"""
-        return cls.estimate_tokens(text, model_name)
-
-    @classmethod
-    def estimate_messages(cls, messages: list[BaseMessage], model_name: str = "") -> int:
-        total = 0
-        for msg in messages:
-            total += cls.estimate_tokens(content_to_str(msg.content), model_name)
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                for tc in msg.tool_calls:
-                    total += cls.estimate_tokens(str(tc.get("args", {})), model_name)
-        return total
 
     @classmethod
     def estimate_dict_messages(cls, messages: list[dict[str, Any]], model_name: str = "") -> int:
@@ -419,14 +395,20 @@ class EntityExtractor:
         return entities
 
 
-def messages_to_dicts(messages: list[BaseMessage]) -> list[dict[str, Any]]:
-    """BaseMessage → dict 适配层（统一引擎的双语义输入支持）。
+def messages_to_dicts(messages: list[Any]) -> list[dict[str, Any]]:
+    """BaseMessage → dict 适配层单源（统一引擎的双语义输入支持，phase6a G3 归一）。
 
     保留 id / tool_calls / memory_tier / tool_call_id 字段，
     保证压缩后经 dicts_to_messages 往返时消息身份不丢失。
+    非 BaseMessage 条目（调用方已自行构造的 dict）原样透传
+    （原 ContextManager._messages_to_dicts 的宽输入语义，G3 归一并入单源）。
+    middleware / manager 两侧的 `_messages_to_dicts` 均委托本实现。
     """
     result = []
     for msg in messages:
+        if not isinstance(msg, BaseMessage):
+            result.append(msg)
+            continue
         role_map = {
             HumanMessage: "user",
             AIMessage: "assistant",
@@ -662,22 +644,6 @@ class ContextCompressionEngine:
 
         return compressed_messages, result
 
-    def compress_messages(
-        self,
-        messages: list[dict[str, Any]] | list[BaseMessage],
-    ) -> tuple[list[dict[str, Any]] | list[BaseMessage], CompressionResult]:
-        """统一压缩入口（ARCH-07 合并）：自动识别 dict / BaseMessage 两种输入语义。
-
-        - BaseMessage 输入：经适配层转 dict 压缩后转回 BaseMessage 返回；
-        - dict 输入：直接走 compress，原语义返回。
-        两条调用路径（chat 入口 ContextManager / agent 入口 ContextManagerMiddleware）
-        共用同一引擎实现与同一套配置。
-        """
-        if messages and isinstance(messages[0], BaseMessage):
-            compressed_dicts, result = self.compress(messages_to_dicts(messages))
-            return dicts_to_messages(compressed_dicts), result
-        return self.compress(messages)
-
     def compress_aggressive(
         self,
         messages: list[dict[str, Any]],
@@ -850,7 +816,8 @@ class ContextCompressionEngine:
             logger.exception("LLM 生成摘要失败")
             return self._fallback_summary(messages)
 
-    def _extract_decisions(self, messages: list[dict[str, Any]]) -> list[str]:
+    @staticmethod
+    def _extract_decisions(messages: list[dict[str, Any]]) -> list[str]:
         import re
 
         decisions = []
@@ -870,6 +837,9 @@ class ContextCompressionEngine:
                 decisions.extend(matches)
 
         return decisions[:10]
+
+    # 公开决策抽取入口（spec D2 跨会话记忆写入等旁路复用唯一实现，消除私有访问）
+    extract_decisions = _extract_decisions
 
     @staticmethod
     def _format_messages(messages: list[dict[str, Any]]) -> str:
@@ -948,14 +918,6 @@ class ContextCompressionEngine:
         except Exception as e:
             logger.warning(f"LLM 质量评估失败，返回默认评分: {e}")
             return SummaryQuality(completeness=0.7, accuracy=0.7, conciseness=0.7, overall=0.7, passed=True)
-
-    def get_rolling_summary(self) -> str | None:
-        return self._rolling_summary
-
-    def reset_rolling_summary(self) -> None:
-        self._rolling_summary = None
-        self._last_compressed_index = 0
-        self._persist_state()
 
     def _persist_state(self) -> None:
         """将压缩状态持久化到 LangGraph Store"""

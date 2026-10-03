@@ -3,13 +3,12 @@
 封装工作流相关的业务逻辑
 """
 
-import uuid
 from typing import Any
 
 from Django_xm.apps.core.logging_utils import get_logger
 
 from .persistence_service import get_persistence_service
-from .study_flow import _study_flow_cache, get_workflow_history, get_workflow_state, start_study_flow, submit_answers
+from .study_flow import _study_flow_cache, get_workflow_history, get_workflow_state, submit_answers
 
 logger = get_logger(__name__)
 persistence_service = get_persistence_service()
@@ -17,78 +16,6 @@ persistence_service = get_persistence_service()
 
 class WorkflowService:
     """工作流服务类"""
-
-    @staticmethod
-    def start_workflow(
-        user_question: str,
-        thread_id: str | None = None,
-        user_id: int | None = None,
-        knowledge_base_ids: list | None = None,
-        provider_id: str | None = None,
-        model_name: str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        special_params: dict | None = None,
-        enable_deep_thinking: bool = False,
-        use_web_search: bool = False,
-    ) -> dict[str, Any]:
-        """
-        启动新的学习工作流
-
-        Args:
-            user_question: 用户的学习问题
-            thread_id: 可选的线程ID
-            user_id: 可选的用户ID
-            knowledge_base_ids: 可选的知识库名称列表（用户选择用于 RAG 检索的学习资料）
-            provider_id: 用户选择的模型提供商 ID
-            model_name: 用户选择的模型名称
-            temperature: 生成温度
-            max_tokens: 最大生成 token 数
-            special_params: 提供商专属参数（如 DeepSeek 的 thinking）
-            enable_deep_thinking: 是否启用深度思考
-            use_web_search: 是否启用网络查询
-
-        Returns:
-            工作流执行结果
-        """
-        thread_id = thread_id or f"study_{uuid.uuid4().hex[:12]}"
-
-        logger.info(f"[Service] 启动工作流，thread_id={thread_id}")
-
-        result = start_study_flow(
-            user_question,
-            thread_id,
-            user_id,
-            knowledge_base_ids,
-            provider_id=provider_id,
-            model_name=model_name,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            special_params=special_params,
-            enable_deep_thinking=enable_deep_thinking,
-            use_web_search=use_web_search,
-        )
-
-        logger.info(f"[Service] 工作流启动成功，thread_id={thread_id}")
-
-        return {
-            "thread_id": thread_id,
-            "user_question": user_question,
-            "status": result.get("current_step", "waiting_for_answers"),
-            "current_step": result.get("current_step", "waiting_for_answers"),
-            "learning_plan": result.get("learning_plan"),
-            "retrieved_docs": result.get("retrieved_docs"),
-            "quiz": result.get("quiz"),
-            "user_answers": result.get("user_answers"),
-            "score": result.get("score"),
-            "score_details": result.get("score_details"),
-            "feedback": result.get("feedback"),
-            "should_retry": result.get("should_retry", False),
-            "retry_count": result.get("retry_count", 0),
-            "created_at": result.get("created_at", ""),
-            "updated_at": result.get("updated_at", ""),
-            "message": "学习计划和练习题已生成",
-        }
 
     @staticmethod
     def submit_user_answers(thread_id: str, answers: dict[str, str], user_id: int | None = None) -> dict[str, Any]:

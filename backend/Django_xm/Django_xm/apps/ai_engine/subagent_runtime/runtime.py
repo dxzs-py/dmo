@@ -18,6 +18,7 @@ from typing import Any
 
 from asgiref.sync import sync_to_async
 
+from Django_xm.apps.ai_engine.config import AGENT_RECURSION_LIMIT_SUBAGENT
 from Django_xm.apps.ai_engine.models import SubAgentInstance, SubAgentStatus
 from Django_xm.apps.ai_engine.subagent_runtime.exceptions import (
     SubAgentInvalidStateError,
@@ -34,7 +35,9 @@ logger = logging.getLogger(__name__)
 MAX_SUBAGENT_DEPTH: int = 3
 
 # 子 Agent 单实例最大轮次（LangGraph recursion_limit，超限抛 GraphRecursionError）。
-MAX_SUBAGENT_ROUNDS = 200
+# 取值依据（3A-P2-1）：子代理任务面窄而浅（见 ai_engine/config.py 常量注释）；
+# 本名保留为对外导出别名（subagent_runtime/__init__.py 导出面不变）。
+MAX_SUBAGENT_ROUNDS = AGENT_RECURSION_LIMIT_SUBAGENT
 
 
 def _get_max_subagent_depth() -> int:

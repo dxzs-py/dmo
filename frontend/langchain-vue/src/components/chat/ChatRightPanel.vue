@@ -7,6 +7,7 @@ import AiArtifact from '../ai-elements/AiArtifact.vue'
 import AiPanel from '../ai-elements/AiPanel.vue'
 import AiToolbar from '../ai-elements/AiToolbar.vue'
 import { getToolStatusText, getToolStatusTagType } from '../../utils/toolStatusText'
+import { copyToClipboard } from '../../utils/dom'
 
 const props = defineProps({
   message: {
@@ -50,22 +51,11 @@ const metadata = computed(() => {
   }
 })
 
-const copyToClipboard = async (text) => {
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text)
-    } else {
-      const textarea = document.createElement('textarea')
-      textarea.value = text
-      textarea.style.position = 'fixed'
-      textarea.style.opacity = '0'
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand('copy')
-      document.body.removeChild(textarea)
-    }
+async function handleCopyMetadata(text) {
+  const ok = await copyToClipboard(text)
+  if (ok) {
     ElMessage.success('已复制到剪贴板')
-  } catch {
+  } else {
     ElMessage.error('复制失败，请手动复制')
   }
 }
@@ -202,7 +192,7 @@ watch(() => props.message, () => {
                     v-if="artifact.copyable !== false"
                     class="artifact-action"
                     title="复制内容"
-                    @click="copyToClipboard(typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content))"
+                    @click="handleCopyMetadata(typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content))"
                   >
                     复制
                   </button>

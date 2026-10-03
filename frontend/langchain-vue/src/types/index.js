@@ -147,7 +147,7 @@ export const PROTECTED_STREAM_STATES = new Set([
  * @property {string} toolCallId - 工具调用唯一标识（后端 LLM tool_call.id → toolCallId）
  * @property {string} name - 工具名称（去前缀显示用，= toolName）
  * @property {string} toolName - 工具全名（后端注册名，如 langchain_tools.shell_exec）
- * @property {Object} [parameters] - 工具入参（非空对象时才设置，{@link isNonEmptyParams} 判断）
+ * @property {Object} [parameters] - 工具入参（非空对象时才设置）
  * @property {string} state - 工具状态（生命周期原始状态）
  * @property {string} status - 工具状态（ToolCallStatus 枚举值）
  * @property {string} [result] - 工具输出结果

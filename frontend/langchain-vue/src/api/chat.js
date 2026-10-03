@@ -33,12 +33,6 @@ function validateChatRequest(data) {
 }
 
 export const chatAPI = {
-  sendMessage(data) {
-    const validation = validateChatRequest(data)
-    if (!validation.valid) return Promise.reject(new Error(validation.errors.join('; ')))
-    return apiClient.post('/chat/', validation.sanitizedData)
-  },
-
   /**
    * 启动聊天执行（执行与连接解耦后的普通 POST）。
    *
@@ -112,25 +106,11 @@ export const chatAPI = {
     return apiClient.post(`/chat/sessions/${sessionId}/messages/`, messageData)
   },
 
-  addMessagesBatch(sessionId, data) {
-    if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
-    if (!Array.isArray(data.messages) || data.messages.length === 0)
-      return Promise.reject(new Error('messages必须是非空数组'))
-    if (data.messages.length > settings.apiValidation.batchCreateMaxItems)
-      return Promise.reject(new Error(`批量创建数量不能超过${settings.apiValidation.batchCreateMaxItems}条`))
-    return apiClient.post(`/chat/sessions/${sessionId}/messages/batch/`, data)
-  },
-
   updateMessage(messageId, data) {
     if (!messageId) return Promise.reject(new Error('消息ID不能为空'))
     const updateData = { ...data }
     if (updateData.content && updateData.content.length > 50000) updateData.content = updateData.content.slice(0, 50000)
     return apiClient.patch(`/chat/messages/${messageId}/`, updateData)
-  },
-
-  deleteMessage(messageId) {
-    if (!messageId) return Promise.reject(new Error('消息ID不能为空'))
-    return apiClient.delete(`/chat/messages/${messageId}/`)
   },
 
   deleteMessagePair(sessionId, userMessageId) {
@@ -161,20 +141,13 @@ export const chatAPI = {
     return apiClient.delete(`/attachments/${attachmentId}/`)
   },
 
-  compactSession(sessionId) {
-    if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
-    return apiClient.post(`/chat/sessions/${sessionId}/compact/`)
-  },
-
   clearSessionMessages(sessionId) {
     if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
     return apiClient.delete(`/chat/sessions/${sessionId}/messages/`)
   },
 
   getCommands() { return apiClient.get('/chat/commands/') },
-  executeCommand(command, sessionId = null) { return apiClient.post('/chat/commands/execute/', { command, sessionId }) },
   getProjectContext(path = null) { return apiClient.get('/chat/project-context/', { params: path ? { path } : {} }) },
-  finalizeStream: (sessionId, messageId) => chatFinalize(sessionId, messageId),
 }
 
 /**

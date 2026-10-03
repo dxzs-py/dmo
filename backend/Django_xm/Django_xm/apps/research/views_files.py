@@ -3,12 +3,12 @@ from urllib.parse import quote
 
 from django.http import FileResponse
 from drf_spectacular.utils import extend_schema
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from Django_xm.apps.core.permissions import IsAuthenticatedOrQueryParam
-from Django_xm.apps.core.services.file_manager import get_file_manager
+from Django_xm.apps.core.services.file_manager import get_file_manager, is_safe_relative_filename
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.responses import success_response
@@ -64,6 +64,10 @@ class DeepResearchFileDownloadView(APIView):
 
         _get_user_task(request, task_id)
 
+        # F-02 兜底：视图层先净化 filename（URL 中 %2F/%5C 在路由前已解码为 / 与 \）
+        if not is_safe_relative_filename(filename):
+            raise ValidationError("非法的文件路径")
+
         file_info = file_manager.get_file_info(task_id, filename, "research")
         if not file_info:
             raise NotFound("文件不存在")
@@ -95,6 +99,10 @@ class DeepResearchFileContentView(APIView):
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request, task_id, filename):
         _get_user_task(request, task_id)
+
+        # F-02 兜底：视图层先净化 filename
+        if not is_safe_relative_filename(filename):
+            raise ValidationError("非法的文件路径")
 
         file_info = file_manager.get_file_info(task_id, filename, "research")
         if not file_info:

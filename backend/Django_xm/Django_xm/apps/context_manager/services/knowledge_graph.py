@@ -602,32 +602,6 @@ class ContextKnowledgeGraph:
             return merged_entities, merged_relations
         return self._kg_store.load_graph(user_id)
 
-    def update_from_messages(
-        self,
-        user_id: int,
-        messages: list[dict[str, Any]],
-        use_llm_extraction: bool = True,
-        llm: Any = None,
-    ) -> tuple[list[Entity], list[Relation]]:
-        if use_llm_extraction:
-            try:
-                entities, relations = self._extractor.extract_with_llm(messages, llm=llm)
-            except Exception as e:
-                logger.warning(f"LLM 提取失败，回退正则提取: {e}")
-                entities, relations = self._extractor.extract(messages)
-        else:
-            entities, relations = self._extractor.extract(messages)
-
-        if entities or relations:
-            merged_entities, merged_relations = self._kg_store.merge_graph(user_id, entities, relations)
-            logger.info(
-                f"知识图谱更新: user={user_id}, use_llm_extraction={use_llm_extraction}, "
-                f"提取 {len(entities)} 实体/{len(relations)} 关系, "
-                f"合并后 {len(merged_entities)} 实体/{len(merged_relations)} 关系"
-            )
-            return merged_entities, merged_relations
-        return self._kg_store.load_graph(user_id)
-
     def get_context_for_query(
         self,
         user_id: int,
@@ -654,6 +628,3 @@ class ContextKnowledgeGraph:
             except Exception:
                 logger.exception("清除知识图谱失败")
         return True
-
-    def clear_user_graph(self, user_id: int) -> bool:
-        return self.clear_graph(user_id)

@@ -1,8 +1,9 @@
 import { logger } from '@/utils/logger'
 import { StreamState, ApprovalState } from '@/types'
 import { scheduleSubagentsRefresh } from '@/composables/useSubagents'
+import { resolveStreamTargetMessage } from '@/utils/messageOperations'
 import { APPROVAL_STATE_MAP } from './constants'
-import { getSession, getLastAssistantMessage } from './helpers'
+import { getSession } from './helpers'
 
 /**
  * 创建审批事件处理器（三模块共享：chat / deep_research / learning）
@@ -14,8 +15,9 @@ import { getSession, getLastAssistantMessage } from './helpers'
  * 原实现位于 handleSessionEvent.js 内联（C5/cq-04 Task 2 下沉，行为保持）：
  * APPROVAL_STATE_MAP 映射 / 批量审批联动 / streamState 影响逻辑逐字搬运，
  * 主流程保持原版连续形态（内聚函数不按行数硬拆）；
- * 仅保留两个真实辅助：_findMessageByIdOrExtra（3 处复用的消息定位）、
- * _collectSiblingApprovals（批次审批状态收集查询）。
+ * 消息定位统一走 utils/messageOperations.resolveStreamTargetMessage
+ * （spec 组 5：原 _findMessageByIdOrExtra 精确定位 + getLastAssistantMessage
+ * 兜底的内联展开收敛，语义等价）；仅保留 _collectSiblingApprovals（批次审批状态收集查询）。
  *
  * @param {Object} ctx - 依赖上下文
  * @param {Object} ctx.sessionStore - session store 实例
@@ -28,22 +30,16 @@ export const createHandleApprovalEvent = (ctx) => {
   const { sessionStore, approvalStore } = ctx
 
   /**
-   * 根据 payload.messageId 或 payload.extra.messageId 在指定会话中定位消息。
-   * 用于 approval_* 等事件优先按 message_id 路由，避免 getLastAssistantMessage 兜底
-   * 导致非末尾消息（如重新生成中途的旧消息）审批 UI 错位到最后一条。
+   * 按 payload.messageId 或 payload.extra.messageId 定位目标消息（spec 组 5 收敛）：
+   * 精确优先、末条 assistant 兜底。用于 approval_* 等事件优先按 message_id 路由，
+   * 避免兜底导致非末尾消息（如重新生成中途的旧消息）审批 UI 错位到最后一条。
    * @param {string} sessionId
    * @param {Object} payload
    * @returns {Object|null}
    */
   const _findMessageByIdOrExtra = (sessionId, payload) => {
     const messageId = payload?.messageId || payload?.extra?.messageId
-    if (!messageId) return null
-    const session = sessionStore.sessions.find(s => s.id === sessionId)
-    if (!session?.messages) return null
-    return session.messages.find(m =>
-      m.backendId?.toString() === messageId.toString() ||
-      m.id?.toString() === messageId.toString()
-    ) || null
+    return resolveStreamTargetMessage(getSession(sessionStore, sessionId), messageId)
   }
 
   /**
@@ -197,7 +193,8 @@ export const createHandleApprovalEvent = (ctx) => {
     // 审批挂起时消息统一转为 INTERRUPTED（请求浏览器由 sendMessage 主流程等待，
     // 审批恢复后经 approval_store 恢复为 STREAMING）。
     if (mappedState === ApprovalState.PENDING) {
-      const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || getLastAssistantMessage(getSession(sessionStore, sessionId))
+      // 定位收敛（spec 组 5）：_findMessageByIdOrExtra 内部已含末条 assistant 兜底
+      const targetMsg = _findMessageByIdOrExtra(sessionId, payload)
       if (targetMsg && targetMsg.streamState !== StreamState.INTERRUPTED) {
         const prevState = targetMsg.streamState || 'undefined'
         targetMsg.streamState = StreamState.INTERRUPTED
@@ -216,7 +213,8 @@ export const createHandleApprovalEvent = (ctx) => {
     // - 非批量 approval_approved / approval_processing：INTERRUPTED → STREAMING
     if (graphInterruptId) {
       // SubTask 11.2-11.4: 批量审批场景，查询本地 store 中同一批次的 Approval 状态
-      const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || getLastAssistantMessage(getSession(sessionStore, sessionId))
+      // 定位收敛（spec 组 5）：_findMessageByIdOrExtra 内部已含末条 assistant 兜底
+      const targetMsg = _findMessageByIdOrExtra(sessionId, payload)
       if (targetMsg?.streamState === StreamState.INTERRUPTED) {
         const siblingApprovals = _collectSiblingApprovals(targetMsg, graphInterruptId, payload.remainingPendingCount)
 
@@ -261,7 +259,8 @@ export const createHandleApprovalEvent = (ctx) => {
       }
     } else if (mappedState === ApprovalState.APPROVED || mappedState === ApprovalState.PROCESSING) {
       // 非批量 approval_approved / approval_processing：INTERRUPTED → STREAMING
-      const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || getLastAssistantMessage(getSession(sessionStore, sessionId))
+      // 定位收敛（spec 组 5）：_findMessageByIdOrExtra 内部已含末条 assistant 兜底
+      const targetMsg = _findMessageByIdOrExtra(sessionId, payload)
       if (targetMsg?.streamState === StreamState.INTERRUPTED) {
         targetMsg.streamState = StreamState.STREAMING
         logger.info(`[Sync] 非请求浏览器审批 ${mappedState}，INTERRUPTED → STREAMING: session=${sessionId}, source=${source}, message=${targetMsg.backendId || targetMsg.id}`)

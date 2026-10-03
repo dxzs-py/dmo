@@ -1,10 +1,9 @@
 import { logger } from '@/utils/logger'
-import { mergeMessageFromBackend } from '@/utils/messageOperations'
+import { findMessageById, mergeMessageFromBackend } from '@/utils/messageOperations'
 import { ToolCallStatus, ApprovalState } from '@/types'
 import { NON_TERMINAL_STATUSES, applyToolCallState } from '@/utils/toolCallStateMachine'
 import { NON_TERMINAL_APPROVAL_STATES } from './constants'
 import {
-  findMessageById,
   getSession,
   getCurrentVersion,
 } from './helpers'

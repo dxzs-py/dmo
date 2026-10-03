@@ -26,6 +26,42 @@
         </el-form>
       </el-card>
 
+      <!-- 用户偏好设置 -->
+      <el-card style="margin-top: 16px;">
+        <template #header>
+          <div class="card-header">
+            <span>偏好设置</span>
+          </div>
+        </template>
+
+        <el-form :model="preferencesForm" label-width="120px">
+          <el-form-item label="主题偏好">
+            <el-select v-model="preferencesForm.theme" style="width: 220px;">
+              <el-option label="浅色" value="light" />
+              <el-option label="深色" value="dark" />
+              <el-option label="跟随系统" value="system" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="界面语言">
+            <el-select v-model="preferencesForm.language" style="width: 220px;">
+              <el-option label="简体中文" value="zh-CN" />
+              <el-option label="English" value="en-US" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="通知开关">
+            <el-switch v-model="preferencesForm.notificationsEnabled" />
+          </el-form-item>
+          <el-form-item label="自动保存会话">
+            <el-switch v-model="preferencesForm.autoSaveSessions" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :loading="preferencesSaving" @click="savePreferences">
+              保存偏好设置
+            </el-button>
+          </el-form-item>
+        </el-form>
+      </el-card>
+
       <!-- 聊天模型配置 -->
       <el-card style="margin-top: 16px;">
         <template #header>
@@ -307,6 +343,7 @@ import { useThemeStore } from '../stores/theme'
 import settings from '../config/settings'
 import { updateBaseURL } from '../api/axios'
 import { modelAPI } from '../api/model'
+import { userAPI } from '../api/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
 import { logger } from '../utils/logger'
@@ -602,6 +639,53 @@ const rebuildAffectedIndexes = async () => {
   }
 }
 
+// ===== 用户偏好设置 =====
+const preferencesSaving = ref(false)
+const preferencesForm = reactive({
+  theme: 'light',
+  language: 'zh-CN',
+  notificationsEnabled: true,
+  autoSaveSessions: true,
+})
+
+const loadPreferences = async () => {
+  try {
+    const res = await userAPI.getPreferences()
+    const prefs = res.data?.data
+    if (prefs) {
+      preferencesForm.theme = prefs.theme || 'light'
+      preferencesForm.language = prefs.language || 'zh-CN'
+      preferencesForm.notificationsEnabled = prefs.notificationsEnabled ?? true
+      preferencesForm.autoSaveSessions = prefs.autoSaveSessions ?? true
+    }
+  } catch (e) {
+    logger.warn('加载偏好设置失败:', e)
+  }
+}
+
+const savePreferences = async () => {
+  preferencesSaving.value = true
+  try {
+    const res = await userAPI.updatePreferences({
+      theme: preferencesForm.theme,
+      language: preferencesForm.language,
+      notificationsEnabled: preferencesForm.notificationsEnabled,
+      autoSaveSessions: preferencesForm.autoSaveSessions,
+    })
+    if (res.data?.code === 200) {
+      themeStore.setTheme(preferencesForm.theme)
+      ElMessage.success('偏好设置已保存')
+    } else {
+      ElMessage.error(res.data?.message || '保存偏好设置失败')
+    }
+  } catch (e) {
+    logger.error('保存偏好设置失败:', e)
+    ElMessage.error(e.response?.data?.message || '保存偏好设置失败')
+  } finally {
+    preferencesSaving.value = false
+  }
+}
+
 // ===== 通用设置 =====
 const saveSettings = async () => {
   if (!settingsForm.apiBaseUrl.trim()) {
@@ -629,6 +713,7 @@ const resetSettings = () => {
 
 // ===== 初始化 =====
 onMounted(async () => {
+  loadPreferences()
   try {
     const res = await modelAPI.getAISettings()
     const data = res.data?.data

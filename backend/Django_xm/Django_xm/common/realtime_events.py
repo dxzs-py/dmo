@@ -438,7 +438,7 @@ async def publish_event(
         - 审批事件：approval_pending / approval_processing / approval_approved /
           approval_rejected / approval_timeout 等
         - 流式事件：stream_event（reasoning/sources/suggestions/context/content_update）
-          / stream_started / stream_completed / stream_finalized
+          / stream_completed / stream_finalized
         - 会话/消息事件：session_created / message_added / message_updated 等
 
     注意：

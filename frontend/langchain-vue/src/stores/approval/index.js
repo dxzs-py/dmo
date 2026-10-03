@@ -64,12 +64,10 @@ export const useApprovalStore = defineStore('approval', () => {
 
   return {
     pendingApprovals: state.pendingApprovals,
-    pendingBindQueue: state.pendingBindQueue,
     handleApprovalEvent: eventHandlers.handleApprovalEvent,
     executeApproval: restActions.executeApproval,
     restoreFromSession: restore.restoreFromSession,
     restoreFromSSEHistory: restore.restoreFromSSEHistory,
-    cleanupExpired: cleanup.cleanupExpired,
     clearByTaskId: cleanup.clearByTaskId,
     clearAll: cleanup.clearAll,
     flushPendingBindQueue: cleanup.flushPendingBindQueue,

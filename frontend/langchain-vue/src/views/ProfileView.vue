@@ -1,11 +1,13 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { ElMessage } from 'element-plus'
-import { User, Lock, Phone, Upload, ChatDotRound, Document, DataAnalysis, Calendar } from '@element-plus/icons-vue'
+import { User, Lock, Phone, Upload, ChatDotRound, Document, DataAnalysis, Calendar, Warning } from '@element-plus/icons-vue'
 import { userAPI } from '@/api/user'
 import { logger } from '../utils/logger'
 
+const router = useRouter()
 const userStore = useUserStore()
 const loading = ref(false)
 const editMode = ref(false)
@@ -197,6 +199,46 @@ async function loadUsageStats() {
 watch(activeTab, (tab) => {
   if (tab === 'stats') loadUsageStats()
 })
+
+// ── 危险操作：注销账号 ──
+const deleteDialog = ref(false)
+const deleteConfirmName = ref('')
+const deleteLoading = ref(false)
+// 强确认状态机：输入与当前登录用户名完全一致才允许提交 DELETE
+const isDeleteConfirmed = computed(() => {
+  return !!userStore.username && deleteConfirmName.value === userStore.username
+})
+
+function openDeleteDialog() {
+  deleteConfirmName.value = ''
+  deleteDialog.value = true
+}
+
+async function handleDeleteAccount() {
+  // 取消路径 / 输入不匹配：不发任何请求
+  if (!isDeleteConfirmed.value) {
+    ElMessage.warning('请输入与当前登录用户名完全一致的内容后再确认')
+    return
+  }
+  deleteLoading.value = true
+  try {
+    const response = await userAPI.deleteAccount()
+    if (response.data?.code === 200) {
+      deleteDialog.value = false
+      // 后端已软删除账号（token 随之失效），本地仅需清空用户态
+      userStore.clearUser()
+      ElMessage.success('账号已注销')
+      router.push('/login')
+    } else {
+      ElMessage.error(response.data?.message || '账号注销失败')
+    }
+  } catch (error) {
+    logger.error('账号注销失败:', error)
+    ElMessage.error(error.response?.data?.message || '账号注销失败，请稍后重试')
+  } finally {
+    deleteLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -317,6 +359,21 @@ watch(activeTab, (tab) => {
       </el-tabs>
     </div>
 
+    <!-- 危险操作 -->
+    <div class="danger-zone">
+      <div class="danger-header">
+        <el-icon><Warning /></el-icon>
+        <span>危险操作</span>
+      </div>
+      <div class="danger-item">
+        <div class="danger-info">
+          <div class="danger-title">注销账号</div>
+          <div class="danger-desc">注销后账号将无法登录，AI 对话记忆与业务数据将失效，该操作不可自行恢复</div>
+        </div>
+        <el-button type="danger" plain @click="openDeleteDialog">注销账号</el-button>
+      </div>
+    </div>
+
     <el-dialog v-model="passwordDialog" title="修改密码" width="420px" :close-on-click-modal="false">
       <el-form :model="passwordForm" label-width="100px">
         <el-form-item label="当前密码">
@@ -347,6 +404,50 @@ watch(activeTab, (tab) => {
         <el-button @click="phoneDialog = false">取消</el-button>
         <el-button type="primary" :loading="phoneLoading" @click="handleBindPhone">
           确认绑定
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="deleteDialog"
+      title="注销账号"
+      width="480px"
+      :close-on-click-modal="false"
+      @close="deleteConfirmName = ''"
+    >
+      <el-alert
+        type="error"
+        :closable="false"
+        show-icon
+        title="此操作不可自行恢复，请谨慎操作"
+      />
+      <div class="delete-notice">
+        <p>注销后：</p>
+        <ul>
+          <li>账号将被删除并立即失去登录能力</li>
+          <li>已绑定的手机号将被释放，可被其他账号重新注册</li>
+          <li>AI 对话记忆（checkpoint / Store）数据将被异步清除</li>
+          <li>会话、知识库等数据将无法再访问</li>
+        </ul>
+      </div>
+      <el-form label-width="100px">
+        <el-form-item label="确认用户名">
+          <el-input
+            v-model="deleteConfirmName"
+            :placeholder="`请输入「${userStore.username}」以确认`"
+            autocomplete="off"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="deleteDialog = false">取消</el-button>
+        <el-button
+          type="danger"
+          :disabled="!isDeleteConfirmed || deleteLoading"
+          :loading="deleteLoading"
+          @click="handleDeleteAccount"
+        >
+          永久注销
         </el-button>
       </template>
     </el-dialog>
@@ -464,6 +565,65 @@ watch(activeTab, (tab) => {
   color: var(--el-text-color-secondary);
 }
 
+.danger-zone {
+  margin-top: 16px;
+  padding: 20px 24px;
+  background-color: var(--el-bg-color);
+  border: 1px solid var(--el-color-danger-light-7);
+  border-radius: 12px;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+}
+
+.danger-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 16px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--el-color-danger);
+}
+
+.danger-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  background-color: var(--el-color-danger-light-9);
+  border: 1px solid var(--el-color-danger-light-8);
+  border-radius: 8px;
+}
+
+.danger-title {
+  font-size: 15px;
+  font-weight: 500;
+  margin-bottom: 4px;
+  color: var(--el-text-color-primary);
+}
+
+.danger-desc {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.delete-notice {
+  margin: 16px 0;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  line-height: 1.8;
+}
+
+.delete-notice p {
+  margin: 0 0 4px;
+  font-weight: 500;
+}
+
+.delete-notice ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -560,6 +720,12 @@ watch(activeTab, (tab) => {
     align-items: flex-start;
     gap: 12px;
     padding: 16px;
+  }
+
+  .danger-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
   }
 
   .profile-form {

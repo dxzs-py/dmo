@@ -5,6 +5,7 @@ import DOMPurify from 'dompurify'
 import hljs from 'highlight.js/lib/core'
 import { normalizeGfmTables } from '@/utils/markdownTable'
 import { logger } from '@/utils/logger'
+import { copyToClipboard } from '@/utils/dom'
 import javascript from 'highlight.js/lib/languages/javascript'
 import python from 'highlight.js/lib/languages/python'
 import json from 'highlight.js/lib/languages/json'
@@ -201,7 +202,8 @@ function handleClick(e) {
   const btn = e.target.closest('.code-copy-btn')
   if (!btn) return
   const code = decodeURIComponent(btn.getAttribute('data-code') || '')
-  navigator.clipboard.writeText(code).then(() => {
+  copyToClipboard(code).then((ok) => {
+    if (!ok) return
     copiedId.value = btn.closest('.code-block-wrapper')?.querySelector('code')?.textContent
     btn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>'
     setTimeout(() => {

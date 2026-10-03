@@ -10,6 +10,8 @@ import logging
 import uuid
 from typing import Any
 
+from Django_xm.apps.ai_engine.config import AGENT_RECURSION_LIMIT_CHAT
+
 from .models_context import ChatContext
 
 logger = logging.getLogger(__name__)
@@ -38,7 +40,8 @@ class AgentService:
         thread_id = session_id or str(uuid.uuid4())
         config: dict[str, Any] = {
             "configurable": {"thread_id": thread_id, "checkpoint_ns": ""},
-            "recursion_limit": kwargs.pop("recursion_limit", 500),
+            # chat 单轮对话：工具循环步数适中（常量取值依据见 ai_engine/config.py）
+            "recursion_limit": kwargs.pop("recursion_limit", AGENT_RECURSION_LIMIT_CHAT),
         }
         config.update(kwargs)
         return config

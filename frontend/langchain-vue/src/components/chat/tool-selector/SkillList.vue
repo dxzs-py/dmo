@@ -4,6 +4,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Edit, View, Refresh } from '@element-plus/icons-vue'
 import { toolsAPI } from '@/api/tools'
 import { useToolsStore } from '@/stores/tools'
+import { extractErrorMessage } from '@/utils/apiErrorHandler'
+import { useSelectableList } from '@/composables/useSelectableList'
 import SkillUploadDialog from '../SkillUploadDialog.vue'
 import MarkdownRenderer from '../../common/MarkdownRenderer.vue'
 
@@ -54,28 +56,26 @@ const openUploadDialog = () => {
 }
 defineExpose({ openUploadDialog })
 
-// ── 选择操作 ──
-const isSkillSelected = (name) => props.selected.includes(name)
+// ── 选择操作（状态机收敛到 useSelectableList；键形态差异经 getKey 注入） ──
+// 组0 = 技能（键 = skill.name 原值）；组1 = 技能包（键 = `skill_` 前缀包装）。
+// 多组间独立求键、独立 diff，与逐集合 diff 语义一致。
+const selectableGroups = computed(() => [skills.value, skillPackages.value])
+const selectableKey = (item, groupIndex) =>
+  groupIndex === 1 ? `skill_${item.name}` : item.name
 
-const toggleSkill = (name) => {
-  const idx = props.selected.indexOf(name)
-  if (idx >= 0) {
-    emit('update:selected', props.selected.filter(n => n !== name))
-  } else {
-    emit('update:selected', [...props.selected, name])
-  }
-}
+const { isSelected, toggle, selectAll, clear, deselect, autoSelectNew } = useSelectableList({
+  items: selectableGroups,
+  getKey: selectableKey,
+  selected: () => props.selected,
+  emit,
+})
 
-const selectAllSkills = () => {
-  emit('update:selected', [
-    ...skills.value.map(s => s.name),
-    ...skillPackages.value.map(p => `skill_${p.name}`),
-  ])
-}
-
-const clearSkills = () => {
-  emit('update:selected', [])
-}
+const isSkillSelected = isSelected
+const toggleSkill = toggle
+const isSkillPackageSelected = (name) => isSelected(`skill_${name}`)
+const toggleSkillPackage = (name) => toggle(`skill_${name}`)
+const selectAllSkills = selectAll
+const clearSkills = clear
 
 const handleDeleteSkill = (skill) => withPopoverLock(async () => {
   try {
@@ -88,40 +88,25 @@ const handleDeleteSkill = (skill) => withPopoverLock(async () => {
   try {
     await toolsAPI.deleteSkill({ name: skill.name })
     ElMessage.success(`技能 "${skill.name}" 已删除`)
-    emit('update:selected', props.selected.filter(n => n !== skill.name))
+    deselect(skill.name)
     toolsStore.invalidateSkills()
     fetchSkills()
   } catch (e) {
-    ElMessage.error('删除失败: ' + (e.response?.data?.message || e.message))
+    ElMessage.error('删除失败: ' + extractErrorMessage(e))
   }
 })
 
 // ── Skill Packages 操作 ──
-const isSkillPackageSelected = (name) => {
-  return props.selected.includes(`skill_${name}`)
-}
-
-const toggleSkillPackage = (name) => {
-  const toolName = `skill_${name}`
-  const idx = props.selected.indexOf(toolName)
-  if (idx >= 0) {
-    emit('update:selected', props.selected.filter(n => n !== toolName))
-  } else {
-    emit('update:selected', [...props.selected, toolName])
-  }
-}
-
 const deleteSkillPackage = (name) => withPopoverLock(async () => {
   try {
     await ElMessageBox.confirm(`确定删除技能包 "${name}"？`, '确认删除', { type: 'warning' })
     await toolsAPI.deleteSkillPackage({ name })
     ElMessage.success(`技能包 "${name}" 已删除`)
-    const toolName = `skill_${name}`
-    emit('update:selected', props.selected.filter(n => n !== toolName))
+    deselect(`skill_${name}`)
     fetchSkillPackages(true)
   } catch (e) {
     if (e !== 'cancel') {
-      ElMessage.error('删除失败: ' + (e.response?.data?.message || e.message))
+      ElMessage.error('删除失败: ' + extractErrorMessage(e))
     }
   }
 })
@@ -134,7 +119,7 @@ const viewSkillPackageDetail = async (name) => {
     skillPreviewContent.value = instructions
     skillPreviewVisible.value = true
   } catch (e) {
-    ElMessage.error('获取详情失败: ' + (e.response?.data?.message || e.message))
+    ElMessage.error('获取详情失败: ' + extractErrorMessage(e))
   }
 }
 
@@ -146,17 +131,11 @@ const handleEditSkill = (skill) => {
 const handleSkillCreateSuccess = async () => {
   showSkillUploadDialog.value = false
   editingSkill.value = null
-  const oldSkillNames = new Set(skills.value.map(s => s.name))
-  const oldPkgNames = new Set(skillPackages.value.map(p => p.name))
+  const oldGroups = [skills.value, skillPackages.value]
   toolsStore.invalidateSkills()
   await fetchSkills(true)
   await fetchSkillPackages(true)
-  const newSkillNames = skills.value.filter(s => !oldSkillNames.has(s.name)).map(s => s.name)
-  const newPkgNames = skillPackages.value.filter(p => !oldPkgNames.has(p.name)).map(p => `skill_${p.name}`)
-  const newSelected = [...newSkillNames, ...newPkgNames]
-  if (newSelected.length > 0) {
-    emit('update:selected', [...props.selected, ...newSelected])
-  }
+  autoSelectNew([skills.value, skillPackages.value], oldGroups)
 }
 </script>
 
@@ -201,7 +180,10 @@ const handleSkillCreateSuccess = async () => {
           >
             <el-icon><Delete /></el-icon>
           </el-button>
-          <el-checkbox :model-value="isSkillPackageSelected(pkg.name)" @change="toggleSkillPackage(pkg.name)" />
+          <el-checkbox
+            :model-value="isSkillPackageSelected(pkg.name)"
+            @change="toggleSkillPackage(pkg.name)"
+          />
         </div>
       </div>
     </div>

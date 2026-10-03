@@ -39,11 +39,8 @@ from Django_xm.async_utils import run_async
 from Django_xm.apps.tools import views_mcp
 from Django_xm.apps.tools.managers import McpToolManager
 from Django_xm.apps.tools.models import McpServerConfig, ToolCategory
-from Django_xm.apps.tools.serializers import (
-    McpServerAddSerializer,
-    McpServerDiscoverSerializer,
-    _is_blocked_ip,
-)
+from Django_xm.apps.tools.serializers import McpServerAddSerializer
+from Django_xm.common.net.guards import is_blocked_ip as _is_blocked_ip
 
 TOOLS_URL = "/api/v1/tools/"
 
@@ -194,10 +191,15 @@ class StdioAdminOnlyTests(McpSecurityTestBase, TestCase):
 
 
 class StdioLoadIsolationTests(McpSecurityTestBase, TransactionTestCase):
-    """S-04 加载层：系统级 stdio（可信配置）对所有用户保留，仅过滤用户自建 stdio。"""
+    """S-04 加载层：系统级 stdio（可信配置）对所有用户保留，仅过滤用户自建 stdio。
+
+    5-1.2 收敛后 ``views_mcp._get_merged_mcp_servers`` 为
+    ``mcp.resolve_servers.resolve_mcp_servers`` 的薄适配层，本组测试
+    （适配层断言）直接调用适配入口验证 S-04 语义经委托后保持不变。
+    """
 
     def test_merged_servers_keep_system_stdio_for_normal_user(self):
-        """_get_merged_mcp_servers：普通用户保留系统级 stdio（config 模块，可信）。"""
+        """薄适配入口：普通用户保留系统级 stdio（config 模块，可信）。"""
         self._create_user_servers(self.user)
         with self._patch_system_servers():
             servers = views_mcp._get_merged_mcp_servers(user=self.user)
@@ -207,7 +209,7 @@ class StdioLoadIsolationTests(McpSecurityTestBase, TransactionTestCase):
         self.assertIn("u-sse", names)
 
     def test_merged_servers_skip_user_stdio_for_normal_user(self):
-        """_get_merged_mcp_servers：普通用户结果不含用户自建 stdio。"""
+        """薄适配入口：普通用户结果不含用户自建 stdio。"""
         self._create_user_servers(self.user)
         with self._patch_system_servers():
             servers = views_mcp._get_merged_mcp_servers(user=self.user)
@@ -215,7 +217,7 @@ class StdioLoadIsolationTests(McpSecurityTestBase, TransactionTestCase):
         self.assertNotIn("u-stdio", names)
 
     def test_merged_servers_keep_db_system_stdio_for_normal_user(self):
-        """_get_merged_mcp_servers：DB 中 source="system" 的 stdio（管理员持有）对普通用户保留。"""
+        """薄适配入口：DB 中 source="system" 的 stdio（管理员持有）对普通用户保留。"""
         McpServerConfig.objects.create(
             user=self.user,
             name="db-sys-stdio",
@@ -233,13 +235,29 @@ class StdioLoadIsolationTests(McpSecurityTestBase, TransactionTestCase):
         self.assertIn("db-sys-stdio", names)
 
     def test_merged_servers_include_all_stdio_for_staff(self):
-        """_get_merged_mcp_servers：staff 用户结果包含全部 stdio（管理员不设限）。"""
+        """薄适配入口：staff 用户结果包含全部 stdio（管理员不设限）。"""
         self._create_user_servers(self.staff)
         with self._patch_system_servers():
             servers = views_mcp._get_merged_mcp_servers(user=self.staff)
         names = [s.get("name") for s in servers]
         self.assertIn("u-stdio", names)
         self.assertIn("sys-stdio", names)
+
+    def test_merged_servers_delegates_to_resolve_mcp_servers(self):
+        """5-1.2 适配层断言：合并入口委托 resolve_mcp_servers（admin 语义映射正确）。"""
+        with mock.patch(
+            "Django_xm.apps.tools.mcp.resolve_servers.resolve_mcp_servers",
+            return_value=[],
+        ) as mock_resolve:
+            views_mcp._get_merged_mcp_servers(user=self.user)
+            mock_resolve.assert_called_once_with(self.user.id, exclude_user_stdio=True)
+
+        with mock.patch(
+            "Django_xm.apps.tools.mcp.resolve_servers.resolve_mcp_servers",
+            return_value=[],
+        ) as mock_resolve:
+            views_mcp._get_merged_mcp_servers(user=self.staff)
+            mock_resolve.assert_called_once_with(self.staff.id, exclude_user_stdio=False)
 
     def test_fetch_mcp_tools_loads_only_system_stdio_for_normal_user(self):
         """GET /tools/mcp 加载链：普通用户 stdio 调用仅来自系统级（用户自建 u-stdio 不触发）。"""
@@ -327,6 +345,38 @@ class StdioLoadIsolationTests(McpSecurityTestBase, TransactionTestCase):
         self.assertEqual(mock_load.call_args.kwargs.get("user_id"), self.staff.id)
 
 
+class EnabledFilterConsistencyTests(McpSecurityTestBase, TestCase):
+    """5-1.2 收敛：enabled 过滤口径一致性（统一采用运行时口径 enabled=True）。
+
+    系统级 ``enabled=False`` 的 Server 不进入合并结果——列表/连接测试接口
+    （views 薄适配入口）与 agent 运行时装配（resolve_mcp_servers）同一实现，
+    保证"列表可见"与"运行时可加载"口径严格一致。
+    """
+
+    def test_disabled_system_server_hidden_from_view_and_runtime(self):
+        """系统级 enabled=False：views 合并入口与运行时 resolve 同步排除。"""
+        from Django_xm.apps.tools.mcp.resolve_servers import resolve_mcp_servers
+
+        disabled_server = {
+            "name": "sys-disabled",
+            "transport": "http",
+            "url": "https://mcp.example-public.com/mcp",
+            "enabled": False,
+        }
+        with patch(
+            "Django_xm.apps.tools.mcp.config.get_system_mcp_servers",
+            return_value=[disabled_server, *[dict(s) for s in FAKE_SYSTEM_SERVERS]],
+        ):
+            view_names = [s.get("name") for s in views_mcp._get_merged_mcp_servers(user=self.user)]
+            runtime_names = [s.get("name") for s in resolve_mcp_servers(user_id=self.user.id)]
+
+        self.assertNotIn("sys-disabled", view_names)
+        self.assertNotIn("sys-disabled", runtime_names)
+        self.assertIn("sys-stdio", view_names)
+        self.assertIn("sys-stdio", runtime_names)
+        self.assertEqual(view_names, runtime_names)  # 同一实现，口径严格一致
+
+
 class McpUrlSsrfValidationTests(McpSecurityTestBase, TestCase):
     """S-07：MCP URL SSRF 校验（serializer 层 + IP 判定单元级）。"""
 
@@ -402,17 +452,3 @@ class McpUrlSsrfValidationTests(McpSecurityTestBase, TestCase):
         """settings 豁免开关（默认关）：显式开启后内网 URL 放行。"""
         serializer = self._add_serializer("http://127.0.0.1:6379")
         self.assertTrue(serializer.is_valid(), serializer.errors)
-
-    def test_registry_url_internal_rejected(self):
-        """发现接口 registry_url 同样做 SSRF 校验。"""
-        serializer = McpServerDiscoverSerializer(data={"registry_url": "http://169.254.169.254/latest/"})
-        self.assertFalse(serializer.is_valid())
-        self.assertIn("registry_url", serializer.errors)
-
-    def test_registry_url_public_passes(self):
-        addr_info = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
-        with mock.patch("socket.getaddrinfo", return_value=addr_info):
-            serializer = McpServerDiscoverSerializer(
-                data={"registry_url": "https://registry.example-public.com/servers.json"}
-            )
-            self.assertTrue(serializer.is_valid(), serializer.errors)

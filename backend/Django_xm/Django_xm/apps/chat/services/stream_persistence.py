@@ -15,6 +15,8 @@
     - ``_execute_db_persist``：经 sync_to_async 执行 DB 持久化
     - ``_broadcast_message_updated``：广播 MESSAGE_UPDATED 事件
 - ``persist_chat_tool_calls``：挂起前/流结束时的复用持久化入口
+- ``revert_regenerate_archive``：重新生成失败回滚（弹出空版本 + 广播
+  MESSAGE_REGENERATE_REVERTED，spec D6，与 _archive_current_version 镜像）
 
 依赖方向：本模块不依赖其他 stream_* 子模块；ORM / broadcast 均通过函数内延迟导入，
 规避 Django ``SynchronousOnlyOperation`` 与循环依赖。
@@ -770,3 +772,144 @@ async def persist_chat_tool_calls(
             f"[persist_chat_tool_calls] 落库 content/tool_calls 失败: session={session_id}",
             exc_info=True,
         )
+
+
+def _revert_regenerate_archive_sync(session_id: str, message_id: str) -> tuple[Any, Any | None]:
+    """同步执行重新生成失败回滚的 DB 操作 + 回滚后消息序列化。
+
+    与 views_chat._archive_current_version 严格镜像（spec D6 / 前端
+    messageHandlers.handleMessageRegenerateReverted 契约）：
+        1. versions 末尾为空版本（content 为空，归档时追加的 ``{"content": ""}``）→ 弹出；
+        2. current_version 指向回退后的最后版本；
+        3. 顶层字段从回退后当前版本快照恢复（content/sources/plan/tool_calls/
+           reasoning/suggestions/model）；
+        4. is_streaming 置 False。
+
+    严格按 message_id 定位（不回退最新 assistant 消息）：回滚写操作宁可跳过
+    也不允许误伤非目标消息。
+
+    序列化在本同步上下文完成（ChatMessageSerializer 可能触发懒加载查询，
+    async 上下文直接调用会抛 SynchronousOnlyOperation）。
+
+    Returns:
+        tuple: ``(assistant_msg | None, message_data | None)``；
+            assistant_msg 为回滚成功的消息实例（无可回滚空版本/消息不存在时 None），
+            message_data 为序列化结果（序列化失败时 None，前端降级本地版本恢复）
+    """
+    from Django_xm.apps.chat.models import ChatMessage, ChatSession
+
+    session = ChatSession.objects.filter(session_id=session_id).first()
+    if session is None:
+        logger.warning(f"[revert_regenerate_archive] 会话不存在: session_id={session_id}")
+        return None, None
+
+    try:
+        assistant_msg = ChatMessage.objects.get(
+            id=int(message_id), session=session, role="assistant", is_deleted=False
+        )
+    except (ChatMessage.DoesNotExist, ValueError, TypeError):
+        logger.warning(
+            f"[revert_regenerate_archive] 目标助手消息不存在: session_id={session_id}, message_id={message_id}"
+        )
+        return None, None
+
+    versions = list(assistant_msg.versions or [])
+    last = versions[-1] if versions else None
+    # 空版本判定与 _archive_current_version 追加的 {"content": ""} 对齐
+    if len(versions) <= 1 or not isinstance(last, dict) or (last.get("content") or "").strip():
+        logger.info(
+            f"[revert_regenerate_archive] 无可回滚的空版本，跳过: session_id={session_id}, "
+            f"message_id={message_id}, versions={len(versions)}"
+        )
+        return None, None
+
+    versions.pop()
+    assistant_msg.versions = versions
+    assistant_msg.current_version = max(len(versions) - 1, 0)
+    snapshot = versions[assistant_msg.current_version] or {}
+    assistant_msg.content = snapshot.get("content") or ""
+    assistant_msg.is_streaming = False
+
+    update_fields = ["versions", "current_version", "content", "is_streaming"]
+    # 归档快照中 JSON 字段可能存 None（_archive_current_version 对 reasoning 等
+    # 空值写 None），恢复时按模型字段默认值收敛（DB 列 NOT NULL，禁止写 NULL）。
+    _field_null_defaults: dict[str, Any] = {
+        "sources": list,
+        "plan": dict,
+        "tool_calls": list,
+        "reasoning": dict,
+        "suggestions": list,
+    }
+    for field in ("sources", "plan", "tool_calls", "reasoning", "suggestions", "model"):
+        if field in snapshot:
+            value = snapshot.get(field)
+            if value is None and field in _field_null_defaults:
+                value = _field_null_defaults[field]()
+            setattr(assistant_msg, field, value)
+            update_fields.append(field)
+    assistant_msg.save(update_fields=update_fields)
+
+    # 序列化回滚后的完整消息（契约同 MESSAGE_ADDED：research_task_map 必传）
+    message_data: dict | None = None
+    try:
+        from Django_xm.apps.chat.serializers import ChatMessageSerializer, build_research_task_map
+
+        message_data = ChatMessageSerializer(
+            assistant_msg, context={"research_task_map": build_research_task_map([assistant_msg])}
+        ).data
+    except Exception:
+        logger.warning(
+            f"[revert_regenerate_archive] 回滚消息序列化失败，降级最小 payload: message_id={assistant_msg.id}",
+            exc_info=True,
+        )
+    return assistant_msg, message_data
+
+
+async def revert_regenerate_archive(session_id: str, message_id: str) -> dict[str, Any] | None:
+    """重新生成失败回滚（spec D6）：弹出空版本恢复上一版本，并广播 MESSAGE_REGENERATE_REVERTED。
+
+    业务时机（前端死分支契约 stores/sync/messageHandlers.js handleMessageRegenerateReverted）：
+    重新生成启动即失败（无任何输出内容）时，删除归档产生的空版本并恢复上一个版本数据；
+    payload 携带 ``message_id`` 与回滚后的完整 ``message``（ChatMessageSerializer 序列化），
+    前端据此镜像弹出本地空版本并恢复顶层字段。
+
+    Returns:
+        dict | None: 事件 payload（回滚成功时）；未回滚（无空版本/消息不存在）为 None
+    """
+    try:
+        from asgiref.sync import sync_to_async
+
+        reverted, message_data = await sync_to_async(_revert_regenerate_archive_sync, thread_sensitive=True)(
+            session_id, message_id
+        )
+    except Exception:
+        logger.exception(
+            f"[revert_regenerate_archive] 回滚失败: session_id={session_id}, message_id={message_id}"
+        )
+        return None
+
+    if reverted is None:
+        return None
+
+    payload: dict[str, Any] = {
+        "session_id": session_id,
+        "message_id": str(reverted.id),
+    }
+    if message_data is not None:
+        payload["message"] = message_data
+
+    try:
+        from Django_xm.common.event_schema import EventType
+        from Django_xm.common.realtime_events import publish_event
+
+        await publish_event(
+            EventType.MESSAGE_REGENERATE_REVERTED,
+            payload,
+            session_id=session_id,
+        )
+    except Exception as broadcast_err:
+        logger.warning(
+            f"[revert_regenerate_archive] MESSAGE_REGENERATE_REVERTED 广播失败: "
+            f"session_id={session_id}, err={broadcast_err}"
+        )
+    return payload

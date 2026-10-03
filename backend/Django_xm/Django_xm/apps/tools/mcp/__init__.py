@@ -174,46 +174,6 @@ def is_mcp_available() -> bool:
         return False
 
 
-def _build_transport_config(server_config: dict[str, Any]) -> dict[str, Any]:
-    transport = server_config.get("transport", "sse")
-
-    if transport == "stdio":
-        config: dict[str, Any] = {
-            "command": server_config.get("command", ""),
-            "args": server_config.get("args", []),
-            "transport": "stdio",
-        }
-        env = server_config.get("env")
-        if env:
-            config["env"] = env
-        return config
-
-    url = server_config.get("url", "")
-    headers = dict(server_config.get("headers", {}))
-
-    auth_token = server_config.get("auth_token")
-    if auth_token and "Authorization" not in headers:
-        headers["Authorization"] = f"Bearer {auth_token}"
-
-    config = {"url": url}
-
-    if transport == "http":
-        config["transport"] = "http"
-    elif transport == "websocket":
-        config["transport"] = "websocket"
-    else:
-        config["transport"] = "sse"
-
-    if headers:
-        config["headers"] = headers
-
-    timeout = server_config.get("timeout")
-    if timeout:
-        config["timeout"] = timeout
-
-    return config
-
-
 async def _get_or_create_client(
     server_key: str,
     transport_config: dict[str, Any],

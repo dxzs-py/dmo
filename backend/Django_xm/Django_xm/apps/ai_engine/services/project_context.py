@@ -12,7 +12,6 @@ from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
-MAX_INSTRUCTION_CHARS = 4000
 MAX_TOTAL_INSTRUCTION_CHARS = 12000
 
 INSTRUCTION_FILES = [
@@ -61,27 +60,6 @@ class ProjectContext:
             "directory_structure": self.directory_structure[:1000] if self.directory_structure else "",
             "key_files": self.key_files[:20],
         }
-
-    def to_system_prompt_section(self) -> str:
-        if not self.project_name and not self.languages:
-            return ""
-
-        parts = ["\n## 项目上下文\n"]
-        parts.append(f"- 项目名称: {self.project_name}")
-        if self.languages:
-            parts.append(f"- 编程语言: {', '.join(self.languages)}")
-        if self.frameworks:
-            parts.append(f"- 框架: {', '.join(self.frameworks)}")
-        if self.has_git:
-            parts.append(f"- Git 分支: {self.git_branch}")
-
-        if self.instruction_content:
-            truncated = self.instruction_content[:MAX_INSTRUCTION_CHARS]
-            if len(self.instruction_content) > MAX_INSTRUCTION_CHARS:
-                truncated += "\n...(内容过长已截断)"
-            parts.append(f"\n### 项目指令\n{truncated}")
-
-        return "\n".join(parts)
 
 
 class ProjectContextDetector:

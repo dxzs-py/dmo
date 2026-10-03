@@ -13,14 +13,6 @@ from Django_xm.apps.core.logging_utils import get_logger
 logger = get_logger(__name__)
 
 
-def _normalize_weights(weights: list[float], count: int) -> list[float]:
-    total = sum(weights)
-    if total <= 0:
-        logger.warning(f"权重总和 {total} <= 0，回退到等权分配")
-        return [1.0 / count] * count
-    return [w / total for w in weights]
-
-
 def create_retriever_tool_for_multi_kb(
     kb_full_names: list[str],
     k: int = 4,

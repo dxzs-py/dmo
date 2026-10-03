@@ -1,13 +1,11 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { toolsAPI } from '@/api/tools'
+import { extractErrorMessage } from '@/utils/apiErrorHandler'
+import { useDialogForm } from '@/composables/useDialogForm'
 
 const props = defineProps({
-  modelValue: {
-    type: Boolean,
-    default: false,
-  },
   editingServer: {
     type: Object,
     default: null,
@@ -15,31 +13,10 @@ const props = defineProps({
 })
 
 const emit = defineEmits({
-  'update:modelValue': (val) => typeof val === 'boolean',
   success: () => true,
 })
 
-const visible = computed({
-  get: () => props.modelValue,
-  set: (val) => emit('update:modelValue', val),
-})
-
-const isEdit = computed(() => !!props.editingServer)
-
-const dialogTitle = computed(() => isEdit.value ? '编辑 MCP 服务器' : '添加 MCP 服务器')
-
-const form = ref({
-  name: '',
-  transport: 'sse',
-  url: '',
-  command: '',
-  args: '',
-  description: '',
-  headers: '',
-  authToken: '',
-})
-
-const loading = ref(false)
+const visible = defineModel('modelValue', { type: Boolean, default: false })
 
 const isStdio = computed(() => form.value.transport === 'stdio')
 
@@ -50,36 +27,17 @@ const transportOptions = [
   { label: 'Stdio', value: 'stdio', desc: '本地进程通信' },
 ]
 
-const resetForm = () => {
-  form.value = {
-    name: '',
-    transport: 'sse',
-    url: '',
-    command: '',
-    args: '',
-    description: '',
-    headers: '',
-    authToken: '',
+// 校验顺序与文案原样保留（validate 整体下沉到回调，骨架不拆校验步骤）
+function validate() {
+  if (!form.value.name.trim()) return { ok: false, message: '请输入服务器名称' }
+  if (isStdio.value && !form.value.command.trim()) {
+    return { ok: false, message: 'stdio 传输必须提供命令' }
   }
+  if (!isStdio.value && !form.value.url.trim()) {
+    return { ok: false, message: '远程传输必须提供 URL' }
+  }
+  return { ok: true }
 }
-
-watch(() => props.modelValue, (val) => {
-  if (val && props.editingServer) {
-    const srv = props.editingServer
-    form.value = {
-      name: srv.name || '',
-      transport: srv.transport || 'sse',
-      url: srv.url || '',
-      command: srv.command || '',
-      args: Array.isArray(srv.args) ? srv.args.join(' ') : (srv.args || ''),
-      description: srv.description || '',
-      headers: srv.headers && typeof srv.headers === 'object' ? JSON.stringify(srv.headers, null, 2) : '',
-      authToken: srv.authToken || '',
-    }
-  } else if (val) {
-    resetForm()
-  }
-})
 
 const buildPayload = () => {
   const data = {
@@ -108,49 +66,65 @@ const buildPayload = () => {
   return data
 }
 
-const handleSubmit = async () => {
-  if (!form.value.name.trim()) {
-    ElMessage.warning('请输入服务器名称')
-    return
-  }
-
-  if (isStdio.value && !form.value.command.trim()) {
-    ElMessage.warning('stdio 传输必须提供命令')
-    return
-  }
-
-  if (!isStdio.value && !form.value.url.trim()) {
-    ElMessage.warning('远程传输必须提供 URL')
-    return
-  }
-
-  loading.value = true
+// 提交（编辑/添加共用 payload），失败时错误文案原样弹出并返回 false 保持打开
+async function submit() {
   try {
     const data = buildPayload()
-
     if (isEdit.value) {
       await toolsAPI.updateMcpServer(data)
-      ElMessage.success(`MCP Server "${form.value.name}" 更新成功`)
     } else {
       await toolsAPI.addMcpServer(data)
-      ElMessage.success(`MCP Server "${form.value.name}" 添加成功`)
     }
-
-    resetForm()
-    visible.value = false
-    emit('success')
   } catch (e) {
     const label = isEdit.value ? '更新' : '添加'
-    ElMessage.error(`${label}失败: ` + (e.response?.data?.message || e.message))
-  } finally {
-    loading.value = false
+    ElMessage.error(`${label}失败: ` + extractErrorMessage(e))
+    return false
   }
 }
 
-const handleClose = () => {
-  resetForm()
-  visible.value = false
-}
+const {
+  isEdit,
+  dialogTitle,
+  form,
+  handleClose,
+  handleSubmit,
+  submitting,
+} = useDialogForm({
+  visible,
+  isEditSource: () => props.editingServer,
+  titles: { edit: '编辑 MCP 服务器', create: '添加 MCP 服务器' },
+  defaultsFactory: () => ({
+    name: '',
+    transport: 'sse',
+    url: '',
+    command: '',
+    args: '',
+    description: '',
+    headers: '',
+    authToken: '',
+  }),
+  validate,
+  submit,
+  successToast: () => `MCP Server "${form.value.name}" ${isEdit.value ? '更新' : '添加'}成功`,
+  onSuccess: () => emit('success'),
+})
+
+// 编辑回填：须注册于 useDialogForm 之后，覆盖骨架打开时的重置结果
+watch(visible, (val) => {
+  if (val && props.editingServer) {
+    const srv = props.editingServer
+    form.value = {
+      name: srv.name || '',
+      transport: srv.transport || 'sse',
+      url: srv.url || '',
+      command: srv.command || '',
+      args: Array.isArray(srv.args) ? srv.args.join(' ') : (srv.args || ''),
+      description: srv.description || '',
+      headers: srv.headers && typeof srv.headers === 'object' ? JSON.stringify(srv.headers, null, 2) : '',
+      authToken: srv.authToken || '',
+    }
+  }
+})
 </script>
 
 <template>
@@ -241,7 +215,7 @@ const handleClose = () => {
 
     <template #footer>
       <el-button @click="handleClose">取消</el-button>
-      <el-button type="primary" :loading="loading" @click="handleSubmit">
+      <el-button type="primary" :loading="submitting" @click="handleSubmit">
         {{ isEdit ? '保存' : '添加' }}
       </el-button>
     </template>

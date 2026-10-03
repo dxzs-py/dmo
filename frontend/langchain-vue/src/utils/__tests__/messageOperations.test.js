@@ -1,16 +1,26 @@
 /**
- * messageOperations.finalizeToolCallsInMap 单元测试
+ * messageOperations 单元测试
  *
- * 覆盖（P3-34/P3-35 根因修复）：最终化时必须跳过「审批未放行执行」的工具
- * （approval.state 非 approved/completed），防止审批等待/拒绝/超时期间
- * 工具被误标为 COMPLETED（审批按钮因 status 终态消失）。
+ * 覆盖：
+ * 1. finalizeToolCallsInMap（P3-34/P3-35 根因修复）：最终化时必须跳过「审批未放行执行」的工具
+ *    （approval.state 非 approved/completed），防止审批等待/拒绝/超时期间
+ *    工具被误标为 COMPLETED（审批按钮因 status 终态消失）。
+ * 2. 消息定位三能力（spec unify-frontend-semantics 组 5）：findMessageById（精确无兜底）/
+ *    resolveStreamTargetMessage（精确 → 末条 assistant 兜底）/ locateInSessions（{session, message} 包装）。
  *
  * 运行方式（vitest）：
  *   npm run test
  */
 import { describe, it, expect } from 'vitest'
 import { ToolCallStatus, ApprovalState } from '../../types/index.js'
-import { finalizeToolCallsInMap, sortToolCallsForDisplay, _mergeToolCalls } from '../messageOperations.js'
+import {
+  finalizeToolCallsInMap,
+  sortToolCallsForDisplay,
+  _mergeToolCalls,
+  findMessageById,
+  resolveStreamTargetMessage,
+  locateInSessions,
+} from '../messageOperations.js'
 
 /** 构造包含单个 toolCall 的 Map */
 function makeMap(id, toolCall) {
@@ -275,6 +285,107 @@ describe('messageOperations', () => {
       const backend = [{ id: 'sh_1', name: 'shell_exec' }]
       const merged = _mergeToolCalls(local, backend)
       expect(merged[0].subagentThreadId).toEqual('')
+    })
+  })
+
+  describe('消息定位三能力（spec unify-frontend-semantics 组 5）', () => {
+    const makeSession = (id, messages) => ({ id, messages })
+    const userMsg = (id, backendId) => ({ id, backendId, role: 'user', content: 'u' })
+    const assistantMsg = (id, backendId, content = 'a') => ({ id, backendId, role: 'assistant', content })
+
+    describe('findMessageById（能力①：删除/编辑类精确匹配，无兜底）', () => {
+      it('按 id 精确命中', () => {
+        const target = assistantMsg('m2', 102)
+        const session = makeSession('s1', [userMsg('m1', 101), target])
+        expect(findMessageById(session, 'm2')).toBe(target)
+      })
+
+      it('按 backendId 双键命中（number/string 宽松匹配）', () => {
+        const target = assistantMsg('m2', 102)
+        const session = makeSession('s1', [userMsg('m1', 101), target])
+        expect(findMessageById(session, 102)).toBe(target)
+        expect(findMessageById(session, '102')).toBe(target)
+      })
+
+      it('未命中返回 null（会话中存在 assistant 消息也不兜底）', () => {
+        const session = makeSession('s1', [userMsg('m1', 101), assistantMsg('m2', 102)])
+        expect(findMessageById(session, 'missing')).toBe(null)
+      })
+
+      it('删除场景防呆：目标消息已不存在时返回 null，绝不回退到末条 assistant', () => {
+        const lastAssistant = assistantMsg('m2', 102)
+        const session = makeSession('s1', [userMsg('m1', 101), lastAssistant])
+        const result = findMessageById(session, 'deleted_id')
+        expect(result).toBe(null)
+        expect(session.messages[session.messages.length - 1]).toBe(lastAssistant)
+      })
+
+      it('session 缺失 / messageId 缺失 → null', () => {
+        expect(findMessageById(null, 'm1')).toBe(null)
+        expect(findMessageById(makeSession('s1', []), null)).toBe(null)
+      })
+    })
+
+    describe('resolveStreamTargetMessage（能力②：流式写入目标，精确 → 末条 assistant 兜底）', () => {
+      it('messageId 精确命中 → 该消息（优先于末条 assistant）', () => {
+        const target = assistantMsg('m2', 102)
+        const session = makeSession('s1', [userMsg('m1', 101), target, userMsg('m3', 103)])
+        expect(resolveStreamTargetMessage(session, 'm2')).toBe(target)
+      })
+
+      it('未命中 → 末条 assistant 兜底（regenerate 后 id 漂移场景）', () => {
+        const lastAssistant = assistantMsg('m2', 102)
+        const session = makeSession('s1', [userMsg('m1', 101), lastAssistant])
+        expect(resolveStreamTargetMessage(session, 'drifted_id')).toBe(lastAssistant)
+      })
+
+      it('messageId 缺失 → 末条 assistant 兜底', () => {
+        const lastAssistant = assistantMsg('m2', 102)
+        const session = makeSession('s1', [userMsg('m1', 101), lastAssistant])
+        expect(resolveStreamTargetMessage(session, null)).toBe(lastAssistant)
+      })
+
+      it('无 assistant 消息 → null', () => {
+        const session = makeSession('s1', [userMsg('m1', 101)])
+        expect(resolveStreamTargetMessage(session, 'x')).toBe(null)
+      })
+
+      it('session 缺失 → null', () => {
+        expect(resolveStreamTargetMessage(null, 'm1')).toBe(null)
+      })
+    })
+
+    describe('locateInSessions（能力③：跨会话定位，{session, message} 包装）', () => {
+      it('messageId 精确命中 → {session, message} 包装形状', () => {
+        const target = assistantMsg('m2', 102)
+        const session = makeSession('s1', [userMsg('m1', 101), target])
+        const result = locateInSessions([session], 's1', 'm2')
+        expect(result.session).toBe(session)
+        expect(result.message).toBe(target)
+      })
+
+      it('session 未找到 → null', () => {
+        expect(locateInSessions([], 'nope', 'm1')).toBe(null)
+      })
+
+      it('不传 messageId：末条为 assistant → 返回末条（原②语义）', () => {
+        const last = assistantMsg('m2', 102)
+        const session = makeSession('s1', [userMsg('m1', 101), last])
+        const result = locateInSessions([session], 's1')
+        expect(result.message).toBe(last)
+      })
+
+      it('不传 messageId：末条为 user → null（不向前扫描，禁止写入上一轮 assistant）', () => {
+        const session = makeSession('s1', [assistantMsg('m1', 101), userMsg('m2', 102)])
+        expect(locateInSessions([session], 's1')).toBe(null)
+      })
+
+      it('messageId 未命中 → 回退末条 assistant（保持②现状语义）', () => {
+        const last = assistantMsg('m2', 102)
+        const session = makeSession('s1', [userMsg('m1', 101), last])
+        const result = locateInSessions([session], 's1', 'missing')
+        expect(result.message).toBe(last)
+      })
     })
   })
 })

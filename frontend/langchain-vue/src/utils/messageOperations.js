@@ -91,15 +91,84 @@ export function getInterruptId(approval) {
   return approval?.interruptId || approval?.toolCallId || ''
 }
 
-export function getLastAssistantMessage(sessions, sessionId) {
+// ==================== 消息定位能力（三能力三权威，spec unify-frontend-semantics 组 5） ====================
+//
+// 三种业务能力各自一个权威实现，禁止同名多实现与内联展开：
+// 1. findMessageById          —— 删除/编辑等"必须精确"操作（无兜底）
+// 2. resolveStreamTargetMessage —— 流式/事件写入目标定位（精确 → 末条 assistant 兜底）
+// 3. locateInSessions         —— 跨会话集合定位（返回 {session, message} 包装）
+
+/**
+ * 能力①：在指定会话中按 messageId 精确查找消息
+ *
+ * 匹配规则（id/backendId 双键）：backendId?.toString() === messageId?.toString()
+ *   || id?.toString() === messageId?.toString()
+ *
+ * 无任何兜底：未命中返回 null。删除/编辑类调用点必须使用本函数语义，
+ * 绝不回退到末条 assistant 消息（兜底 = 删错消息事故）。
+ *
+ * @param {Object} session - 会话对象（含 messages 数组）
+ * @param {string|number|null|undefined} messageId - 消息 ID（backendId 或 id）
+ * @returns {Object|null} 找到的消息对象，未找到返回 null
+ */
+export function findMessageById(session, messageId) {
+  if (!session?.messages || messageId == null) return null
+  return session.messages.find(m =>
+    m.backendId?.toString() === messageId?.toString() ||
+    m.id?.toString() === messageId?.toString()
+  ) || null
+}
+
+/**
+ * 能力②：定位流式写入目标消息
+ *
+ * 解析顺序：
+ *   1. messageId 精确命中（findMessageById）→ 该消息
+ *   2. 未命中（或 messageId 缺失）→ 末条 assistant 消息兜底
+ *      （regenerate/重建后 id 漂移是真实高频场景，退回末条 assistant 是必要健壮性）
+ *   3. 再失败 → null
+ *
+ * @param {Object} session - 会话对象（含 messages 数组，可为 null/undefined）
+ * @param {string|number|null|undefined} messageId - 消息 ID（backendId 或 id）
+ * @returns {Object|null} 目标消息对象，无法定位时返回 null
+ */
+export function resolveStreamTargetMessage(session, messageId) {
+  if (!session?.messages) return null
+  if (messageId != null) {
+    const exact = findMessageById(session, messageId)
+    if (exact) return exact
+  }
+  return [...session.messages].reverse().find(m => m.role === 'assistant') || null
+}
+
+/**
+ * 能力③：跨会话集合定位（返回 {session, message} 包装，调用方往往还要改同一 session 的其他字段）
+ *
+ * 解析顺序：
+ *   1. 按 sessionId 精确查找 session → 未找到返回 null
+ *   2. messageId 精确命中（findMessageById）→ {session, message}
+ *   3. 兜底保持原末条 assistant 语义：仅当末条消息为 assistant 时返回
+ *      （不向前扫描——appendToLastMessage/updateLastMessage 等写入方在末条为
+ *      user 消息的窗口期必须跳过，禁止把内容写入上一轮 assistant 消息）
+ *
+ * @param {Array} sessions - 会话集合
+ * @param {string} sessionId - 会话 ID
+ * @param {string|number|null|undefined} [messageId] - 消息 ID（backendId 或 id，可选）
+ * @returns {{session: Object, message: Object}|null}
+ */
+export function locateInSessions(sessions, sessionId, messageId) {
   const session = sessions.find(s => s.id === sessionId)
   if (!session || session.messages.length === 0) return null
+  if (messageId != null) {
+    const message = findMessageById(session, messageId)
+    if (message) return { session, message }
+  }
   const last = session.messages[session.messages.length - 1]
   return last.role === 'assistant' ? { session, message: last } : null
 }
 
 export function setLastMessageField(sessions, sessionId, field, value) {
-  const result = getLastAssistantMessage(sessions, sessionId)
+  const result = locateInSessions(sessions, sessionId)
   if (!result) return false
   result.message[field] = value
   const ver = result.message.versions?.[result.message.currentVersion]
@@ -172,6 +241,29 @@ export function createMessageVersion(message) {
     _pendingApprovals: message._pendingApprovals
       ? message._pendingApprovals.map(p => ({ ...p, approvalData: { ...p.approvalData } }))
       : undefined,
+  }
+}
+
+/**
+ * 空白 assistant 消息骨架（spec D10：chat.js / messageHandlers.js 共 5 处字面量展开收敛）
+ *
+ * 基础骨架仅含各调用点共同持有的 6 字段；id/role/timestamp/plan/streamState/
+ * isStreaming/attachmentIds 等差异字段由 overrides 传入，保证各调用点对象形状
+ * 与原实现完全一致（messageHandlers 新版本结构无 plan 字段、重置路径不触碰
+ * plan/images，均由此保持，杜绝形状漂移）。
+ *
+ * @param {Object} [overrides] - 调用点差异字段，展开在骨架之后（同键覆盖）
+ * @returns {Object} assistant 消息骨架对象
+ */
+export function createEmptyAssistantMessage(overrides = {}) {
+  return {
+    content: '',
+    sources: [],
+    toolCalls: [],
+    reasoning: null,
+    suggestions: null,
+    context: null,
+    ...overrides,
   }
 }
 
@@ -994,19 +1086,5 @@ export function mergeMessageFromBackend(existingMsg, backendMsg) {
   }
 
   return existingMsg
-}
-
-/**
- * 判断参数对象是否为非空纯对象
- *
- * 用于判断 toolCall 的 parameters/args 是否有实际内容，
- * 决定是否显示参数展示区域。
- *
- * @param {*} params - 待检查的参数
- * @returns {boolean} true 表示是非空纯对象（非 null、非数组、至少一个自有可枚举属性）
- */
-export function isNonEmptyParams(params) {
-  if (!params || typeof params !== 'object' || Array.isArray(params)) return false
-  return Object.keys(params).length > 0
 }
 

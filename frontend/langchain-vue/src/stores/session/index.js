@@ -87,14 +87,11 @@ export const useSessionStore = defineStore('session', () => {
     appendToLastMessage: messageFlow.appendToLastMessage,
     setApprovalToLastMessage: messageFlow.setApprovalToLastMessage,
     setStreamStateToLastMessage: messageFlow.setStreamStateToLastMessage,
-    setStreamStateToMessageByIdx: messageFlow.setStreamStateToMessageByIdx,
     clearCurrentSessionMessages: messageFlow.clearCurrentSessionMessages,
-    removeMessageFromSession: messageFlow.removeMessageFromSession,
     removeMessagePairFromSession: messageFlow.removeMessagePairFromSession,
     updateMessageFieldByBackendId: messageFlow.updateMessageFieldByBackendId,
     removeMessagesByIds: messageFlow.removeMessagesByIds,
     clearToolSyncTimer: messageFlow.clearToolSyncTimer,
-    clearSyncSignature: messageFlow.clearSyncSignature,
 
     // ===== 版本域 =====
     switchMessageVersion: versionFlow.switchMessageVersion,
@@ -110,7 +107,6 @@ export const useSessionStore = defineStore('session', () => {
     updateOrAddToolResult: toolCallState.updateOrAddToolResult,
     getToolCallById: toolCallState.getToolCallById,
     finalizeToolCallsInMap: toolCallState.finalizeToolCallsInMap,
-    flushPendingApprovals: toolCallState.flushPendingApprovals,
     // 同步工具调用到消息（handleSessionEvent 中 message_added 后调用，解决审批组件错位问题）
     syncMessageToolCalls: toolCallState.syncMessageToolCalls,
   }

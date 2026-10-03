@@ -118,16 +118,3 @@ class BaseAgentBuilder:
         except Exception:
             logger.exception("系统提示词构建完全失败，使用最小回退提示词")
             return "You are a helpful assistant."
-
-    def _build_run_name(self, config, model=None) -> str:
-        model_label = config.model_name or ""
-        if not model_label:
-            if isinstance(model, str):
-                model_label = model
-            elif model is not None:
-                model_label = getattr(model, "model_name", "") or getattr(model, "model", "") or type(model).__name__
-
-        parts = ["BaseAgent", model_label]
-        if config.user_id:
-            parts.append(f"u{config.user_id}")
-        return "/".join(parts)

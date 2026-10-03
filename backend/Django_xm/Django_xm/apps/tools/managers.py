@@ -1,7 +1,7 @@
 """工具管理器模块
 
 提供公共基础工具管理类和三个子类，统一管理 LangChain 内置/自定义工具、
-MCP Server 工具、Skill 技能工具的查询、删除、状态切换等操作。
+MCP Server 工具、Skill 技能工具的查询、删除等操作。
 
 类层次：
     BaseToolManager (ABC)
@@ -43,10 +43,6 @@ def _build_user_tool_category_info(tool_obj) -> dict[str, str]:
     return {"code": "general", "name": "通用"}
 
 
-def _invalidate_category_cache():
-    _category_cache.clear()
-
-
 # ---------------------------------------------------------------------------
 # 辅助函数
 # ---------------------------------------------------------------------------
@@ -72,8 +68,8 @@ class BaseToolManager(ABC):
     """工具管理器抽象基类
 
     子类必须覆盖 tool_type 并实现所有抽象方法。
-    通用逻辑（删除/切换状态）在基类中处理系统工具与用户工具的边界判断，
-    具体操作委托给子类的 _do_delete_user_tool / _do_toggle_user_tool。
+    通用逻辑（删除）在基类中处理系统工具与用户工具的边界判断，
+    具体操作委托给子类的 _do_delete_user_tool。
     """
 
     tool_type: str = ""  # 子类必须覆盖: langchain / mcp / skill
@@ -117,29 +113,6 @@ class BaseToolManager(ABC):
 
     def _do_delete_user_tool(self, tool_name: str, user) -> dict[str, Any]:
         """子类覆盖实现具体删除逻辑"""
-        raise NotImplementedError
-
-    # ---- 通用状态切换逻辑 ----
-
-    def toggle_user_tool(self, tool_name: str, user, status: str | None = None) -> dict[str, Any]:
-        """切换用户自定义工具状态
-
-        Args:
-            tool_name: 工具名称
-            user: 用户实例
-            status: 目标状态 ('active' / 'disabled')，为 None 时自动切换
-
-        Returns:
-            {"success": bool, "message": str, "status": str}
-        """
-        if self.is_system_tool(tool_name):
-            return {"success": False, "error_code": "FORBIDDEN", "message": f"系统内置工具 '{tool_name}' 不可切换状态"}
-        if not self.is_user_tool(tool_name, user):
-            return {"success": False, "error_code": "NOT_FOUND", "message": f"未找到用户自定义工具 '{tool_name}'"}
-        return self._do_toggle_user_tool(tool_name, user, status)
-
-    def _do_toggle_user_tool(self, tool_name: str, user, status: str | None = None) -> dict[str, Any]:
-        """子类覆盖实现具体切换逻辑"""
         raise NotImplementedError
 
 
@@ -235,32 +208,6 @@ class LangChainToolManager(BaseToolManager):
             logger.info("用户自定义工具 '%s' 已删除 (user=%s)", tool_name, user.id)
             return {"success": True, "message": f"工具 '{tool_name}' 已删除"}
         return {"success": False, "error_code": "UNKNOWN", "message": f"工具 '{tool_name}' 删除失败"}
-
-    def _do_toggle_user_tool(self, tool_name: str, user, status: str | None = None) -> dict[str, Any]:
-        """切换用户自定义工具状态"""
-        from Django_xm.apps.tools.models import CustomTool
-
-        tool_obj = CustomTool.objects.filter(user=user, name=tool_name).first()
-        if not tool_obj:
-            return {"success": False, "error_code": "NOT_FOUND", "message": f"未找到工具 '{tool_name}'"}
-
-        if status in ("active", "disabled"):
-            tool_obj.status = status
-        else:
-            tool_obj.status = "disabled" if tool_obj.status == "active" else "active"
-
-        tool_obj.save(update_fields=["status", "updated_at"])
-        logger.info(
-            "自定义工具 '%s' 状态切换为 %s (user=%s)",
-            tool_name,
-            tool_obj.status,
-            user.id,
-        )
-        return {
-            "success": True,
-            "message": f"工具 '{tool_name}' 已{'启用' if tool_obj.status == 'active' else '禁用'}",
-            "status": tool_obj.status,
-        }
 
 
 # ---------------------------------------------------------------------------
@@ -398,32 +345,6 @@ class McpToolManager(BaseToolManager):
             logger.info("用户 MCP Server '%s' 已删除 (user=%s)", tool_name, user.id)
             return {"success": True, "message": f"MCP Server '{tool_name}' 已删除"}
         return {"success": False, "error_code": "UNKNOWN", "message": f"MCP Server '{tool_name}' 删除失败"}
-
-    def _do_toggle_user_tool(self, tool_name: str, user, status: str | None = None) -> dict[str, Any]:
-        """切换用户 MCP Server 状态"""
-        from Django_xm.apps.tools.models import McpServerConfig
-
-        srv = McpServerConfig.objects.filter(user=user, name=tool_name).first()
-        if not srv:
-            return {"success": False, "error_code": "NOT_FOUND", "message": f"未找到 MCP Server '{tool_name}'"}
-
-        if status in ("active", "disabled"):
-            srv.status = status
-        else:
-            srv.status = "disabled" if srv.status == "active" else "active"
-
-        srv.save(update_fields=["status", "updated_at"])
-        logger.info(
-            "MCP Server '%s' 状态切换为 %s (user=%s)",
-            tool_name,
-            srv.status,
-            user.id,
-        )
-        return {
-            "success": True,
-            "message": f"MCP Server '{tool_name}' 已{'启用' if srv.status == 'active' else '禁用'}",
-            "status": srv.status,
-        }
 
     # ---- MCP 专属方法 ----
 
@@ -619,28 +540,12 @@ class McpToolManager(BaseToolManager):
 
     @staticmethod
     async def _test_mcp_server_async(server_name: str, target: dict[str, Any]) -> dict[str, Any]:
-        """异步测试 MCP Server 连接"""
-        from Django_xm.apps.tools.mcp import get_mcp_tools
+        """异步测试 MCP Server 连接（transport 分派复用 ``fetch_tools_for_server``）。"""
+        from Django_xm.apps.tools.mcp.resolve_servers import fetch_tools_for_server
 
         transport = target.get("transport", "sse")
-        if transport == "stdio":
-            tools = await get_mcp_tools(
-                server_name=server_name,
-                transport="stdio",
-                command=target.get("command"),
-                args=target.get("args"),
-                env=target.get("env"),
-            )
-        else:
-            url = target.get("url")
-            if not url:
-                raise ValueError(f"MCP Server '{server_name}' 缺少 url 配置")
-            tools = await get_mcp_tools(
-                server_url=url,
-                transport=transport,
-                headers=target.get("headers"),
-                auth_token=target.get("auth_token"),
-            )
+        # 缺少 url 时由 fetch_tools_for_server 抛 ValueError，经 test_server 统一转错误响应
+        tools = await fetch_tools_for_server(target)
 
         tool_list = [{"name": t.name, "description": t.description or ""} for t in tools]
         return {
@@ -776,35 +681,6 @@ class SkillToolManager(BaseToolManager):
             logger.info("用户 Skill '%s' 已删除 (user=%s)", raw_name, user.id)
             return {"success": True, "message": f"Skill '{raw_name}' 已删除"}
         return {"success": False, "error_code": "UNKNOWN", "message": f"Skill '{raw_name}' 删除失败"}
-
-    def _do_toggle_user_tool(self, tool_name: str, user, status: str | None = None) -> dict[str, Any]:
-        """切换用户自定义 Skill 状态"""
-        SkillConfig = self._get_skill_config_model()
-        if SkillConfig is None:
-            return {"success": False, "error_code": "UNKNOWN", "message": "SkillConfig 模型不可用"}
-
-        raw_name = self._strip_skill_prefix(tool_name)
-        skill_config = SkillConfig.objects.filter(user=user, name=raw_name).first()
-        if not skill_config:
-            return {"success": False, "error_code": "NOT_FOUND", "message": f"未找到 Skill '{raw_name}'"}
-
-        if status in ("active", "disabled"):
-            skill_config.status = status
-        else:
-            skill_config.status = "disabled" if skill_config.status == "active" else "active"
-
-        skill_config.save(update_fields=["status", "updated_at"])
-        logger.info(
-            "Skill '%s' 状态切换为 %s (user=%s)",
-            raw_name,
-            skill_config.status,
-            user.id,
-        )
-        return {
-            "success": True,
-            "message": f"Skill '{raw_name}' 已{'启用' if skill_config.status == 'active' else '禁用'}",
-            "status": skill_config.status,
-        }
 
     # ---- Skill 专属方法 ----
 

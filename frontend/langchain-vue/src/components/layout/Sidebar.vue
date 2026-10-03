@@ -83,8 +83,10 @@ const handleSessionClick = async (sessionId) => {
 }
 
 const handleDeleteSession = async (sessionId) => {
+  const target = sessionStore.sessions?.find((s) => s.id === sessionId)
+  const title = target?.title?.trim() || '未命名会话'
   try {
-    await confirmDelete('确定要删除这个会话吗？')
+    await confirmDelete(`确定要删除会话「${title}」吗？此操作不可恢复。`, { confirmButtonText: '确定删除' })
     await sessionStore.deleteSession(sessionId)
     ElMessage.success('会话已删除')
   } catch (err) {

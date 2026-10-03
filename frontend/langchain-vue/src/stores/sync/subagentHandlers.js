@@ -1,10 +1,7 @@
 import { logger } from '@/utils/logger'
 import { scheduleSubagentsRefresh } from '@/composables/useSubagents'
-import {
-  findMessageById,
-  getSession,
-  getLastAssistantMessage,
-} from './helpers'
+import { resolveStreamTargetMessage } from '@/utils/messageOperations'
+import { getSession } from './helpers'
 
 /**
  * 创建子代理事件处理器（spec D10，session 频道）
@@ -57,13 +54,8 @@ export const createSubagentHandlers = (ctx) => {
       logger.debug(`[Sync] stream_subagent_content 会话未加载: session=${sessionId}`)
       return
     }
-    let targetMsg = null
-    if (payload.messageId) {
-      targetMsg = findMessageById(session, payload.messageId)
-    }
-    if (!targetMsg) {
-      targetMsg = getLastAssistantMessage(session)
-    }
+    // 定位收敛（spec 组 5）：精确按 messageId，兜底末条 assistant（原内联展开等价迁移）
+    const targetMsg = resolveStreamTargetMessage(session, payload.messageId)
     if (!targetMsg) return
 
     const content = data.content || ''

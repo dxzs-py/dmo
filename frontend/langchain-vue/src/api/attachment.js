@@ -13,10 +13,6 @@ export const attachmentAPI = {
     return apiClient.get('/attachments/admin/', { params: { ...params, trashed: true } })
   },
 
-  getDetail(attachmentId) {
-    return apiClient.get(`/attachments/admin/${attachmentId}/`)
-  },
-
   deleteAttachment(attachmentId) {
     return apiClient.delete(`/attachments/admin/${attachmentId}/`)
   },
@@ -61,10 +57,6 @@ export const attachmentAPI = {
 
   batchIndex(attachmentIds) {
     return this.batchAction('index', attachmentIds)
-  },
-
-  batchUnindex(attachmentIds) {
-    return this.batchAction('unindex', attachmentIds)
   },
 
   batchDelete(attachmentIds) {

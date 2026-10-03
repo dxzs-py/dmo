@@ -29,20 +29,17 @@ from Django_xm.common.realtime_events import publish_event_sync
 from Django_xm.common.redis_utils import get_redis_client
 from Django_xm.common.responses import success_response
 from Django_xm.common.signal_bus import SESSION_TYPE_CHAT, SIGNAL_START, SIGNAL_STOP, publish_signal
-from Django_xm.common.sse_utils import sse_error_response
 
 from .models import ChatMessage, ChatSession, MessageRole
 from .serializers import (
     ChatMessageSerializer,
     ChatRequestSerializer,
-    ChatResponseSerializer,
     ChatSessionCreateSerializer,
     ChatSessionDetailSerializer,
     ChatSessionListSerializer,
     ChatSessionUpdateSerializer,
     build_research_task_map,
 )
-from .services.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +202,31 @@ def _safe_publish_session_deleted(session_id, user_id):
         )
     except Exception as e:
         logger.warning(f"广播 SESSION_DELETED 失败: session={session_id}, error={e}")
+
+
+def _safe_publish_session_updated(session_id, user_id, fields):
+    """安全发布 SESSION_UPDATED 事件（与 _safe_publish_session_created/deleted 对齐）。
+
+    在 transaction.on_commit 回调中调用，确保更新已提交、其他浏览器可读到最新字段。
+    失败仅记日志，不抛出异常。
+
+    payload 契约（前端 stores/sync/handleUserEvent.js session_updated 分支消费）：
+    fields 仅携带本次实际变更的字段 + updated_at，键为 snake_case，
+    经 WS 命名边界 toCamelCase 后前端按 title / mode / selectedKnowledgeBases /
+    updatedAt 白名单合并进会话列表。
+    """
+    try:
+        publish_event_sync(
+            EventType.SESSION_UPDATED,
+            {
+                "id": session_id,          # UUID（与前端 handleUserEvent payload.id 兜底对齐）
+                "session_id": session_id,
+                "fields": fields,
+            },
+            user_id=str(user_id),
+        )
+    except Exception as e:
+        logger.warning(f"广播 SESSION_UPDATED 失败: session={session_id}, error={e}")
 
 
 async def _terminate_subagents(parent_thread_id):
@@ -383,77 +405,6 @@ class BaseChatAPIView(APIView):
 
     def paginate_queryset(self, queryset, page_size=20):
         return paginate_to_dict(queryset, self.request, page_size)
-
-
-class ChatView(BaseChatAPIView):
-    @extend_schema(request=ChatRequestSerializer, responses=ChatResponseSerializer)
-    def post(self, request):
-        serializer = ChatRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return sse_error_response(
-                message=f"数据验证失败: {serializer.errors}",
-                status_code=400,
-                code=str(int(ErrorCode.VALIDATION_FAILED)),
-            )
-
-        data = serializer.validated_data
-        logger.info(f"收到聊天请求: {data['message'][:50]}...")
-
-        # Task 6.4：client_message_id 幂等去重（非流式入口同样生效）
-        if not _acquire_message_dedup_lock(request.user.id, data.get("client_message_id")):
-            logger.info(
-                f"[Chat] 重复消息请求已拦截: user={request.user.id}, "
-                f"client_message_id={data.get('client_message_id')}"
-            )
-            raise BaseAppError("该消息已在处理中，请勿重复发送", business_code=ErrorCode.DUPLICATE_RESOURCE)
-
-        session = None
-        session_id = data.get("session_id")
-        if session_id:
-            from .services.message_service import get_user_session
-
-            session = get_user_session(request.user, session_id)
-
-        if not session:
-            with transaction.atomic():
-                session = ChatSession.objects.create(
-                    user=request.user,
-                    mode=data.get("mode", "agent"),
-                    selected_knowledge_base=data.get("selected_knowledge_base"),
-                    selected_knowledge_bases=data.get("selected_knowledge_bases"),
-                    title=data["message"][:100] if len(data["message"]) > 100 else data["message"],
-                )
-            logger.info(f"创建新会话: {session.session_id}")
-        else:
-            if data.get("selected_knowledge_base") is not None:
-                session.selected_knowledge_base = data["selected_knowledge_base"]
-                session.save()
-            if data.get("selected_knowledge_bases") is not None:
-                session.selected_knowledge_bases = data["selected_knowledge_bases"]
-                session.save()
-
-        chat_service = ChatService(user_id=request.user.id if request.user.is_authenticated else None)
-        result = run_async(chat_service.process_chat_request(data))
-
-        logger.info(f"聊天请求处理完成，响应长度: {len(result.get('message', ''))} 字符")
-
-        with transaction.atomic():
-            from .services.message_service import MessagePersistenceService
-
-            persistence = MessagePersistenceService()
-            user_message, ai_message = persistence.save_message_pair(
-                session=session,
-                user_content=data["message"],
-                ai_content=result.get("message", ""),
-                attachment_ids=data.get("attachment_ids"),
-            )
-
-        result_data = ChatResponseSerializer(result).data
-        result_data["session_id"] = session.session_id
-        result_data["user_message_id"] = user_message.id
-        result_data["ai_message_id"] = ai_message.id
-
-        return success_response(data=result_data, message="操作成功")
 
 
 class ChatStreamView(BaseChatAPIView):
@@ -928,6 +879,20 @@ class ChatSessionDetailView(BaseChatAPIView):
         # 保证列表接口即时回源 DB；不再全量清空该用户其它会话缓存
         SecureSessionCacheService.invalidate_session_entry(request.user.id, str(session.session_id))
         SecureSessionCacheService.invalidate_user_sessions_list(request.user.id)
+
+        # spec D6：会话更新成功后广播 SESSION_UPDATED（跨浏览器会话列表实时同步）。
+        # fields 仅携带本次实际变更的字段 + updated_at；在 on_commit 中发布，
+        # 确保其他浏览器读到的已是提交后的最新值。
+        _updated_fields = {
+            key: getattr(session, key)
+            for key in ("title", "selected_knowledge_base", "selected_knowledge_bases")
+            if key in serializer.validated_data
+        }
+        _updated_fields["updated_at"] = session.updated_at.isoformat() if session.updated_at else None
+        _sid = str(session.session_id)
+        _uid = request.user.id
+        transaction.on_commit(lambda: _safe_publish_session_updated(_sid, _uid, _updated_fields))
+
         # 重新查询以 prefetch messages + attachments，避免序列化 N+1
         session = ChatSession.objects.prefetch_related("messages", "messages__attachments").get(pk=session.pk)
         return success_response(
@@ -1035,44 +1000,6 @@ class ChatSessionDetailView(BaseChatAPIView):
         return success_response(data=response_data, message="会话删除成功")
 
 
-class ChatSessionCompactView(BaseChatAPIView):
-    @extend_schema(exclude=True)
-    @log_view_action
-    def post(self, request, session_id):
-        session = self.get_session_or_404(session_id, request.user, prefetch_attachments=True)
-        if not session:
-            raise NotFound("会话不存在")
-
-        from Django_xm.apps.context_manager.services.manager import create_context_manager
-
-        messages = (
-            ChatMessage.objects.filter(session=session).only("role", "content", "tool_calls").order_by("created_at")
-        )
-        message_list = list(messages.values("role", "content", "tool_calls"))
-
-        context_manager = create_context_manager(user_id=request.user.id, thread_id=session_id)
-        result = context_manager.build_structured_context(
-            messages=message_list,
-            query="",
-            mode="agent",
-        )
-        metadata = result["metadata"]
-        prune_info = metadata["prune_result"]
-
-        return success_response(
-            data={
-                "compressed": prune_info["pruned_count"] > 0,
-                "original_message_count": prune_info["original_count"],
-                "kept_message_count": prune_info["original_count"] - prune_info["pruned_count"],
-                "pruned_count": prune_info["pruned_count"],
-                "deduped_count": prune_info["deduped_count"],
-                "filtered_count": prune_info["filtered_count"],
-                "injection_detected": metadata["injection_detected"],
-                "budget_over_sections": metadata["budget_over_sections"],
-            }
-        )
-
-
 class ChatMessageCreateView(BaseChatAPIView):
     @extend_schema(request=ChatMessageSerializer, responses=ChatMessageSerializer)
     @log_view_action
@@ -1114,9 +1041,9 @@ class ChatMessageCreateView(BaseChatAPIView):
         """清空会话全部消息（软删除 + checkpoint 重建 + 广播同步）。
 
         与 POST 共用集合资源路径（dj-06 资源化路由约定：资源路径唯一，方法由视图分发），
-        供前端 /clear 命令一键清空当前会话消息。语义与单条删除
-        （ChatMessageDeleteView）/链式截断（ChatMessagePairDeleteView）保持一致：
-        软删除、事务提交后重建 checkpoint、广播 MESSAGES_DELETED 多端同步。
+        供前端 /clear 命令一键清空当前会话消息。语义与链式截断
+        （ChatMessagePairDeleteView）保持一致：软删除、事务提交后重建 checkpoint、
+        广播 MESSAGES_DELETED 多端同步。
         """
         session = self.get_session_or_404(session_id, request.user)
         if not session:
@@ -1156,51 +1083,6 @@ class ChatMessageCreateView(BaseChatAPIView):
         return success_response(
             data={"deleted_message_ids": deleted_ids},
             message="会话消息已清空",
-        )
-
-
-class ChatMessageBatchCreateView(BaseChatAPIView):
-    @extend_schema(request=ChatMessageSerializer, responses=ChatMessageSerializer)
-    @log_view_action
-    def post(self, request, session_id):
-        session = self.get_session_or_404(session_id, request.user)
-        if not session:
-            raise NotFound("会话不存在")
-
-        messages_data = request.data.get("messages", [])
-        if not isinstance(messages_data, list):
-            raise BaseAppError("messages 字段必须是数组", business_code=ErrorCode.INVALID_PARAMS)
-
-        if len(messages_data) > 50:
-            raise BaseAppError("单次批量创建消息数量不能超过50条", business_code=ErrorCode.INVALID_PARAMS)
-
-        created_messages = []
-        with transaction.atomic():
-            for msg_data in messages_data:
-                msg_data["session"] = session.pk
-                # 仅做输入校验（不读 .data），契约传空映射
-                serializer = ChatMessageSerializer(data=msg_data, context={"research_task_map": {}})
-                if serializer.is_valid():
-                    message = serializer.save()
-                    created_messages.append(message.pk)
-
-        # 批量查询并 prefetch attachments，避免序列化时 N+1
-        messages_qs = (
-            ChatMessage.objects.filter(pk__in=created_messages).prefetch_related("attachments").order_by("created_at")
-        )
-        # 物化消息列表：映射构建与序列化共用同一份已预取数据，避免 queryset 二次求值
-        messages = list(messages_qs)
-
-        return success_response(
-            data={
-                "created_count": len(created_messages),
-                "messages": ChatMessageSerializer(
-                    messages,
-                    many=True,
-                    context={"research_task_map": build_research_task_map(messages)},
-                ).data,
-            },
-            message=f"批量创建 {len(created_messages)} 条消息成功",
         )
 
 
@@ -1314,32 +1196,3 @@ class ChatMessageUpdateView(BaseChatAPIView):
             message="消息更新成功",
         )
 
-
-class ChatMessageDeleteView(ChatMessageUpdateView):
-    """消息资源视图（dj-16 路由规范化）。
-
-    承载 /chat/messages/<message_id>/ 资源路径的全部方法：
-    - PATCH：消息更新（继承 ChatMessageUpdateView.patch）
-    - DELETE：消息软删除（本类实现）
-    """
-
-    @extend_schema(exclude=True)
-    @log_view_action
-    @transaction.atomic
-    def delete(self, request, message_id):
-        message = self.get_message_or_404(message_id, request.user)
-        if not message:
-            raise NotFound("消息不存在")
-
-        message.soft_delete()
-
-        # 事务提交后再重建 checkpoint，否则新线程的数据库连接看不到未提交的 soft_delete
-        session_id = message.session.session_id
-        transaction.on_commit(lambda: run_async(_cleanup_checkpoint_messages_async_by_id(session_id, [message.id])))
-
-        return success_response(
-            data={
-                "message_id": message_id,
-            },
-            message="消息删除成功",
-        )

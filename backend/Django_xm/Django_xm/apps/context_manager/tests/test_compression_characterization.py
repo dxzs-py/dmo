@@ -2,7 +2,7 @@
 
 在合并两条并行压缩路径之前，锁定各自的关键行为，合并后必须全绿：
 
-- 路径 A（chat 入口，dict 语义）：chat_service._apply_compaction →
+- 路径 A（chat 入口，dict 语义）：
   ContextManager.process_messages → ContextCompressionEngine.compress。
   锁定：阈值触发、保留最近 N 条、摘要生成调用、预算分区记录。
 - 路径 B（agent 入口，BaseMessage 语义）：ContextManagerMiddleware.process_messages →

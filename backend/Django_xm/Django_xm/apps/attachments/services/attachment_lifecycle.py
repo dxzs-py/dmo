@@ -126,24 +126,6 @@ class AttachmentLifecycleService:
             reference_count__gt=0,
         )
 
-    def find_duplicates(self) -> dict[str, list[int]]:
-        if not self.dedup_enabled:
-            return {}
-
-        hashes: dict[str, list[int]] = {}
-        attachments = ChatAttachment.objects.filter(
-            status=AttachmentStatus.ACTIVE,
-            file_hash__gt="",
-        ).values_list("id", "file_hash")
-
-        for att_id, file_hash in attachments:
-            if file_hash in hashes:
-                hashes[file_hash].append(att_id)
-            else:
-                hashes[file_hash] = [att_id]
-
-        return {h: ids for h, ids in hashes.items() if len(ids) > 1}
-
     @transaction.atomic
     def cleanup_expired(self, dry_run: bool = False, triggered_by: str = "system") -> AttachmentCleanupLog:
         started_at = timezone.now()

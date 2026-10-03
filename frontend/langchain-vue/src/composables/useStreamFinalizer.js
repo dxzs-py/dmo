@@ -20,10 +20,10 @@ import { StreamState } from '@/types'
  * const { finalizeStream } = useStreamFinalizer()
  * // 默认操作最后一条消息
  * await finalizeStream(sessionId, lastMsg, { allowCreate: false })
- * // 操作指定索引消息
+ * // 指定同步索引 + 自定义状态设置回调（默认操作最后一条消息）
  * await finalizeStream(sessionId, currentMsg, {
  *   messageIndex: idx,
- *   setStreamState: (state) => sessionStore.setStreamStateToMessageByIdx(sid, idx, state)
+ *   setStreamState: (state) => sessionStore.setStreamStateToLastMessage(sid, state)
  * })
  * ```
  */

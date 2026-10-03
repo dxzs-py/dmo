@@ -10,6 +10,7 @@
 - WorkflowAttemptListView：轮次历史列表
 - WorkflowTaskDeleteView：软删除 + checkpoint/文件清理（mock）
 - WorkflowSubmitView：缺 answers 400、未知会话 404
+- LearningRateThrottle：超限 429、按用户隔离、workflow_stream 函数视图限流
 - 序列化器：WorkflowStartSerializer 双字段校验、WorkflowSubmitSerializer、
   WorkflowQuestionSerializer 答案字段安全策略
 
@@ -28,6 +29,7 @@ django.setup()
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from Django_xm.apps.core.throttling import LearningRateThrottle
 from Django_xm.apps.learning.models import (
@@ -41,19 +43,11 @@ User = get_user_model()
 
 LEARNING_URL = "/api/v1/learning/"
 
-# test.py 的 DEFAULT_THROTTLE_RATES 未包含 learning scope，节流视图
-# （submit/question_update/start）在 allow_request 阶段 ImproperlyConfigured → 500。
 # DRF SimpleRateThrottle.THROTTLE_RATES 在类定义时绑定，override_settings 无法刷新，
-# 此处直接 patch 类属性补齐 learning scope（仅测试进程内生效，不改生产配置）。
-_THROTTLE_RATES = {
-    **LearningRateThrottle.THROTTLE_RATES,
-    "learning": "9999/min",
-}
-
-
-def _patch_learning_throttle(testcase) -> None:
-    """为节流视图测试补齐 learning 限流 scope（自动清理）"""
-    patcher = mock.patch.object(LearningRateThrottle, "THROTTLE_RATES", _THROTTLE_RATES)
+# 429 场景直接 patch 类属性注入极低速率（仅测试进程内生效，正常速率由 settings.test 提供）。
+def _patch_learning_rate(testcase, rate: str) -> None:
+    """临时将 learning scope 速率替换为指定极低值（自动清理）"""
+    patcher = mock.patch.object(LearningRateThrottle, "THROTTLE_RATES", {"learning": rate})
     patcher.start()
     testcase.addCleanup(patcher.stop)
 
@@ -236,10 +230,9 @@ class WorkflowQuestionListViewTests(TestCase):
 
 
 class WorkflowQuestionUpdateViewTests(TestCase):
-    """WorkflowQuestionUpdateView：修改答案并重新评分（节流视图，补 learning scope）"""
+    """WorkflowQuestionUpdateView：修改答案并重新评分"""
 
     def setUp(self):
-        _patch_learning_throttle(self)
         self.client = APIClient()
         self.user = User.objects.create_user(username="lv-update", password="pw123456")
         self.client.force_authenticate(user=self.user)
@@ -358,10 +351,9 @@ class WorkflowTaskDeleteViewTests(TestCase):
 
 
 class WorkflowSubmitViewTests(TestCase):
-    """WorkflowSubmitView：提交答案（节流视图，补 learning scope）"""
+    """WorkflowSubmitView：提交答案"""
 
     def setUp(self):
-        _patch_learning_throttle(self)
         self.client = APIClient()
         self.user = User.objects.create_user(username="lv-submit", password="pw123456")
         self.client.force_authenticate(user=self.user)
@@ -377,6 +369,52 @@ class WorkflowSubmitViewTests(TestCase):
             f"{LEARNING_URL}submit/", {"thread_id": "lv-s-nope", "answers": {"q1": "2"}}, format="json"
         )
         self.assertEqual(resp.status_code, 404, resp.content)
+
+
+class LearningRateThrottleTests(TestCase):
+    """learning 限流（LearningRateThrottle）：超限 429 + 按用户隔离"""
+
+    def setUp(self):
+        self.client = APIClient()
+
+    def _auth(self, username: str):
+        user = User.objects.create_user(username=username, password="pw123456")
+        self.client.force_authenticate(user=user)
+        return user
+
+    def test_rate_exhausted_returns_429(self):
+        """首个请求通过限流进入业务校验（400 缺参），第二个请求超限 429"""
+        self._auth("lv-throttle-a")
+        _patch_learning_rate(self, "1/min")
+
+        first = self.client.post(f"{LEARNING_URL}submit/", {}, format="json")
+        self.assertEqual(first.status_code, 400, first.content)
+        second = self.client.post(f"{LEARNING_URL}submit/", {}, format="json")
+        self.assertEqual(second.status_code, 429, second.content)
+
+    def test_throttle_isolated_per_user(self):
+        """用户 A 超限不影响用户 B（按 user.pk 计数）"""
+        self._auth("lv-throttle-b1")
+        _patch_learning_rate(self, "1/min")
+        self.client.post(f"{LEARNING_URL}submit/", {}, format="json")
+        self.client.post(f"{LEARNING_URL}submit/", {}, format="json")
+
+        self._auth("lv-throttle-b2")
+        resp = self.client.post(f"{LEARNING_URL}submit/", {}, format="json")
+        self.assertEqual(resp.status_code, 400, resp.content)
+
+    def test_stream_function_view_throttled(self):
+        """workflow_stream（原生 Django 函数视图）同样受 learning 限流保护"""
+        user = self._auth("lv-throttle-stream")
+        _make_session(user, "lv-th-s1")
+        _patch_learning_rate(self, "1/min")
+        refresh = RefreshToken.for_user(user)
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {refresh.access_token}"}
+
+        first = self.client.get(f"{LEARNING_URL}stream/lv-th-s1/", **auth)
+        self.assertNotEqual(first.status_code, 429, first.status_code)
+        second = self.client.get(f"{LEARNING_URL}stream/lv-th-s1/", **auth)
+        self.assertEqual(second.status_code, 429, second.status_code)
 
 
 class SerializerTests(TestCase):

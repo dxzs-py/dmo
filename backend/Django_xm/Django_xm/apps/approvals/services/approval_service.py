@@ -384,18 +384,20 @@ def _bind_approval_position(approval: Approval, tool_call_id: str) -> None:
         )
 
 
-def publish_tool_call_timeout_event(approval: Approval):
-    """发布 TOOL_CALL_TIMEOUT 事件（通过 tool_call_lifecycle.service.transition 状态机入口）。
+def _publish_tool_call_lifecycle_event(approval: Approval, event_type: EventType) -> None:
+    """tool_call 生命周期事件统一发布实现（G2 合并：waiting/running/timeout/rejected 单源）。
 
-    审批超时时，除了发布 APPROVAL_TIMEOUT 更新审批面板，
-    还需发布 TOOL_CALL_TIMEOUT 让前端 ToolCallCard 显示"审批超时"状态。
-
-    通过 service.register + service.transition 入口发布：
+    通过 tool_call_lifecycle.service 状态机入口发布：
     - register：幂等注册上下文（chat 模块可能已注册，不覆盖非空字段）
     - transition：状态机校验 + 去重 + 内部调用 publish_tool_call_sync（底层传输不变）
+
+    Args:
+        approval: 审批记录（tool 事件参数经 build_approval_payload scope="tool" 构造）
+        event_type: 目标工具事件（TOOL_CALL_WAITING / RUNNING / TIMEOUT / REJECTED）
     """
     kwargs = build_approval_payload(approval, None, "tool")
     tool_call_id = kwargs["tool_call_id"]
+    event_name = event_type.name
     try:
         # 注册上下文（幂等：已存在时不覆盖非空字段，仅补全空字段）
         # risk_level 透传：让 ToolCallContext 持有风险等级，transition 发布事件时
@@ -418,19 +420,32 @@ def publish_tool_call_timeout_event(approval: Approval):
         # 状态机转换并发布事件（内部调用 publish_tool_call_sync）
         service.transition(
             tool_call_id,
-            EventType.TOOL_CALL_TIMEOUT,
+            event_type,
             parameters=kwargs["parameters"] if isinstance(kwargs["parameters"], dict) else None,
         )
     except PayloadValidationError:
         logger.exception(
-            f"[ApprovalService] TOOL_CALL_TIMEOUT payload 校验失败，终止审批流程: "
+            f"[ApprovalService] {event_name} payload 校验失败，终止审批流程: "
             f"interrupt_id={approval.interrupt_id}, tool_name={approval.tool_name}",
         )
         raise  # 审批事件丢失是严重问题，让上层感知
     except Exception as e:
         logger.warning(
-            f"[ApprovalService] 发布 TOOL_CALL_TIMEOUT 事件失败: interrupt_id={approval.interrupt_id}, error={e}"
+            f"[ApprovalService] 发布 {event_name} 事件失败: interrupt_id={approval.interrupt_id}, error={e}"
         )
+
+
+def publish_tool_call_timeout_event(approval: Approval):
+    """发布 TOOL_CALL_TIMEOUT 事件（通过 tool_call_lifecycle.service.transition 状态机入口）。
+
+    审批超时时，除了发布 APPROVAL_TIMEOUT 更新审批面板，
+    还需发布 TOOL_CALL_TIMEOUT 让前端 ToolCallCard 显示"审批超时"状态。
+
+    通过 service.register + service.transition 入口发布：
+    - register：幂等注册上下文（chat 模块可能已注册，不覆盖非空字段）
+    - transition：状态机校验 + 去重 + 内部调用 publish_tool_call_sync（底层传输不变）
+    """
+    _publish_tool_call_lifecycle_event(approval, EventType.TOOL_CALL_TIMEOUT)
 
 
 def publish_tool_call_rejected_event(approval: Approval):
@@ -444,40 +459,7 @@ def publish_tool_call_rejected_event(approval: Approval):
     - register：幂等注册上下文（chat 模块可能已注册，不覆盖非空字段）
     - transition：状态机校验 + 去重 + 内部调用 publish_tool_call_sync（底层传输不变）
     """
-    kwargs = build_approval_payload(approval, None, "tool")
-    tool_call_id = kwargs["tool_call_id"]
-    try:
-        service.register(
-            ToolCallContext(
-                tool_call_id=tool_call_id,
-                tool_name=kwargs["tool_name"],
-                module=kwargs["module"],
-                module_id=kwargs["module_id"],
-                message_id=kwargs["message_id"],
-                parameters=kwargs["parameters"],
-                cross_module_id=kwargs["cross_module_id"],
-                graph_interrupt_id=kwargs["graph_interrupt_id"],
-                risk_level=kwargs.get("risk_level", ""),
-                subagent_thread_id=kwargs.get("subagent_thread_id") or "",
-            )
-        )
-        _bind_approval_position(approval, tool_call_id)
-        # 状态机转换并发布事件（内部调用 publish_tool_call_sync）
-        service.transition(
-            tool_call_id,
-            EventType.TOOL_CALL_REJECTED,
-            parameters=kwargs["parameters"] if isinstance(kwargs["parameters"], dict) else None,
-        )
-    except PayloadValidationError:
-        logger.exception(
-            f"[ApprovalService] TOOL_CALL_REJECTED payload 校验失败，终止审批流程: "
-            f"interrupt_id={approval.interrupt_id}, tool_name={approval.tool_name}",
-        )
-        raise  # 审批事件丢失是严重问题，让上层感知
-    except Exception as e:
-        logger.warning(
-            f"[ApprovalService] 发布 TOOL_CALL_REJECTED 事件失败: interrupt_id={approval.interrupt_id}, error={e}"
-        )
+    _publish_tool_call_lifecycle_event(approval, EventType.TOOL_CALL_REJECTED)
 
 
 def _publish_tool_call_waiting_event(approval: Approval):
@@ -493,43 +475,7 @@ def _publish_tool_call_waiting_event(approval: Approval):
     - register：幂等注册上下文（chat 模块可能已注册，不覆盖非空字段）
     - transition：状态机校验 + 去重 + 内部调用 publish_tool_call_sync（底层传输不变）
     """
-    kwargs = build_approval_payload(approval, None, "tool")
-    tool_call_id = kwargs["tool_call_id"]
-    try:
-        # 注册上下文（幂等：已存在时不覆盖非空字段，仅补全空字段）
-        # risk_level 透传：让 ToolCallContext 持有风险等级，transition 发布事件时
-        # 注入到 tool_call_* 事件 payload，前端从工具事件直接获取风险等级
-        service.register(
-            ToolCallContext(
-                tool_call_id=tool_call_id,
-                tool_name=kwargs["tool_name"],
-                module=kwargs["module"],
-                module_id=kwargs["module_id"],
-                message_id=kwargs["message_id"],
-                parameters=kwargs["parameters"],
-                cross_module_id=kwargs["cross_module_id"],
-                graph_interrupt_id=kwargs["graph_interrupt_id"],
-                risk_level=kwargs.get("risk_level", ""),
-                subagent_thread_id=kwargs.get("subagent_thread_id") or "",
-            )
-        )
-        _bind_approval_position(approval, tool_call_id)
-        # 状态机转换并发布事件（内部调用 publish_tool_call_sync）
-        service.transition(
-            tool_call_id,
-            EventType.TOOL_CALL_WAITING,
-            parameters=kwargs["parameters"] if isinstance(kwargs["parameters"], dict) else None,
-        )
-    except PayloadValidationError:
-        logger.exception(
-            f"[ApprovalService] TOOL_CALL_WAITING payload 校验失败，终止审批流程: "
-            f"interrupt_id={approval.interrupt_id}, tool_name={approval.tool_name}",
-        )
-        raise  # 审批事件丢失是严重问题，让上层感知
-    except Exception as e:
-        logger.warning(
-            f"[ApprovalService] 发布 TOOL_CALL_WAITING 事件失败: interrupt_id={approval.interrupt_id}, error={e}"
-        )
+    _publish_tool_call_lifecycle_event(approval, EventType.TOOL_CALL_WAITING)
 
 
 def _publish_tool_call_running_event(approval: Approval):
@@ -542,43 +488,7 @@ def _publish_tool_call_running_event(approval: Approval):
     - register：幂等注册上下文（chat 模块可能已注册，不覆盖非空字段）
     - transition：状态机校验 + 去重 + 内部调用 publish_tool_call_sync（底层传输不变）
     """
-    kwargs = build_approval_payload(approval, None, "tool")
-    tool_call_id = kwargs["tool_call_id"]
-    try:
-        # 注册上下文（幂等：已存在时不覆盖非空字段，仅补全空字段）
-        # risk_level 透传：让 ToolCallContext 持有风险等级，transition 发布事件时
-        # 注入到 tool_call_* 事件 payload，前端从工具事件直接获取风险等级
-        service.register(
-            ToolCallContext(
-                tool_call_id=tool_call_id,
-                tool_name=kwargs["tool_name"],
-                module=kwargs["module"],
-                module_id=kwargs["module_id"],
-                message_id=kwargs["message_id"],
-                parameters=kwargs["parameters"],
-                cross_module_id=kwargs["cross_module_id"],
-                graph_interrupt_id=kwargs["graph_interrupt_id"],
-                risk_level=kwargs.get("risk_level", ""),
-                subagent_thread_id=kwargs.get("subagent_thread_id") or "",
-            )
-        )
-        _bind_approval_position(approval, tool_call_id)
-        # 状态机转换并发布事件（内部调用 publish_tool_call_sync）
-        service.transition(
-            tool_call_id,
-            EventType.TOOL_CALL_RUNNING,
-            parameters=kwargs["parameters"] if isinstance(kwargs["parameters"], dict) else None,
-        )
-    except PayloadValidationError:
-        logger.exception(
-            f"[ApprovalService] TOOL_CALL_RUNNING payload 校验失败，终止审批流程: "
-            f"interrupt_id={approval.interrupt_id}, tool_name={approval.tool_name}",
-        )
-        raise  # 审批事件丢失是严重问题，让上层感知
-    except Exception as e:
-        logger.warning(
-            f"[ApprovalService] 发布 TOOL_CALL_RUNNING 事件失败: interrupt_id={approval.interrupt_id}, error={e}"
-        )
+    _publish_tool_call_lifecycle_event(approval, EventType.TOOL_CALL_RUNNING)
 
 
 def _count_remaining_pending(graph_interrupt_id: str, exclude_interrupt_id: str) -> int:
@@ -1412,25 +1322,38 @@ def _merge_passthrough_fields(approval_data: dict[str, Any], extra_data: dict[st
     return extra_data
 
 
-async def request_approval_async(
+def prepare_approval_data(
     source: str,
-    source_id: str,
     interrupt_id: str,
     approval_data: dict[str, Any],
-) -> Approval:
+) -> tuple[dict[str, Any], Any, Any]:
+    """approval_data 标准化（纯 Python，无网络副作用，单条/批量两条路径共用）。
+
+    - chat 模块强制校验 chat_session_id（事件路由依赖，M2）；
+    - 顶层 message_id 合并进 extra，供 persist scope 提取到广播 payload 顶层
+      （前端依赖 payload.message_id 精确定位消息，深度研究审批场景）；
+    - 透传 risk_level 和子 agent 嵌套字段到 extra（Phase F1 + E3）；
+    - seq 补齐（持久化链路完整性）：统一经 enrich_entry_seq 从 ToolCallContext
+      读取 register 分配的全局递增序号写入 Approval.extra，使深度研究模块
+      loadHistory 刷新后重建的 toolCall 带 seq；
+    - position 补齐（Agent 图层嵌套规范 D3）：写入 Approval.extra，使深度研究
+      模块 loadHistory（Approval 为唯一持久化来源）刷新后重建的 toolCall 带
+      position，前端图层内联布局恢复依据一致（防刷新后工具调用排末尾/乱序）；
+    - M4：expires_at = now + APPROVAL_TIMEOUT_SECONDS。
+
+    Returns:
+        (标准化后的 approval_data 浅拷贝（extra 为合并后的新 dict）, now_ts, expires_at)
+    """
     # chat 模块强制要求 chat_session_id（事件路由依赖，M2）
     if source == Approval.Source.CHAT:
         chat_session_id = approval_data.get("session_id")
         if not chat_session_id:
             logger.error(
                 f"[ApprovalService] chat 模块审批缺少 chat_session_id，拒绝创建: "
-                f"interrupt_id={interrupt_id}, source_id={source_id}"
+                f"interrupt_id={interrupt_id}"
             )
             raise ValueError(f"chat 模块审批必须显式传入 session_id，interrupt_id={interrupt_id}")
-    else:
-        chat_session_id = approval_data.get("session_id")
-    # 将顶层 message_id 合并到 extra，供 persist scope 提取到广播 payload 顶层
-    # 前端依赖 payload.message_id 精确定位消息（深度研究审批场景）
+    normalized = dict(approval_data)
     extra_data = dict(approval_data.get("extra", {}) or {})
     top_message_id = approval_data.get("message_id")
     if top_message_id and not extra_data.get("message_id"):
@@ -1454,63 +1377,103 @@ async def request_approval_async(
         extra_data,
         extra_data.get("tool_call_id") or approval_data.get("tool_call_id") or interrupt_id,
     )
+    normalized["extra"] = extra_data
 
     # M4: 创建时设置 expires_at = now + APPROVAL_TIMEOUT_SECONDS
     from django.utils import timezone as _tz
 
-    _now_ts = _tz.now()
-    _expires_at = _now_ts + timedelta(seconds=APPROVAL_TIMEOUT_SECONDS)
+    now_ts = _tz.now()
+    expires_at = now_ts + timedelta(seconds=APPROVAL_TIMEOUT_SECONDS)
+    return normalized, now_ts, expires_at
 
-    @sync_to_async
-    def _create_or_update_approval():
-        return Approval.objects.update_or_create(
-            interrupt_id=interrupt_id,
-            defaults={
-                "source": source,
-                "source_id": source_id,
-                "chat_session_id": chat_session_id,
-                "tool_name": approval_data.get("tool_name", ""),
-                "title": approval_data.get("title", ""),
-                "description": approval_data.get("description", ""),
-                "action": approval_data.get("action", Approval.ACTION_CONFIRM),
-                "operation": approval_data.get("operation", ""),
-                "danger_level": approval_data.get("danger_level", "medium"),
-                "parameters": approval_data.get("parameters", {}),
-                "state": Approval.State.PENDING,
-                "user_input": None,
-                "extra": extra_data,
-                "resolved_at": None,
-                "expires_at": _expires_at,
-            },
-        )
 
-    @sync_to_async
-    def _reset_timestamps(approval_obj):
-        # M16: 复用 interrupt_id 时同步重置 created_at 和 expires_at
-        approval_obj.created_at = _now_ts
-        approval_obj.expires_at = _expires_at
-        approval_obj.save(update_fields=["created_at", "expires_at"])
+def create_approval_record(
+    source: str,
+    source_id: str,
+    interrupt_id: str,
+    approval_data: dict[str, Any],
+    *,
+    now_ts: Any,
+    expires_at: Any,
+) -> Approval:
+    """审批行落库单实现（纯 DB 同步操作，无 Redis/网络副作用）。
 
-    approval, created = await _create_or_update_approval()
-    if not created:
-        await _reset_timestamps(approval)
-
-    pending_data = build_approval_payload(approval, Approval.State.PENDING, "persist")
-    # persist_approval_pending 写入 approval:pending:{source_id}（待处理列表），
-    # 与 persist_and_broadcast_async 内的 persist_approval_state（approval:processed:{interrupt_id}）不同，
-    # 两者职责互补，不可合并。
-    persist_approval_pending(source_id, pending_data)
-
-    # 统一发布出口（与 persist_and_broadcast_async 其他调用方一致，消除双轨发布）：
-    # PENDING 广播 + TOOL_CALL_WAITING 联动（问题 O/P）+ ChatMessage.tool_calls
-    # 中间态回写（Z1）+ metrics 采集，全部由统一出口完成。
-    # 覆盖 M16 复用 interrupt_id 重新发起审批场景。
-    await persist_and_broadcast_async(approval, Approval.State.PENDING)
-
-    logger.info(
-        f"[ApprovalService] 异步发起审批: source={source}, source_id={source_id}, "
-        f"interrupt_id={interrupt_id}, tool={approval.tool_name}"
+    update_or_create（interrupt_id 幂等键）；复用已存在行时重置
+    created_at / expires_at（M16）。供 request_approval_async（单条即时广播）
+    与 create_approvals_for_interrupts（批量事务，整批同生共死，REL-04）共用；
+    PENDING 待办列表与广播由调用方在 DB 提交后执行（事务内禁止网络调用）。
+    """
+    approval, created = Approval.objects.update_or_create(
+        interrupt_id=interrupt_id,
+        defaults={
+            "source": source,
+            "source_id": source_id,
+            "chat_session_id": approval_data.get("session_id"),
+            "tool_name": approval_data.get("tool_name", ""),
+            "title": approval_data.get("title", ""),
+            "description": approval_data.get("description", ""),
+            "action": approval_data.get("action", Approval.ACTION_CONFIRM),
+            "operation": approval_data.get("operation", ""),
+            "danger_level": approval_data.get("danger_level", "medium"),
+            "parameters": approval_data.get("parameters", {}),
+            "state": Approval.State.PENDING,
+            "user_input": None,
+            "extra": approval_data.get("extra", {}),
+            "resolved_at": None,
+            "expires_at": expires_at,
+        },
     )
+    if not created:
+        # M16: 复用 interrupt_id 时同步重置 created_at 和 expires_at
+        approval.created_at = now_ts
+        approval.expires_at = expires_at
+        approval.save(update_fields=["created_at", "expires_at"])
+    return approval
+
+
+async def broadcast_approval_pending(approval: Approval) -> None:
+    """PENDING 阶段 Redis 侧收尾（网络调用，必须在 DB 提交后执行）。
+
+    从 request_approval_async 拆出（REL-04：批量创建事务内禁止网络调用，
+    发布/广播移到事务提交后逐条执行）：
+    - persist_approval_pending 写入 approval:pending:{source_id}（待处理列表），
+      与 persist_and_broadcast_async 内的 persist_approval_state
+      （approval:processed:{interrupt_id}）不同，两者职责互补，不可合并；
+    - 统一发布出口（与 persist_and_broadcast_async 其他调用方一致，消除双轨发布）：
+      PENDING 广播 + TOOL_CALL_WAITING 联动（问题 O/P）+ ChatMessage.tool_calls
+      中间态回写（Z1）+ metrics 采集，全部由统一出口完成。
+      覆盖 M16 复用 interrupt_id 重新发起审批场景。
+    """
+    pending_data = build_approval_payload(approval, Approval.State.PENDING, "persist")
+    persist_approval_pending(approval.source_id, pending_data)
+    await persist_and_broadcast_async(approval, Approval.State.PENDING)
+    logger.info(
+        f"[ApprovalService] 异步发起审批: source={approval.source}, source_id={approval.source_id}, "
+        f"interrupt_id={approval.interrupt_id}, tool={approval.tool_name}"
+    )
+
+
+async def request_approval_async(
+    source: str,
+    source_id: str,
+    interrupt_id: str,
+    approval_data: dict[str, Any],
+) -> Approval:
+    """异步发起审批（单条入口）：标准化 + 落库 + PENDING 待办/广播。
+
+    DB 落库与 Redis 收尾已拆分为 create_approval_record / broadcast_approval_pending
+    （approval_batch 批量事务路径复用），本函数保持原单条语义不变。
+    """
+    approval_data, now_ts, expires_at = prepare_approval_data(source, interrupt_id, approval_data)
+    approval = await sync_to_async(create_approval_record)(
+        source,
+        source_id,
+        interrupt_id,
+        approval_data,
+        now_ts=now_ts,
+        expires_at=expires_at,
+    )
+    await broadcast_approval_pending(approval)
     return approval
 
 

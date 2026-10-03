@@ -437,10 +437,3 @@ class AgentExecutor:
                 logger.warning(f"[AgentExecutor] 注入重复调用警告失败: {e}")
         else:
             logger.warning(f"[AgentExecutor] 检测到重复工具调用，但未提供 inject_warning_fn: {prompt[:100]}")
-
-    def reset_duplicate_detector(self) -> None:
-        """重置重复工具调用检测器
-
-        在 agent 重试或降级重建后调用，避免历史记录影响新 agent 的检测。
-        """
-        self.duplicate_detector.reset()

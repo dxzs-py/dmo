@@ -43,10 +43,6 @@ class SubAgentLifecycleManager:
         """注销父 Graph 唤醒回调（父 Graph 恢复完成或不再等待时调用）。"""
         self._parent_awaiters.pop(parent_thread_id, None)
 
-    def has_awaiter(self, parent_thread_id: str) -> bool:
-        """是否存在等待该父线程的唤醒回调。"""
-        return parent_thread_id in self._parent_awaiters
-
     async def on_subagent_finished(self, subagent_thread_id: str, parent_thread_id: str, status: str) -> None:
         """子代理终态回调：定位父 awaiter 并唤醒。
 

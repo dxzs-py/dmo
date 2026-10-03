@@ -80,6 +80,13 @@ python manage.py test Django_xm.apps --settings=Django_xm.settings.test
 
 测试配置 `Django_xm.settings.test` 的数据库直接继承 base.py 的 PostgreSQL 配置（贴合实际运行环境）：Django 测试运行器自动创建 `test_<DB_NAME>` 临时库并在测试结束后销毁，**不会触碰开发库数据**，但要求 docker 容器中的 PostgreSQL 处于运行状态。缓存使用 LocMemCache、Channel Layer 使用 InMemoryChannelLayer、Celery 以 EAGER 模式同步执行，因此跑测试不需要启动 Redis。
 
+## 部署约束（重要）
+
+1. **FastAPI 执行服务必须单实例部署**（`services/fastapi_service`，默认 8001 端口）。当前子代理基建为进程内实现、信令经 Redis pub/sub 广播且无实例亲和（`langgraph_adapter.py` / `session_manager.py`），多实例部署会导致同一会话的任务被多个实例重复消费双跑。横向扩展改造（信令 instance_id 路由 + 分布式锁认领任务）已列为预留方案，在多实例需求出现前不得多开执行服务进程。
+2. **会话任务恢复依赖 `recover_unfinished`**：执行服务启动与订阅重连（Redis 抖动后指数退避重连）时会自动补跑未完成任务，请勿在任务执行期间滚动重启全部实例——先停写、确认无进行中任务、再重启。
+3. Celery worker/beat 与 FastAPI 执行服务共享审批 Redis 上下文：beat 的 `cleanup_expired_approvals`（审批超时）与 `approvals.process_outbox`（审批事件补偿）必须至少各一个在线实例。
+
+
 ## 常用管理命令
 
 以下子命令来自 `python manage.py help` 的真实输出。

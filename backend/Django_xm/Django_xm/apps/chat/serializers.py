@@ -179,23 +179,6 @@ class ChatRequestSerializer(serializers.Serializer):
         return attrs
 
 
-class ChatResponseSerializer(serializers.Serializer):
-    """
-    聊天响应输出格式
-
-    用途：统一非流式聊天的响应结构
-    使用 Serializer 原因：响应数据是聚合结果（含 tools_used/success 等），
-    不直接对应数据库模型
-    """
-
-    message = serializers.CharField()
-    mode = serializers.CharField()
-    tools_used = serializers.ListField(child=serializers.CharField())
-    success = serializers.BooleanField()
-    error = serializers.CharField(required=False, allow_null=True)
-    session_id = serializers.CharField(required=False, allow_null=True)
-
-
 # ==================== 模型序列化器（ModelSerializer） ====================
 
 

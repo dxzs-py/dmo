@@ -3,11 +3,8 @@ import json
 import logging
 
 from asgiref.sync import sync_to_async
-from rest_framework.views import APIView
 
-from Django_xm.apps.core.permissions import IsAuthenticatedOrQueryParam
 from Django_xm.common.sse_utils import (
-    SSERenderer,
     authenticate_sse_request,
     sse_error_event,
     sse_error_response,
@@ -188,11 +185,3 @@ async def deep_research_stream(request, task_id):
 
     response = sse_response(event_stream())
     return response
-
-
-class DeepResearchStreamView(APIView):
-    permission_classes = [IsAuthenticatedOrQueryParam]
-    renderer_classes = [SSERenderer]
-
-    async def get(self, request, task_id):
-        return await deep_research_stream(request, task_id)

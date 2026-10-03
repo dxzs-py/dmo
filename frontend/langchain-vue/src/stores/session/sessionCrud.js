@@ -17,6 +17,7 @@ import { ElMessage } from 'element-plus'
 import { logger } from '../../utils/logger'
 import { getModeLabel } from '../../utils/format'
 import { isApiSuccess, transformBackendSessionToFrontend } from '../../utils/sessionTransformers'
+import { trackEvent } from '@/utils/analytics'
 
 export const createSessionCrudSlice = (sessionList, runtimeDeps) => {
   const { sessions, currentSessionId, loadSessionDetail, setSelectedKnowledgeBases } = sessionList
@@ -60,6 +61,8 @@ export const createSessionCrudSlice = (sessionList, runtimeDeps) => {
           return null
         }
         currentSessionId.value = newSession.id
+        // 埋点：会话创建成功（fire-and-forget，静默失败不影响主流程）
+        trackEvent('chat.session.create', { mode }, { category: 'chat' })
         // 乐观标记：触发浏览器标记已创建，WS session_created 到达时 consume 跳过重复处理
         optimisticSessionIds.value.add(newSession.id)
         triggerRef(optimisticSessionIds)  // 确保 Vue 响应式感知 Set 变更

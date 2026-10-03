@@ -2,7 +2,7 @@
 
 职责：
 - ``OfficialDeepAgentAdapter``：将 ``create_deep_agent`` 返回的 CompiledStateGraph
-  适配为上层统一接口（research/aresearch/astream_research），
+  适配为上层统一接口（research/aresearch），
   使上层调用方无需关心底层实现差异。
   - 集成 interrupt 审批机制（astream_research_with_interrupts）
   - 集成韧性模块（retry/timeout/degrade/fallback）
@@ -20,11 +20,11 @@
 
 import asyncio
 import os
-from collections.abc import AsyncIterator
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from Django_xm.apps.ai_engine.config import AGENT_RECURSION_LIMIT_RESEARCH
 from Django_xm.apps.ai_engine.services.thinking import extract_thinking_content
 from Django_xm.apps.approvals.services.approval_batch import assert_non_empty_decision
 
@@ -49,7 +49,7 @@ class OfficialDeepAgentAdapter:
     官方 Deep Agent 适配器
 
     将 create_deep_agent 返回的 CompiledStateGraph 适配为
-    与 DeepResearchAgent 兼容的接口（research/aresearch/astream_research），
+    与 DeepResearchAgent 兼容的接口（research/aresearch），
     使上层调用方无需关心底层实现差异。
     """
 
@@ -131,7 +131,8 @@ class OfficialDeepAgentAdapter:
         if "configurable" not in config:
             config["configurable"] = {}
         config["configurable"]["thread_id"] = self.thread_id
-        config.setdefault("recursion_limit", 1000)
+        # 深度研究多轮规划 + 子代理编排，链路更深（常量取值依据见 ai_engine/config.py）
+        config.setdefault("recursion_limit", AGENT_RECURSION_LIMIT_RESEARCH)
         if callbacks:
             config["callbacks"] = callbacks
 
@@ -185,7 +186,8 @@ class OfficialDeepAgentAdapter:
         if "configurable" not in config:
             config["configurable"] = {}
         config["configurable"]["thread_id"] = self.thread_id
-        config.setdefault("recursion_limit", 1000)
+        # 深度研究多轮规划 + 子代理编排，链路更深（常量取值依据见 ai_engine/config.py）
+        config.setdefault("recursion_limit", AGENT_RECURSION_LIMIT_RESEARCH)
         if callbacks:
             config["callbacks"] = callbacks
 
@@ -328,7 +330,8 @@ class OfficialDeepAgentAdapter:
         if "configurable" not in config:
             config["configurable"] = {}
         config["configurable"]["thread_id"] = self.thread_id
-        config.setdefault("recursion_limit", 1000)
+        # 深度研究多轮规划 + 子代理编排，链路更深（常量取值依据见 ai_engine/config.py）
+        config.setdefault("recursion_limit", AGENT_RECURSION_LIMIT_RESEARCH)
         if callbacks:
             config["callbacks"] = callbacks
 
@@ -1268,100 +1271,11 @@ class OfficialDeepAgentAdapter:
                 "error_code": "FALLBACK_FAILED",
             }
 
-    async def astream_research(
-        self,
-        query: str,
-        config: dict[str, Any] | None = None,
-    ) -> AsyncIterator[dict[str, Any]]:
-        logger.info(f"[OfficialDeepAgent] 流式研究: {query[:50]}...")
-
-        if config is None:
-            config = {}
-        if "configurable" not in config:
-            config["configurable"] = {}
-        config["configurable"]["thread_id"] = self.thread_id
-        config.setdefault("recursion_limit", 1000)
-
-        try:
-            yield {
-                "event_type": "research_start",
-                "node_name": "root",
-                "data": {"query": query},
-            }
-
-            async for event in self.graph.astream_events(
-                {"messages": [HumanMessage(content=query)]},
-                config=config,
-                version="v2",
-            ):
-                kind = event.get("event", "")
-                name = event.get("name", "")
-                data = event.get("data", {})
-
-                if kind == "on_chat_model_stream":
-                    chunk = data.get("chunk")
-                    if chunk and hasattr(chunk, "content") and chunk.content:
-                        yield {
-                            "event_type": "token_stream",
-                            "node_name": name,
-                            "data": {"content": chunk.content},
-                        }
-                elif kind == "on_tool_start":
-                    yield {
-                        "event_type": "tool_start",
-                        "node_name": name,
-                        "data": {"input": str(data.get("input", ""))[:200]},
-                    }
-                elif kind == "on_tool_end":
-                    yield {
-                        "event_type": "tool_end",
-                        "node_name": name,
-                        "data": {"output": str(data.get("output", ""))[:200]},
-                    }
-                elif kind == "on_chain_end" and name == "LangGraph":
-                    output = data.get("output", {})
-                    final_report = _extract_ai_response(output)
-                    yield {
-                        "event_type": "research_end",
-                        "node_name": "root",
-                        "data": {
-                            "final_report": final_report,
-                            "success": True,
-                        },
-                    }
-                elif kind == "on_chain_error":
-                    yield {
-                        "event_type": "error",
-                        "node_name": name,
-                        "data": {"error": str(data.get("error", "未知错误"))},
-                    }
-
-        except Exception as e:
-            logger.exception("[OfficialDeepAgent] 流式研究失败")
-            yield {
-                "event_type": "error",
-                "node_name": "root",
-                "data": {"error": str(e)},
-            }
-
     def get_status(self) -> dict[str, Any]:
         return {
             "thread_id": self.thread_id,
             "engine": "deepagents_official",
         }
-
-    def _get_files_from_state(self, config: dict[str, Any]) -> dict[str, Any]:
-        try:
-            state = self.graph.get_state(config)
-            if state and hasattr(state, "values") and state.values:
-                files = state.values.get("files", {})
-                if files:
-                    logger.info(f"[OfficialDeepAgent] 从 state 获取到 {len(files)} 个文件")
-                    return files
-            logger.info("[OfficialDeepAgent] state 中无 files 数据")
-        except Exception as e:
-            logger.warning(f"[OfficialDeepAgent] 从 state 获取文件失败: {e}")
-        return {}
 
     def _scan_disk_files(self) -> dict[str, Any]:
         if not self.work_dir or not os.path.isdir(self.work_dir):

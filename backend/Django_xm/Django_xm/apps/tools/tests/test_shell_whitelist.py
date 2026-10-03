@@ -113,7 +113,7 @@ class ShellWhitelistSafeTests(SimpleTestCase):
         self.assertTrue(_is_command_whitelisted("git status"))
 
     def test_multiword_prefix_with_args_still_safe(self):
-        """多词条目前缀匹配（python manage.py + 子命令）仍放行。"""
+        """manage.py 枚举内子命令（help）仍放行（F-01 子命令白名单语义）。"""
         self.assertTrue(_is_command_whitelisted("python manage.py help"))
 
     def test_extra_whitespace_still_safe(self):
@@ -233,3 +233,136 @@ class ShellSandboxRoutingTests(SimpleTestCase):
 
         self.assertEqual(captured["route_kwargs"].get("enable_sandbox"), False)
         self.assertTrue(captured["route_kwargs"].get("risk_level") is not None)
+
+
+class ManagePyBlockedTests(SimpleTestCase):
+    """F-01：manage.py 等价任意代码执行子命令必须拒绝（黑名单正则 + 子命令枚举双保险）。"""
+
+    def _assert_blocked(self, command: str) -> None:
+        reason = _is_command_blocked(command)
+        self.assertIsNotNone(reason, f"命令应被黑名单拦截: {command!r}")
+        self.assertFalse(
+            _is_command_whitelisted(command),
+            f"命令不应命中白名单: {command!r}",
+        )
+
+    def test_poc_shell_c_exec_blocked(self):
+        """原 PoC 复验：manage.py shell -c exec(...) 不再免审批放行。"""
+        self._assert_blocked("python manage.py shell -c \"exec(open('evil.py').read())\"")
+
+    def test_shell_c_dunder_import_blocked(self):
+        """审计原始样例：shell -c 内嵌 __import__ 任意代码执行。"""
+        self._assert_blocked(
+            "python manage.py shell -c \"exec(\\\"__import__('os').system('calc')\\\")\""
+        )
+
+    def test_dbshell_blocked(self):
+        self._assert_blocked("python manage.py dbshell")
+
+    def test_shell_plus_blocked(self):
+        """django-extensions shell_plus 同等拒绝。"""
+        self._assert_blocked("python manage.py shell_plus")
+
+    def test_shell_quoted_variant_blocked(self):
+        """引号包裹子命令（manage.py \"shell\"）同样拦截。"""
+        self._assert_blocked('python manage.py "shell" -c "print(1)"')
+
+    def test_shell_case_variant_blocked(self):
+        """大小写变体（re.IGNORECASE）拦截。"""
+        self._assert_blocked('python manage.py Shell -c "print(1)"')
+
+    def test_shell_extra_whitespace_blocked(self):
+        """多空格形态（shlex 归一化后子命令仍命中黑名单）拦截。"""
+        self._assert_blocked('python  manage.py  shell -c "print(1)"')
+
+    def test_python3_shell_blocked(self):
+        self._assert_blocked('python3 manage.py shell -c "print(1)"')
+
+    def test_absolute_windows_python_shell_blocked(self):
+        """绝对路径解释器形态：黑名单正则按原始命令串匹配，不受 shlex 反斜杠转义影响。"""
+        self._assert_blocked(
+            'C:\\Python311\\python.exe manage.py shell -c "print(1)"'
+        )
+
+
+class ManagePyApprovalTests(SimpleTestCase):
+    """F-01：manage.py 枚举外子命令不放行，必须走审批。"""
+
+    def setUp(self):
+        self.policy = ShellExecApprovalPolicy()
+
+    def _assert_requires_approval(self, command: str) -> None:
+        self.assertFalse(
+            _is_command_whitelisted(command),
+            f"命令不应命中白名单: {command!r}",
+        )
+        self.assertTrue(
+            self.policy.should_approve({"command": command}),
+            f"命令应走审批流程: {command!r}",
+        )
+
+    def test_unknown_subcommand_requires_approval(self):
+        self._assert_requires_approval("python manage.py frobnicate --x")
+
+    def test_bare_manage_py_requires_approval(self):
+        self._assert_requires_approval("python manage.py")
+
+    def test_migrate_without_check_requires_approval(self):
+        self._assert_requires_approval("python manage.py migrate")
+
+    def test_makemigrations_requires_approval(self):
+        self._assert_requires_approval("python manage.py makemigrations")
+
+    def test_createsuperuser_requires_approval(self):
+        self._assert_requires_approval("python manage.py createsuperuser")
+
+    def test_collectstatic_requires_approval(self):
+        self._assert_requires_approval("python manage.py collectstatic")
+
+    def test_interleaved_global_option_shell_requires_approval(self):
+        """双保险第二层：全局选项插入使黑名单正则不命中时，
+        子命令枚举校验仍拒绝放行（fail-closed → 审批）。"""
+        self._assert_requires_approval("python manage.py --settings=dev shell")
+
+    def test_absolute_python_interpreter_requires_approval(self):
+        """绝对路径解释器不在白名单（首词精确匹配 python/python3，fail-closed）。"""
+        self._assert_requires_approval("C:/Python311/python.exe manage.py help")
+
+    def test_python_exe_requires_approval(self):
+        self._assert_requires_approval("python.exe manage.py help")
+
+    def test_manage_py_path_variant_requires_approval(self):
+        """manage.py 路径变体不走 manage.py 专用校验（防止指向任意脚本）→ 审批。"""
+        self._assert_requires_approval("python ./evil/manage.py help")
+
+
+class ManagePySafeSubcommandTests(SimpleTestCase):
+    """F-01 防误伤：枚举内只读/安全子命令仍自动通过。"""
+
+    def test_help_whitelisted(self):
+        self.assertTrue(_is_command_whitelisted("python manage.py help"))
+
+    def test_check_whitelisted(self):
+        self.assertTrue(_is_command_whitelisted("python manage.py check"))
+
+    def test_showmigrations_whitelisted(self):
+        self.assertTrue(_is_command_whitelisted("python manage.py showmigrations"))
+
+    def test_test_runner_with_args_whitelisted(self):
+        """README 真实用法：python manage.py test <模块> --noinput。"""
+        self.assertTrue(
+            _is_command_whitelisted(
+                "python manage.py test Django_xm.apps.tools.tests.test_shell_whitelist --noinput"
+            )
+        )
+
+    def test_migrate_check_whitelisted(self):
+        """migrate --check（只读检查未应用迁移）放行。"""
+        self.assertTrue(_is_command_whitelisted("python manage.py migrate --check"))
+
+    def test_python3_help_whitelisted(self):
+        self.assertTrue(_is_command_whitelisted("python3 manage.py help"))
+
+    def test_extra_whitespace_still_whitelisted(self):
+        """shlex 分词归一化空白：多空格不影响枚举内子命令放行。"""
+        self.assertTrue(_is_command_whitelisted("python  manage.py  help"))

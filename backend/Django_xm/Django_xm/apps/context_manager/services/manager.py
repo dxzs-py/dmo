@@ -27,8 +27,10 @@ from Django_xm.apps.context_manager.services.compression import (
     CompressionConfig,
     CompressionStrategy,
     ContextCompressionEngine,
+    EntityExtractor,
     MemoryTier,
     TokenEstimator,
+    messages_to_dicts,
 )
 from Django_xm.apps.context_manager.services.context_builder import (
     BuildMode,
@@ -128,15 +130,6 @@ class ContextManager:
 
     def allocate_budget(self, model_name: str) -> None:
         self._token_budget_manager.allocate(model_name)
-
-    def record_budget_usage(self, section: str, tokens: int) -> Any:
-        return self._token_budget_manager.record_usage(section, tokens)
-
-    def get_budget_usage(self) -> dict[str, Any]:
-        return self._token_budget_manager.get_usage()
-
-    def serialize_messages(self, messages: list[dict[str, Any]]) -> str:
-        return self._serialize_messages(messages)
 
     def mark_long_term(
         self,
@@ -622,30 +615,16 @@ class ContextManager:
 
     @staticmethod
     def _messages_to_dicts(messages: list[Any]) -> list[dict[str, Any]]:
-        """将 BaseMessage 列表转换为 Dict 列表"""
-        from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+        """BaseMessage → dict：委托统一适配层单源（phase6a G3 归一）。
 
-        result = []
-        for msg in messages:
-            if not isinstance(msg, BaseMessage):
-                result.append(msg)
-                continue
-
-            role_map = {
-                HumanMessage: "user",
-                AIMessage: "assistant",
-                SystemMessage: "system",
-                ToolMessage: "tool",
-            }
-            role = role_map.get(type(msg), "unknown")
-            content = content_to_str(msg.content)
-            entry: dict[str, Any] = {"role": role, "content": content}
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                entry["tool_calls"] = msg.tool_calls
-            if hasattr(msg, "additional_kwargs") and "memory_tier" in msg.additional_kwargs:
-                entry["memory_tier"] = msg.additional_kwargs["memory_tier"]
-            result.append(entry)
-        return result
+        行为修复（G3 漂移）：原实现缺 id / tool_call_id 字段（消息身份丢失），
+        现与 compression 单源对齐——序列化产物保留消息身份。消费方
+        （_serialize_messages / mark_long_term / ContextPruner）仅读
+        role/content/name/pinned/memory_tier 等固定键，新增字段无副作用；
+        若产物进入 add_messages reducer 往返，id 保障替换而非追加。
+        非 BaseMessage 条目原样透传（原宽输入语义已并入单源）。
+        """
+        return messages_to_dicts(messages)
 
     @staticmethod
     def _serialize_messages(messages: list[dict[str, Any]]) -> str:
@@ -709,6 +688,52 @@ class ContextManager:
         except Exception:
             logger.exception("保存会话上下文失败")
             return False
+
+    def save_turn_summary(
+        self,
+        session_id: str,
+        user_message: str,
+        assistant_content: str,
+    ) -> bool:
+        """会话终态摘要记忆写入（spec D2）：将本轮对话压缩为摘要并写入跨会话记忆。
+
+        摘要复用统一引擎轻量摘要通道（summarize_long_text：轻量模型 → 辅助模型
+        → SystemConfig 默认 → 兜底），实体/决策复用引擎规则抽取唯一实现，
+        写入委托 save_session_context（含 cross_session_enabled 检查与容量淘汰语义）。
+
+        异常语义：摘要模型解析/调用失败异常向上抛出，由调用方（chat finalizer）
+        静默降级；摘要为空时返回 False 跳过写入，不阻塞调用方主流程。
+        """
+        if not self.config.cross_session_enabled or not self.user_id:
+            return False
+
+        user_text = (user_message or "").strip()
+        assistant_text = (assistant_content or "").strip()
+        if not user_text or not assistant_text:
+            return False
+
+        engine = self._compression_engine or ContextCompressionEngine(CompressionConfig())
+        turn_text = f"用户：{user_text}\n\n助手：{assistant_text}"
+        summary = engine.summarize_long_text(
+            turn_text,
+            "请将以下一轮对话的要点压缩为不超过3句话的中文摘要，"
+            "保留用户意图、关键结论与偏好信息，直接输出摘要文本，不要任何额外说明。",
+        )
+        summary = (summary or "").strip()
+        if not summary:
+            logger.debug(f"会话摘要为空，跳过跨会话记忆写入: session={session_id}")
+            return False
+
+        turn_messages = [
+            {"role": "user", "content": user_text},
+            {"role": "assistant", "content": assistant_text},
+        ]
+        return self.save_session_context(
+            session_id=session_id,
+            summary=summary,
+            key_entities=EntityExtractor.extract_from_messages(turn_messages),
+            key_decisions=ContextCompressionEngine.extract_decisions(turn_messages),
+        )
 
     def _load_cross_session_context(self, query: str) -> str:
         store = self._ensure_store()
@@ -820,10 +845,6 @@ class ContextManager:
             stats["kg_entity_count"] = len(entities)
             stats["kg_relation_count"] = len(relations)
         return stats
-
-    def get_efficiency_metrics(self) -> dict[str, float]:
-        """获取上下文使用效率度量摘要"""
-        return self._efficiency_metrics.get_summary()
 
 
 def create_context_manager(

@@ -137,6 +137,52 @@ def finalize_batch_approvals(all_resume_values: dict, source: str, source_id: st
             continue
 
 
+def _create_batch_approval_rows(
+    source: str,
+    source_id: str,
+    prepared_items: list[tuple[str, dict[str, Any]]],
+) -> list[Approval]:
+    """单事务批量落库审批行（同步实现，经 sync_to_async 包装调用，REL-04）。
+
+    整批同生共死：循环包裹 ``transaction.atomic()``，批内任一条创建失败即整批
+    回滚并向上抛错——消除半批状态（缺失行永不在 collect_batch_decisions 遍历集
+    内 → Command(resume) 决策不完整 / 批次悬挂至超时自愈）。research 主链路的
+    异常经 adapter astream 兜底转 failed 终止任务（session_executor._handle_failure），
+    子代理链路由调用方 try/except 兜底（langgraph_adapter._execute，状态已挂起）。
+
+    事务内仅 DB 操作（幂等检查 + 落库，无网络调用）；Redis 待办/广播由调用方
+    在事务提交后逐条执行。幂等保护：同一 interrupt_id 已有已决断审批
+    （非 PENDING）时跳过，避免恢复执行中 agent 再次经过已决断 interrupt
+    暂停点时用户决策被覆盖。
+    """
+    from django.db import transaction
+
+    from Django_xm.apps.approvals.services.approval_service import (
+        create_approval_record,
+        prepare_approval_data,
+    )
+
+    created: list[Approval] = []
+    with transaction.atomic():
+        for interrupt_id, approval_data in prepared_items:
+            # 幂等保护：同一 interrupt_id 已有已决断审批（非 PENDING）时跳过
+            _existing = _find_approval_by_interrupt_id(interrupt_id)
+            if _existing is not None and _existing.state != Approval.State.PENDING:
+                continue
+            normalized, now_ts, expires_at = prepare_approval_data(source, interrupt_id, approval_data)
+            created.append(
+                create_approval_record(
+                    source,
+                    source_id,
+                    interrupt_id,
+                    normalized,
+                    now_ts=now_ts,
+                    expires_at=expires_at,
+                )
+            )
+    return created
+
+
 async def create_approvals_for_interrupts(
     interrupts_data,
     *,
@@ -147,10 +193,15 @@ async def create_approvals_for_interrupts(
     message_id: str = "",
     data: dict[str, Any] | None = None,
 ) -> str:
-    """为已解析的审批中断批量创建 Approval DB 记录。
+    """为已解析的审批中断批量创建 Approval DB 记录（整批同生共死，REL-04）。
 
     chat 与 research 双链路共用本函数（通过 ``source`` 区分）：
-    - 共用 ``request_approval_async``（统一持久化）与 ``build_approval_extra``；
+    - 共用 ``prepare_approval_data`` / ``create_approval_record``（统一持久化）
+      与 ``build_approval_extra``；
+    - 事务边界（REL-04）：批量落库包裹单事务，任一条失败整批回滚并向上抛错
+      （走调用方既有终止/错误路径），替代原"单条失败 warning+continue"的半批语义；
+    - 网络/Redis 副作用（待办列表 + PENDING 广播）在事务提交后逐条执行，
+      广播失败不阻断批次（DB 已提交，挂起方 5s DB 轮询兜底）；
     - 幂等保护：同一 interrupt_id 已有已决断审批（非 PENDING）时不重置 state，
       避免恢复执行中 agent 再次经过已决断 interrupt 暂停点时用户决策被覆盖。
 
@@ -173,14 +224,16 @@ async def create_approvals_for_interrupts(
         return ""
 
     from Django_xm.apps.approvals.services.approval_service import (
+        broadcast_approval_pending,
         build_approval_extra,
-        request_approval_async,
     )
 
     first_interrupt = interrupts_data[0] if interrupts_data else {}
     graph_interrupt_id = first_interrupt.get("graph_interrupt_id", "") or ""
     langgraph_resume_id = first_interrupt.get("langgraph_resume_id", "") or ""
 
+    # 阶段 0（纯 Python）：预构建各审批的 approval_data（无 DB / 网络副作用）
+    prepared_items: list[tuple[str, dict[str, Any]]] = []
     for interrupt_data in interrupts_data:
         interrupt_id = interrupt_data.get("interrupt_id", "")
         if not interrupt_id:
@@ -219,27 +272,32 @@ async def create_approvals_for_interrupts(
                 base_extra=base_extra,
             ),
         }
+        prepared_items.append((interrupt_id, approval_data))
 
-        # 幂等保护：同一 interrupt_id 已有已决断审批（非 PENDING）时跳过
-        _existing = await sync_to_async(_find_approval_by_interrupt_id)(interrupt_id)
-        if _existing is not None and _existing.state != Approval.State.PENDING:
-            continue
+    # 阶段 1（单事务批量落库，REL-04 整批同生共死）：任一条失败整批回滚并
+    # 向上抛错，走调用方既有终止/错误路径
+    try:
+        created_approvals = await sync_to_async(_create_batch_approval_rows)(
+            source, source_id, prepared_items
+        )
+    except Exception:
+        logger.exception(
+            "[ApprovalBatch] 审批批次创建失败，整批回滚（任务走终止路径）: "
+            f"graph_interrupt_id={graph_interrupt_id}, source={source}, source_id={source_id}"
+        )
+        raise
 
+    # 阶段 2（事务提交后的 Redis 收尾）：待办列表 + PENDING 广播逐条发布；
+    # 广播失败不阻断批次（DB 已提交，挂起方 5s DB 轮询兜底），仅告警。
+    for approval in created_approvals:
         try:
-            await request_approval_async(
-                source=source,
-                source_id=source_id,
-                interrupt_id=interrupt_id,
-                approval_data=approval_data,
-            )
+            await broadcast_approval_pending(approval)
         except Exception:
-            # 创建失败不阻断其它审批，由上层决策链兜底
             logger.warning(
-                f"[ApprovalBatch] 创建审批失败（不阻断其它审批）: "
-                f"interrupt_id={interrupt_id}",
+                f"[ApprovalBatch] 审批 PENDING 广播失败（不阻断批次）: "
+                f"interrupt_id={approval.interrupt_id}",
                 exc_info=True,
             )
-            continue
 
     return graph_interrupt_id
 

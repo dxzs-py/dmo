@@ -22,44 +22,33 @@ logger = logging.getLogger(__name__)
 
 
 def _get_merged_mcp_servers(user=None):
-    """合并系统级和用户级 MCP Server 配置
+    """合并系统级和用户级 MCP Server 配置（5-1.2 收敛：resolve_mcp_servers 薄适配）。
 
-    系统级：`mcp.config.get_system_mcp_servers()`（所有用户共享）——Task 27.3 起
-        配置归属业务模块，不再走 Django settings（修复前读
-        `settings.MCP_SERVERS`，该配置迁移后已不存在，导致系统级恒为空）
-    用户级：数据库 McpServerConfig（仅当前用户可见）
+    合并/去重/enabled 过滤/S-04 安全语义的唯一实现在
+    ``mcp.resolve_servers.resolve_mcp_servers``（去重键 name、系统级优先；
+    系统级 ``enabled=False`` 不暴露——与 agent 运行时加载口径一致，列表
+    可见即运行时可加载；用户级查询失败降级为仅系统级）。本函数仅做 API
+    侧形状适配：user 对象 → user_id，管理员判定 → exclude_user_stdio。
 
     安全约束（S-04）：stdio 会以配置中的 command 在服务端启动子进程（等价
-    任意命令执行）。系统级 Server 由管理员维护（config 模块 + DB
-    source="system"），属可信配置，对所有用户保留；非管理员仅过滤
-    用户自建（source="user"）的 stdio Server，管理员不设限。
+    任意命令执行）。系统级 Server（config 模块 + DB source="system"）为
+    管理员维护的可信配置，对所有用户保留；非管理员仅过滤用户自建
+    （source="user"）的 stdio Server，管理员不设限。
     """
-    from Django_xm.apps.tools.mcp.config import get_system_mcp_servers
-    from Django_xm.apps.tools.models import McpServerConfig
+    from Django_xm.apps.tools.mcp.resolve_servers import resolve_mcp_servers
     from Django_xm.apps.tools.serializers import is_mcp_admin
 
-    base_servers = list(get_system_mcp_servers())
-    seen = {s.get("name") for s in base_servers}
-
-    if user and user.is_authenticated:
-        user_servers = McpServerConfig.objects.filter(user=user, status="active")
-        if not is_mcp_admin(user):
-            # 仅排除用户自建 stdio（source="user"）；source="system" 的 stdio 为可信配置，保留
-            user_servers = user_servers.exclude(transport="stdio", source="user")
-        for srv in user_servers:
-            if srv.name not in seen:
-                base_servers.append(srv.to_config_dict())
-                seen.add(srv.name)
-
-    return base_servers
+    if not user or not user.is_authenticated:
+        return resolve_mcp_servers(None)
+    return resolve_mcp_servers(user.id, exclude_user_stdio=not is_mcp_admin(user))
 
 
 async def _fetch_mcp_tools(selected_servers=None, user=None):
     from Django_xm.apps.tools.mcp import (
-        get_mcp_tools,
         get_server_info_list,
         is_mcp_available,
     )
+    from Django_xm.apps.tools.mcp.resolve_servers import fetch_tools_for_server
 
     if not is_mcp_available():
         return {
@@ -77,27 +66,8 @@ async def _fetch_mcp_tools(selected_servers=None, user=None):
         servers = [s for s in servers if s.get("name") in selected_servers]
 
     for srv in servers:
-        transport = srv.get("transport", "sse")
         try:
-            if transport == "stdio":
-                tools = await get_mcp_tools(
-                    server_name=srv.get("name"),
-                    transport="stdio",
-                    command=srv.get("command"),
-                    args=srv.get("args"),
-                    env=srv.get("env"),
-                )
-            else:
-                url = srv.get("url")
-                if not url:
-                    continue
-                tools = await get_mcp_tools(
-                    server_url=url,
-                    transport=transport,
-                    headers=srv.get("headers"),
-                    auth_token=srv.get("auth_token"),
-                )
-
+            tools = await fetch_tools_for_server(srv)
             for tool in tools:
                 all_tools.append(
                     {
@@ -180,37 +150,13 @@ class McpServerTestView(APIView):
 async def _test_mcp_server(server_name, target):
     import asyncio
 
-    from Django_xm.apps.tools.mcp import get_mcp_tools
+    from Django_xm.apps.tools.mcp.resolve_servers import fetch_tools_for_server
 
     transport = target.get("transport", "sse")
     timeout = target.get("timeout", 20)
 
     try:
-        if transport == "stdio":
-            tools = await asyncio.wait_for(
-                get_mcp_tools(
-                    server_name=server_name,
-                    transport="stdio",
-                    command=target.get("command"),
-                    args=target.get("args"),
-                    env=target.get("env"),
-                ),
-                timeout=timeout,
-            )
-        else:
-            url = target.get("url")
-            if not url:
-                # 配置校验异常：保持在此处抛出，由下方 except 统一转为错误响应（与缺失 url 场景的 API 契约一致）
-                raise ValueError(f"MCP Server '{server_name}' 缺少 url 配置")  # noqa: TRY301
-            tools = await asyncio.wait_for(
-                get_mcp_tools(
-                    server_url=url,
-                    transport=transport,
-                    headers=target.get("headers"),
-                    auth_token=target.get("auth_token"),
-                ),
-                timeout=timeout,
-            )
+        tools = await asyncio.wait_for(fetch_tools_for_server(target), timeout=timeout)
     except TimeoutError:
         return {
             "server": server_name,
@@ -262,8 +208,7 @@ class MethodThrottleMixin:
 
 
 # ---------------------------------------------------------------------------
-# McpServer 资源（GET/POST /mcp/servers/、PUT/DELETE /mcp/servers/{name}/、
-# PATCH /mcp/servers/{name}/status/）
+# McpServer 资源（GET/POST /mcp/servers/、PUT/DELETE /mcp/servers/{name}/）
 # ---------------------------------------------------------------------------
 
 
@@ -339,25 +284,6 @@ class McpServerDetailView(APIView):
         return _handle_crud_result(result, result.get("message", "MCP Server 已删除"))
 
 
-class McpServerStatusView(APIView):
-    """MCP Server 状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）"""
-
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def patch(self, request, name):
-        from Django_xm.apps.tools.managers import McpToolManager
-
-        status = request.data.get("status")
-        manager = McpToolManager()
-        result = manager.toggle_user_tool(name, request.user, status)
-        return _handle_crud_result(
-            result,
-            result.get("message", "状态切换成功"),
-            data={"name": name, "status": result.get("status")},
-        )
-
-
 class ToolListView(APIView):
     permission_classes = [IsAuthenticated]
     # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）
@@ -416,8 +342,7 @@ class ToolListView(APIView):
 
 
 # ---------------------------------------------------------------------------
-# CustomTool 资源（GET/POST /custom/、PUT/DELETE /custom/{name}/、
-# PATCH /custom/{name}/status/）
+# CustomTool 资源（GET/POST /custom/、PUT/DELETE /custom/{name}/）
 # ---------------------------------------------------------------------------
 
 
@@ -582,28 +507,8 @@ class CustomToolDetailView(APIView):
         return _handle_crud_result(result, result.get("message", "自定义工具已删除"))
 
 
-class CustomToolStatusView(APIView):
-    """自定义工具状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）"""
-
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def patch(self, request, name):
-        from Django_xm.apps.tools.managers import LangChainToolManager
-
-        status = request.data.get("status")
-        manager = LangChainToolManager()
-        result = manager.toggle_user_tool(name, request.user, status)
-        return _handle_crud_result(
-            result,
-            result.get("message", "状态切换成功"),
-            data={"name": name, "status": result.get("status")},
-        )
-
-
 # ---------------------------------------------------------------------------
-# Skill 资源（GET/POST /skills/、PUT/DELETE /skills/{name}/、
-# PATCH /skills/{name}/status/）
+# Skill 资源（GET/POST /skills/、PUT/DELETE /skills/{name}/）
 # ---------------------------------------------------------------------------
 
 
@@ -673,41 +578,9 @@ class SkillDetailView(APIView):
         return _handle_crud_result(result, result.get("message", "Skill 已删除"))
 
 
-class SkillStatusView(APIView):
-    """Skill 状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）"""
-
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def patch(self, request, name):
-        from Django_xm.apps.tools.managers import SkillToolManager
-        from Django_xm.apps.tools.serializers import SkillToggleSerializer
-
-        data = {"name": name}
-        if "status" in request.data:
-            data["status"] = request.data["status"]
-        serializer = SkillToggleSerializer(data=data)
-        if not serializer.is_valid():
-            raise BaseAppError(
-                "数据验证失败",
-                business_code=ErrorCode.VALIDATION_FAILED,
-                data={"details": serializer.errors},
-            )
-
-        status = serializer.validated_data.get("status")
-        manager = SkillToolManager()
-        result = manager.toggle_user_tool(name, request.user, status)
-        return _handle_crud_result(
-            result,
-            result.get("message", "状态切换成功"),
-            data={"name": name, "status": result.get("status")},
-        )
-
-
 # ============================================================
 # Skill 包管理（Agent Skills 规范）
-# GET/POST /skills/packages/、GET/DELETE /skills/packages/{name}/、
-# PATCH /skills/packages/{name}/status/
+# GET/POST /skills/packages/、GET/DELETE /skills/packages/{name}/
 # ============================================================
 
 
@@ -830,31 +703,6 @@ class SkillPackageDetailView(APIView):
         if "系统级" in message:
             raise PermissionDenied(message)
         raise BaseAppError(message, business_code=ErrorCode.INVALID_PARAMS)
-
-
-class SkillPackageStatusView(APIView):
-    """Skill 包状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）"""
-
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def patch(self, request, name):
-        from Django_xm.apps.tools.models import SkillPackage
-
-        status = request.data.get("status")
-        pkg = SkillPackage.objects.filter(user=request.user, name=name).first()
-        if not pkg:
-            raise NotFound(f"未找到 Skill 包 '{name}'")
-
-        if status in ("active", "disabled"):
-            pkg.status = status
-        else:
-            pkg.status = "disabled" if pkg.status == "active" else "active"
-
-        pkg.save()
-        return success_response(
-            data={"name": name, "status": pkg.status}, message=f"Skill '{name}' 状态已更新为 {pkg.status}"
-        )
 
 
 class ToolMetaView(APIView):

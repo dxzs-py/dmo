@@ -36,6 +36,10 @@ SIGNAL_PATTERNS = [
 # 默认最大并发会话数
 DEFAULT_MAX_CONCURRENCY = 20
 
+# 订阅断线重连退避参数（REL-03）：初始 1s 指数翻倍，上限 30s
+SUBSCRIPTION_RECONNECT_INITIAL_DELAY = 1.0
+SUBSCRIPTION_RECONNECT_MAX_DELAY = 30.0
+
 
 class SessionManager:
     """统一会话调度管理器（FastAPI 执行服务进程内单例，chat/research 共用）。"""
@@ -48,6 +52,11 @@ class SessionManager:
         self._subscription_task: asyncio.Task | None = None
         # 后台任务引用集合（信令触发的恢复协程），防止被 GC 回收
         self._background_tasks: set[asyncio.Task] = set()
+        # 停机标记（REL-03）：置位后订阅循环不再重连，直接退出
+        self._shutting_down: bool = False
+        # 重连退避参数（实例属性便于测试注入更小值）
+        self._reconnect_initial_delay = SUBSCRIPTION_RECONNECT_INITIAL_DELAY
+        self._reconnect_max_delay = SUBSCRIPTION_RECONNECT_MAX_DELAY
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -55,6 +64,8 @@ class SessionManager:
     async def start(self) -> None:
         """启动：连接 Redis + 订阅信令 + 扫描恢复未完成任务。"""
         import redis.asyncio as redis_async
+
+        self._shutting_down = False
 
         # 注册常驻主事件循环：主 loop 上的异步 checkpointer 连接池多会话共享，
         # 不随单个会话释放（避免一个会话结束关闭其他挂起会话的连接，见问题L）。
@@ -73,6 +84,9 @@ class SessionManager:
 
     async def shutdown(self) -> None:
         """优雅停机：终止订阅 + 停止全部执行协程（checkpoint 已持久化，重启自动恢复）。"""
+        # 先置停机标记再取消任务：订阅循环在异常/退避路径检测到标记后退出，
+        # 不再发起重连（REL-03）
+        self._shutting_down = True
         if self._subscription_task and not self._subscription_task.done():
             self._subscription_task.cancel()
         for thread_id, executor in list(self._sessions.items()):
@@ -347,25 +361,73 @@ class SessionManager:
     # 信令订阅循环
     # ------------------------------------------------------------------
     async def _subscription_loop(self) -> None:
-        """Redis 模式订阅循环：解析信令并路由。"""
+        """Redis 模式订阅循环：解析信令并路由（断线自动重连，REL-03）。
+
+        Redis 抖动/重启导致 pubsub.listen() 抛 ConnectionError 时，循环不再
+        退出（原实现 except 后函数返回 → 订阅永久失效，新任务无法启动），而是
+        指数退避后重建 PubSub 连接并重新订阅原频道，同时补跑 recover_unfinished
+        （重连窗口内丢失的 start 信令经 DB 扫描兜底恢复）。
+        停机（shutdown 置位 _shutting_down）后不再重连，循环干净退出。
+        """
         if self._pubsub is None:
             logger.error("[SessionManager] 信令订阅循环启动但 pubsub 未初始化（start 未完成）")
             return
-        try:
-            async for message in self._pubsub.listen():
-                if message.get("type") != "pmessage":
-                    continue
-                channel = message.get("channel", b"")
-                if isinstance(channel, bytes):
-                    channel = channel.decode("utf-8")
-                data = message.get("data", b"")
-                if isinstance(data, bytes):
-                    data = data.decode("utf-8")
-                await self._dispatch_signal(channel, data)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("[SessionManager] 信令订阅循环异常")
+        delay = self._reconnect_initial_delay
+        while True:
+            try:
+                async for message in self._pubsub.listen():
+                    if message.get("type") != "pmessage":
+                        continue
+                    channel = message.get("channel", b"")
+                    if isinstance(channel, bytes):
+                        channel = channel.decode("utf-8")
+                    data = message.get("data", b"")
+                    if isinstance(data, bytes):
+                        data = data.decode("utf-8")
+                    await self._dispatch_signal(channel, data)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                if self._shutting_down:
+                    logger.info("[SessionManager] 停机中，信令订阅循环退出（不再重连）")
+                    return
+                logger.exception("[SessionManager] 信令订阅连接中断")
+            if self._shutting_down:
+                return
+            # 指数退避等待重连（sleep 中被 cancel 属停机路径，直接向上传播）
+            await asyncio.sleep(delay)
+            if self._shutting_down:
+                return
+            delay = min(delay * 2, self._reconnect_max_delay)
+            try:
+                await self._reconnect_subscription()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[SessionManager] 信令订阅重连失败，继续退避重试")
+                continue
+            # 重连成功，重置退避
+            delay = self._reconnect_initial_delay
+
+    async def _reconnect_subscription(self) -> None:
+        """重建 PubSub 连接并重新订阅信令频道 + 补跑未完成任务恢复（重连路径）。
+
+        仅在新 PubSub psubscribe 成功后才替换 ``self._pubsub``（失败时保留旧
+        对象，由外层循环继续退避重试）；旧 PubSub 关闭失败可忽略。
+        """
+        pubsub = self._redis.pubsub()
+        await pubsub.psubscribe(*SIGNAL_PATTERNS)
+        old_pubsub = self._pubsub
+        self._pubsub = pubsub
+        if old_pubsub is not None:
+            try:
+                await old_pubsub.close()
+            except Exception:
+                logger.debug("关闭旧 PubSub 失败（可忽略）")
+        logger.info(f"[SessionManager] 信令订阅已重连: patterns={SIGNAL_PATTERNS}")
+        # 重连窗口内的 start 信令可能丢失：补跑未完成任务扫描兜底
+        # （幂等：已激活会话由 recover/start_session 跳过）
+        await self.recover_unfinished()
 
     async def _dispatch_signal(self, channel: str, data: str) -> None:
         """解析频道（agent:{kind}:{thread_id}）并路由。"""

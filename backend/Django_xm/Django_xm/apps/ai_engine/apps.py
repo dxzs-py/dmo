@@ -54,13 +54,6 @@ class AiEngineConfig(AppConfig):
 
         setup_default_capabilities()
 
-        from Django_xm.apps.ai_engine.config import settings as app_cfg
-
-        if app_cfg.llm_cache_enabled:
-            from Django_xm.apps.cache_manager.services.cache_service import setup_langchain_cache
-
-            setup_langchain_cache(enabled=True)
-
         # 缓存预热由各进程入口完成（apps.ready 为 True 后执行，避免 Django
         # "Accessing the database during app initialization" RuntimeWarning）：
         # - Web 进程：asgi.py / wsgi.py 顶层

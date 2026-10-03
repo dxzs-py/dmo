@@ -22,6 +22,8 @@ status=active）合并的单一实现，取代原先分散在
 import logging
 from typing import Any
 
+from langchain_core.tools import BaseTool
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,3 +80,47 @@ def resolve_mcp_servers(
         # 用户级配置查询失败不阻断装配：降级为仅系统级
         logger.warning(f"加载用户 MCP Server 配置失败: {e}")
     return servers
+
+
+async def fetch_tools_for_server(srv: dict[str, Any]) -> list[BaseTool]:
+    """按 transport 分派拉取单个 MCP Server 的工具列表（5-1.2 收敛：分派唯一实现）。
+
+    分派规则（原 ``tools/_load_mcp_tools_async``、``views_mcp/_fetch_mcp_tools``、
+    ``views_mcp/_test_mcp_server``、``managers/McpToolManager._test_mcp_server_async``
+    四处重复逻辑收敛至此）：
+
+    - stdio → command/args/env（stdio 会以 command 在服务端启动子进程，
+      仅限管理员维护的可信配置，S-04 语义见模块 docstring）；
+    - 其余（sse/http/websocket）→ url/headers/auth_token。
+
+    Args:
+        srv: Server 配置 dict（``resolve_mcp_servers`` 产物元素）。
+
+    Returns:
+        工具列表；``get_mcp_tools`` 内部失败时返回空列表（不抛出）。
+
+    Raises:
+        ValueError: 非 stdio 传输且缺少 url 配置（连接测试场景依赖该异常
+            返回错误结构；装配/列表场景按 Server 粒度捕获后跳过并告警）。
+    """
+    from Django_xm.apps.tools.mcp import get_mcp_tools
+
+    transport = srv.get("transport", "sse")
+    if transport == "stdio":
+        return await get_mcp_tools(
+            server_name=srv.get("name"),
+            transport="stdio",
+            command=srv.get("command"),
+            args=srv.get("args"),
+            env=srv.get("env"),
+        )
+    url = srv.get("url")
+    if not url:
+        raise ValueError(f"MCP Server '{srv.get('name', 'unknown')}' 缺少 url 配置")
+    return await get_mcp_tools(
+        server_url=url,
+        server_name=srv.get("name"),
+        transport=transport,
+        headers=srv.get("headers"),
+        auth_token=srv.get("auth_token"),
+    )

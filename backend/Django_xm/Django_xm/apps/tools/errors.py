@@ -77,20 +77,6 @@ class StandardToolResult(BaseModel):
             return f"错误: {self.content}"
         return self.content
 
-    def to_tool_result(self, tool_name: str = "") -> ToolResult:
-        """转换为 ToolResult"""
-        if self.status == ToolStatus.ERROR:
-            return ToolResult(
-                success=False,
-                error=ToolError(
-                    code=ToolErrorCode.EXECUTION_ERROR,
-                    message=self.content,
-                    tool_name=tool_name,
-                ),
-                metadata=self.metadata,
-            )
-        return ToolResult(success=True, content=self.content, metadata=self.metadata)
-
 
 def create_tool_result(content: str, metadata: dict | None = None) -> ToolResult:
     return ToolResult(success=True, content=content, metadata=metadata or {})

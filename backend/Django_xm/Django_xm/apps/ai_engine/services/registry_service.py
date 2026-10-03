@@ -213,14 +213,6 @@ def get_embedding_registry() -> list[dict[str, Any]]:
     return registry
 
 
-def get_embedding_provider_config(provider_id: str) -> dict[str, Any] | None:
-    """获取单个 embedding provider 的配置"""
-    for p in get_embedding_registry():
-        if p["id"] == provider_id:
-            return p
-    return None
-
-
 def get_embedding_provider_ids() -> list[str]:
     """获取所有已启用的 embedding provider_id 列表"""
     return [p["id"] for p in get_embedding_registry()]

@@ -76,39 +76,6 @@ class SafeConfigMixin:
         return os.environ.get(env, default)
 
 
-TOOL_METADATA_DEFAULTS = {
-    "tier": "extended",
-    "visibility": "selectable",
-    "category": "other",
-}
-
-VALID_TOOL_TIERS = {"core", "standard", "extended"}
-VALID_TOOL_VISIBILITIES = {"core", "switch", "selectable"}
-VALID_TOOL_CATEGORIES = {
-    "basic",
-    "web_search",
-    "web_fetch",
-    "file",
-    "weather",
-    "agent",
-    "todo",
-    "translation",
-    "system",
-    "other",
-}
-
-
-def validate_tool_metadata(metadata: dict) -> dict:
-    merged = {**TOOL_METADATA_DEFAULTS, **(metadata or {})}
-    if merged["tier"] not in VALID_TOOL_TIERS:
-        raise ValueError(f"Invalid tool tier: {merged['tier']}")
-    if merged["visibility"] not in VALID_TOOL_VISIBILITIES:
-        raise ValueError(f"Invalid tool visibility: {merged['visibility']}")
-    if merged["category"] not in VALID_TOOL_CATEGORIES:
-        raise ValueError(f"Invalid tool category: {merged['category']}")
-    return merged
-
-
 # ── 审批中断检测 ──────────────────────────────────────────────────
 # 工具层审批已统一收敛到 ApprovalMiddleware（apps/agent_hub/approval/middleware.py），
 # 此处仅保留 is_approval_interrupt 供流处理（stream_helpers / adapter / deep_chat_service

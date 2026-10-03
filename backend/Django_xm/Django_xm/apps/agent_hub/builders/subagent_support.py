@@ -517,7 +517,7 @@ class SubAgentContentMiddleware(AgentMiddleware):
         if msg is None:
             return ""
         try:
-            from Django_xm.apps.chat.services.stream_chunk_processors import extract_thinking_content
+            from Django_xm.apps.ai_engine.services.thinking import extract_thinking_content
 
             return extract_thinking_content(msg) or ""
         except Exception:

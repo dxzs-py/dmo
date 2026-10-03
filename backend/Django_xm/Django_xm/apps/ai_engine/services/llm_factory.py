@@ -50,7 +50,7 @@ from langchain_core.runnables import RunnableConfig
 from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.common.messages import content_to_str
 
-from ..config import HELPER_MODEL_PRIORITY, get_model_presets, settings
+from ..config import HELPER_MODEL_PRIORITY, settings
 from ..providers import (
     PROVIDER_REGISTRY,
     apply_reasoning_patch_if_needed,
@@ -366,12 +366,6 @@ def get_chat_model(
 
     logger.warning("无可用 fallback 模型，仅使用主模型（无自动切换）")
     return primary_model
-
-
-def get_model_config(preset: str) -> dict:
-    """从统一配置获取模型预设配置"""
-    presets = get_model_presets()
-    return presets.get(preset, {})
 
 
 def get_model_string(

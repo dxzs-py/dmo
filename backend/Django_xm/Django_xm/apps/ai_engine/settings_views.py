@@ -269,7 +269,7 @@ class AISettingsView(APIView):
                 )
             else:
                 SystemConfig.set_value("helper_model", None)
-            # 同步运行时内存（兼容 HelperModelView 逻辑）
+            # 同步运行时内存
             from django.conf import settings as django_settings
 
             django_settings.AI_HELPER_MODEL_PROVIDER = provider_id

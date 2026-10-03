@@ -4,7 +4,7 @@
 - 旧动词路由不可达（POST add/update/delete/toggle/create/upload 等；path 参数化后
   动词名命中同名资源路由返回 405，未匹配任何路由返回 404——均代表旧端点已死）
 - 四组资源（McpServer / CustomTool / Skill / SkillPackage）的
-  POST/PATCH/PUT/DELETE 新路径可达，响应 {code, message, data} 结构与字段形状
+  POST/PUT/DELETE 新路径可达，响应 {code, message, data} 结构与字段形状
   与重构前逐字段一致（manager/loader 层 mock，隔离 MCP 连接等外部依赖）
 - name 字符集边界校验（创建入口拒绝 "/" 等路径不安全字符，返回 400）
 - 限流类按方法挂载（GET=MetaRateThrottle / POST=SensitiveOperationRateThrottle /
@@ -35,7 +35,7 @@ from Django_xm.apps.core.throttling import (
     UserRateThrottle,
 )
 from Django_xm.apps.tools import views_mcp
-from Django_xm.apps.tools.models import CustomTool, SkillPackage, ToolCategory
+from Django_xm.apps.tools.models import CustomTool, ToolCategory
 
 TOOLS_URL = "/api/v1/tools/"
 
@@ -110,7 +110,7 @@ class OldVerbRoutesRemovedTests(ToolsRestTestBase):
 
 
 class McpServerResourceTests(ToolsRestTestBase):
-    """McpServer 资源：POST /mcp/servers/、PUT|DELETE /mcp/servers/{name}/、PATCH .../status/。"""
+    """McpServer 资源：POST /mcp/servers/、PUT|DELETE /mcp/servers/{name}/。"""
 
     ADD_RESULT: ClassVar[dict] = {
         "success": True,
@@ -204,36 +204,6 @@ class McpServerResourceTests(ToolsRestTestBase):
         self.assertIsNone(resp.json()["data"])
         mock_manager_cls.return_value.delete_user_tool.assert_called_once_with("demo", self.user)
 
-    def test_toggle_server_with_status(self):
-        with mock.patch("Django_xm.apps.tools.managers.McpToolManager") as mock_manager_cls:
-            mock_manager_cls.return_value.toggle_user_tool.return_value = {
-                "success": True,
-                "message": "MCP Server 'demo' 已禁用",
-                "status": "disabled",
-            }
-            resp = self.client.patch(
-                f"{TOOLS_URL}mcp/servers/demo/status/",
-                {"status": "disabled"},
-                format="json",
-            )
-
-        self.assertEqual(resp.status_code, 200, resp.content)
-        self.assertEqual(resp.json()["data"], {"name": "demo", "status": "disabled"})
-        mock_manager_cls.return_value.toggle_user_tool.assert_called_once_with("demo", self.user, "disabled")
-
-    def test_toggle_server_without_status_passes_none(self):
-        """body 无 status 时传 None（manager 内自动取反语义保持）。"""
-        with mock.patch("Django_xm.apps.tools.managers.McpToolManager") as mock_manager_cls:
-            mock_manager_cls.return_value.toggle_user_tool.return_value = {
-                "success": True,
-                "message": "已切换",
-                "status": "active",
-            }
-            resp = self.client.patch(f"{TOOLS_URL}mcp/servers/demo/status/", {}, format="json")
-
-        self.assertEqual(resp.status_code, 200, resp.content)
-        mock_manager_cls.return_value.toggle_user_tool.assert_called_once_with("demo", self.user, None)
-
     def test_server_test_action(self):
         """POST /mcp/servers/{name}/test/ 仅测已保存的 active server。"""
         test_data = {
@@ -266,7 +236,7 @@ class McpServerResourceTests(ToolsRestTestBase):
 
 
 class CustomToolResourceTests(ToolsRestTestBase):
-    """CustomTool 资源：POST /custom/（原 /upload/）、PUT|DELETE /custom/{name}/、PATCH .../status/。"""
+    """CustomTool 资源：POST /custom/（原 /upload/）、PUT|DELETE /custom/{name}/。"""
 
     def test_upload_tool(self):
         resp = self.client.post(
@@ -330,21 +300,9 @@ class CustomToolResourceTests(ToolsRestTestBase):
         self.assertEqual(resp.status_code, 200, resp.content)
         mock_manager_cls.return_value.delete_user_tool.assert_called_once_with("demo-tool", self.user)
 
-    def test_toggle_tool(self):
-        with mock.patch("Django_xm.apps.tools.managers.LangChainToolManager") as mock_manager_cls:
-            mock_manager_cls.return_value.toggle_user_tool.return_value = {
-                "success": True,
-                "message": "已切换",
-                "status": "disabled",
-            }
-            resp = self.client.patch(f"{TOOLS_URL}custom/demo-tool/status/", {"status": "disabled"}, format="json")
-
-        self.assertEqual(resp.status_code, 200, resp.content)
-        self.assertEqual(resp.json()["data"], {"name": "demo-tool", "status": "disabled"})
-
 
 class SkillResourceTests(ToolsRestTestBase):
-    """Skill 资源：POST /skills/、PUT|DELETE /skills/{name}/、PATCH .../status/。"""
+    """Skill 资源：POST /skills/、PUT|DELETE /skills/{name}/。"""
 
     CREATE_RESULT: ClassVar[dict] = {
         "success": True,
@@ -404,29 +362,9 @@ class SkillResourceTests(ToolsRestTestBase):
         self.assertEqual(resp.status_code, 200, resp.content)
         mock_manager_cls.return_value.delete_user_tool.assert_called_once_with("skill_demo", self.user)
 
-    def test_toggle_skill(self):
-        with mock.patch("Django_xm.apps.tools.managers.SkillToolManager") as mock_manager_cls:
-            mock_manager_cls.return_value.toggle_user_tool.return_value = {
-                "success": True,
-                "message": "已切换",
-                "status": "disabled",
-            }
-            resp = self.client.patch(f"{TOOLS_URL}skills/demo/status/", {"status": "disabled"}, format="json")
-
-        self.assertEqual(resp.status_code, 200, resp.content)
-        self.assertEqual(resp.json()["data"], {"name": "demo", "status": "disabled"})
-
-    def test_toggle_skill_rejects_invalid_status(self):
-        """status 非法值返回 400（沿用 SkillToggleSerializer 校验语义）。"""
-        with mock.patch("Django_xm.apps.tools.managers.SkillToolManager") as mock_manager_cls:
-            resp = self.client.patch(f"{TOOLS_URL}skills/demo/status/", {"status": "bogus"}, format="json")
-
-        self.assertEqual(resp.status_code, 400, resp.content)
-        mock_manager_cls.return_value.toggle_user_tool.assert_not_called()
-
 
 class SkillPackageResourceTests(ToolsRestTestBase):
-    """SkillPackage 资源：POST /skills/packages/、GET|DELETE .../{name}/、PATCH .../status/。"""
+    """SkillPackage 资源：POST /skills/packages/、GET|DELETE .../{name}/。"""
 
     def _zip_file(self, filename="pkg.zip"):
         return SimpleUploadedFile(filename, b"fake-zip-content", content_type="application/zip")
@@ -478,41 +416,6 @@ class SkillPackageResourceTests(ToolsRestTestBase):
             resp = self.client.delete(f"{TOOLS_URL}skills/packages/x/")
 
         self.assertEqual(resp.status_code, 403, resp.content)
-
-    def _create_package(self, name="my-pkg", status="active"):
-        return SkillPackage.objects.create(
-            user=self.user,
-            name=name,
-            description="demo",
-            tool_type="skill",
-            category=self.category,
-            source="user",
-            status=status,
-            skill_dir="/tmp/skills/my-pkg",
-        )
-
-    def test_toggle_package_with_status(self):
-        self._create_package(status="active")
-        resp = self.client.patch(
-            f"{TOOLS_URL}skills/packages/my-pkg/status/",
-            {"status": "disabled"},
-            format="json",
-        )
-
-        self.assertEqual(resp.status_code, 200, resp.content)
-        self.assertEqual(resp.json()["data"], {"name": "my-pkg", "status": "disabled"})
-
-    def test_toggle_package_auto_reverse_without_status(self):
-        self._create_package(status="active")
-        resp = self.client.patch(f"{TOOLS_URL}skills/packages/my-pkg/status/", {}, format="json")
-
-        self.assertEqual(resp.status_code, 200, resp.content)
-        self.assertEqual(resp.json()["data"], {"name": "my-pkg", "status": "disabled"}, "缺省 status 应自动取反")
-
-    def test_toggle_package_not_found(self):
-        resp = self.client.patch(f"{TOOLS_URL}skills/packages/ghost/status/", {}, format="json")
-        self.assertEqual(resp.status_code, 404, resp.content)
-        self.assertIn("未找到 Skill 包", resp.json()["message"])
 
     def test_package_detail(self):
         with mock.patch("Django_xm.apps.tools.skills.loader.SkillLoader") as mock_loader_cls:

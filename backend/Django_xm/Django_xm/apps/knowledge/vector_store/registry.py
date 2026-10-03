@@ -51,11 +51,6 @@ class VectorStoreRegistry:
         return cls._backends[name]
 
     @classmethod
-    def list_backends(cls) -> list[str]:
-        """列出所有已注册的后端名称"""
-        return list(cls._backends.keys())
-
-    @classmethod
     def unregister(cls, name: str) -> None:
         """取消注册向量存储后端"""
         if name in cls._backends:

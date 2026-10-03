@@ -4,6 +4,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Edit, InfoFilled, Refresh } from '@element-plus/icons-vue'
 import { toolsAPI } from '@/api/tools'
 import { useToolsStore } from '@/stores/tools'
+import { extractErrorMessage } from '@/utils/apiErrorHandler'
+import { useSelectableList } from '@/composables/useSelectableList'
 import ToolUploadDialog from '../ToolUploadDialog.vue'
 
 const props = defineProps({
@@ -63,25 +65,18 @@ const openUploadDialog = () => {
 }
 defineExpose({ openUploadDialog })
 
-// ── 选择操作 ──
-const isLangchainSelected = (name) => props.selected.includes(name)
+// ── 选择操作（状态机收敛到 useSelectableList；键形态差异经 getKey 注入） ──
+const { isSelected, toggle, selectAll, clear, deselect, autoSelectNew } = useSelectableList({
+  items: selectableLangchainTools,
+  getKey: (tool) => tool.name,
+  selected: () => props.selected,
+  emit,
+})
 
-const toggleLangchainTool = (name) => {
-  const idx = props.selected.indexOf(name)
-  if (idx >= 0) {
-    emit('update:selected', props.selected.filter(n => n !== name))
-  } else {
-    emit('update:selected', [...props.selected, name])
-  }
-}
-
-const selectAllLangchain = () => {
-  emit('update:selected', selectableLangchainTools.value.map(t => t.name))
-}
-
-const clearLangchain = () => {
-  emit('update:selected', [])
-}
+const isLangchainSelected = isSelected
+const toggleLangchainTool = toggle
+const selectAllLangchain = selectAll
+const clearLangchain = clear
 
 const handleDeleteCustomTool = (tool) => withPopoverLock(async () => {
   try {
@@ -94,11 +89,11 @@ const handleDeleteCustomTool = (tool) => withPopoverLock(async () => {
   try {
     await toolsAPI.deleteCustomTool({ name: tool.name })
     ElMessage.success(`工具 "${tool.name}" 已删除`)
-    emit('update:selected', props.selected.filter(n => n !== tool.name))
+    deselect(tool.name)
     toolsStore.invalidateLangchainTools()
     fetchLangchainTools()
   } catch (e) {
-    ElMessage.error('删除失败: ' + (e.response?.data?.message || e.message))
+    ElMessage.error('删除失败: ' + extractErrorMessage(e))
   }
 })
 
@@ -110,13 +105,10 @@ const handleEditCustomTool = (tool) => {
 const handleUploadSuccess = async () => {
   showToolUploadDialog.value = false
   editingCustomTool.value = null
-  const oldNames = new Set(langchainTools.value.map(t => t.name))
+  const oldTools = langchainTools.value
   toolsStore.invalidateLangchainTools()
   await fetchLangchainTools(true)
-  const newNames = langchainTools.value.filter(t => !oldNames.has(t.name)).map(t => t.name)
-  if (newNames.length > 0) {
-    emit('update:selected', [...props.selected, ...newNames])
-  }
+  autoSelectNew(langchainTools.value, oldTools)
 }
 </script>
 

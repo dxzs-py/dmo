@@ -2,8 +2,8 @@
  * 统一审批 API 模块
  *
  * 对接后端 /api/v1/approvals/ 端点：
- * - POST /approvals/{interrupt_id}/resume/：恢复审批（chat / deep_research / learning source 均走 SSE 流）
- * - POST /approvals/{interrupt_id}/reject/：拒绝审批
+ * - POST /approvals/{interrupt_id}/resume/：恢复审批（chat / deep_research / learning source 均走 SSE 流；
+ *   拒绝审批同样走本端点，data.approved = false）
  */
 
 import { apiClient } from '@/api/axios'

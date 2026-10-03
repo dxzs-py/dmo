@@ -68,16 +68,8 @@ def get_standard_tools() -> list[BaseTool]:
     return [t for t in get_all_tools() if (t.metadata or {}).get("tier") in ("core", "standard")]
 
 
-def _get_extended_tools() -> list[BaseTool]:
-    return get_all_tools()
-
-
 def get_all_basic_tools() -> list[BaseTool]:
     return get_core_tools()
-
-
-def _get_advanced_tools() -> list[BaseTool]:
-    return _get_extended_tools()
 
 
 def _get_web_search_tools() -> list[BaseTool]:
@@ -89,23 +81,15 @@ def _get_web_search_tools() -> list[BaseTool]:
     has_ddg = has_duckduckgo_available()
 
     if has_tavily:
-        if web_search not in tools:
-            tools.append(web_search)
+        tools.append(web_search)
 
     if has_ddg:
-        if duckduckgo_search not in tools:
-            tools.append(duckduckgo_search)
+        tools.append(duckduckgo_search)
 
     if not has_tavily and not has_ddg:
         logger.warning("联网搜索不可用：未配置 Tavily API Key 且未安装 ddgs")
 
     return tools
-
-
-def _filter_tools_by_names(tools: list[BaseTool], selected_tools: list[str]) -> list[BaseTool]:
-    """按名称过滤工具"""
-    selected_set = set(selected_tools)
-    return [t for t in tools if t.name in selected_set]
 
 
 def get_all_advanced_tools() -> list[BaseTool]:
@@ -153,8 +137,11 @@ async def _load_mcp_tools_async(
     try:
         from asgiref.sync import sync_to_async
 
-        from Django_xm.apps.tools.mcp import get_mcp_tools, is_mcp_available
-        from Django_xm.apps.tools.mcp.resolve_servers import resolve_mcp_servers
+        from Django_xm.apps.tools.mcp import is_mcp_available
+        from Django_xm.apps.tools.mcp.resolve_servers import (
+            fetch_tools_for_server,
+            resolve_mcp_servers,
+        )
 
         if not is_mcp_available():
             logger.warning("MCP 不可用: langchain-mcp-adapters 未安装")
@@ -172,29 +159,10 @@ async def _load_mcp_tools_async(
             logger.info(f"MCP 过滤: 选中 {len(servers)} 个服务器: {selected_servers}")
         all_mcp_tools: list[BaseTool] = []
         for srv in servers:
-            transport = srv.get("transport", "sse")
             try:
-                logger.info(f"正在加载 MCP Server: {srv.get('name')} (transport={transport})")
-                if transport == "stdio":
-                    tools = await get_mcp_tools(
-                        server_name=srv.get("name"),
-                        transport="stdio",
-                        command=srv.get("command"),
-                        args=srv.get("args"),
-                        env=srv.get("env"),
-                    )
-                else:
-                    url = srv.get("url")
-                    if not url:
-                        logger.warning(f"MCP Server '{srv.get('name')}' 缺少 url")
-                        continue
-                    tools = await get_mcp_tools(
-                        server_url=url,
-                        server_name=srv.get("name"),
-                        transport=transport,
-                        headers=srv.get("headers"),
-                        auth_token=srv.get("auth_token"),
-                    )
+                logger.info(f"正在加载 MCP Server: {srv.get('name')} (transport={srv.get('transport', 'sse')})")
+                # transport 分派（stdio/url）统一走 fetch_tools_for_server（5-1.2 收敛）
+                tools = await fetch_tools_for_server(srv)
                 logger.info(f"MCP Server '{srv.get('name')}' 返回 {len(tools)} 个工具")
                 all_mcp_tools.extend(tools)
             except Exception as e:

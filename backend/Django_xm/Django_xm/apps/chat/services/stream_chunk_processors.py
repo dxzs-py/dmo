@@ -7,9 +7,12 @@
 
 本模块仅保留：
 - ``_sync_pending_to_stream_state``：将 _pending_content 同步到共享 stream_state
-- ``extract_thinking_content``：统一提取思考内容（兼容 DeepSeek/Ollama/Anthropic）
 - ``_handle_ai_message_chunk``：处理 AIMessage/AIMessageChunk（正文流式 + 思考 + 中间内容缓冲）
 - ``process_stream_chunk``：流式 chunk 分发入口（消息类型分派）
+
+思考内容提取统一使用 ai_engine 单源（G1 合并）：
+``extract_thinking_content`` 导入自 ``apps.ai_engine.services.thinking``，
+本模块不再持有副本。
 """
 
 import logging
@@ -17,6 +20,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage
 
+from Django_xm.apps.ai_engine.services.thinking import extract_thinking_content
 from Django_xm.common.messages import content_to_str
 
 logger = logging.getLogger(__name__)
@@ -34,37 +38,6 @@ def _sync_pending_to_stream_state(accumulated_reasoning: dict[str, Any]):
         stream_state["pending_content"] = accumulated_reasoning.get("_pending_content", "")
 
 
-def extract_thinking_content(chunk, provider_id: str = "") -> str | None:
-    """从流式 chunk 中提取思考内容，兼容多种 Provider 格式。
-
-    - DeepSeek: additional_kwargs["reasoning_content"]
-    - Ollama (Qwen3/R1): additional_kwargs["reasoning_content"]（langchain-ollama 自动处理）
-    - Anthropic Claude: content blocks 中 type="thinking" 的块
-    """
-    # 1. DeepSeek / Ollama: additional_kwargs["reasoning_content"]
-    additional_kwargs = getattr(chunk, "additional_kwargs", {})
-    reasoning_content = additional_kwargs.get("reasoning_content")
-    if reasoning_content and isinstance(reasoning_content, str):
-        return reasoning_content
-
-    # 2. Anthropic Claude: thinking content blocks
-    # ChatAnthropic 将思考内容放在 content blocks 中，type="thinking"
-    content = getattr(chunk, "content", None)
-    if isinstance(content, list):
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "thinking":
-                text = block.get("text", "")
-                if text:
-                    return text
-            # LangChain ContentBlock 对象
-            if hasattr(block, "type") and block.type == "thinking":
-                text = getattr(block, "text", "")
-                if text:
-                    return text
-
-    return None
-
-
 def _handle_ai_message_chunk(
     message: AIMessage,
     lcp_func,
@@ -80,7 +53,7 @@ def _handle_ai_message_chunk(
     """
     # 统一思考内容提取（兼容 DeepSeek/Ollama/Anthropic）
     # 仅当深度思考启用时才发送 reasoning 事件，避免关闭思考后仍显示"推理中"
-    thinking_text = extract_thinking_content(message, mode if isinstance(mode, str) else "")
+    thinking_text = extract_thinking_content(message)
     if thinking_text:
         if accumulated_reasoning is not None:
             prev = accumulated_reasoning.get("content", "") or ""

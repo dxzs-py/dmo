@@ -84,13 +84,6 @@ class ContextEfficiencyMetrics:
         self._total_compressed_tokens += compressed_tokens
         self._compression_count += 1
 
-    def record_retrieval(self, hit: bool) -> None:
-        """记录检索命中/未命中"""
-        if hit:
-            self._retrieval_hit_count += 1
-        else:
-            self._retrieval_miss_count += 1
-
     @property
     def compression_retention_rate(self) -> float:
         """压缩保留率：压缩后/压缩前"""
@@ -137,16 +130,6 @@ class BudgetAllocation:
     @property
     def remaining(self) -> int:
         return max(0, self.budget - self.used)
-
-    @property
-    def usage_ratio(self) -> float:
-        if self.budget <= 0:
-            return 0.0
-        return self.used / self.budget
-
-    @property
-    def is_over(self) -> bool:
-        return self.used > self.budget
 
 
 @dataclass
@@ -199,22 +182,6 @@ class TokenBudgetManager:
             return BUDGET_TEMPLATES["default"]
         return merged[template]
 
-    @classmethod
-    def list_templates(cls) -> list[str]:
-        merged = {**BUDGET_TEMPLATES, **_CUSTOM_TEMPLATES, **cls._custom_templates}
-        return sorted(merged.keys())
-
-    @classmethod
-    def register_template(cls, name: str, ratios: dict[str, float]) -> None:
-        total = sum(ratios.values())
-        if abs(total - 1.0) > 0.01:
-            raise ValueError(f"预算模板 '{name}' 比例总和为 {total:.4f}，必须等于 1.0")
-        valid_keys = set(BUDGET_TEMPLATES["default"].keys())
-        if set(ratios.keys()) != valid_keys:
-            raise ValueError(f"预算模板 '{name}' 必须包含且仅包含分区: {sorted(valid_keys)}")
-        cls._custom_templates[name] = ratios
-        logger.info(f"注册自定义预算模板: {name}")
-
     def check(self, section_name: str, token_count: int) -> BudgetCheckResult:
         allocation = self._allocations.get(section_name)
         if allocation is None:
@@ -236,11 +203,6 @@ class TokenBudgetManager:
             requested=token_count,
             over_by=over_by,
         )
-
-    def get_budget(self, section_name: str) -> int:
-        with self._lock:
-            allocation = self._allocations.get(section_name)
-            return allocation.budget if allocation else 0
 
     def get_usage(self) -> dict[str, dict[str, int]]:
         with self._lock:
@@ -282,8 +244,3 @@ class TokenBudgetManager:
     @property
     def total_budget(self) -> int:
         return self._total_budget
-
-    @property
-    def total_used(self) -> int:
-        with self._lock:
-            return sum(a.used for a in self._allocations.values())

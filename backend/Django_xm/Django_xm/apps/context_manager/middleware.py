@@ -14,12 +14,14 @@ from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.types import ModelRequest
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langgraph.runtime import Runtime
 
 from Django_xm.apps.context_manager.config import context_settings
 from Django_xm.apps.context_manager.services.compression import (
     TokenEstimator,
+    dicts_to_messages,
+    messages_to_dicts,
 )
 from Django_xm.apps.context_manager.services.progressive_compressor import (
     CompressionLevel,
@@ -258,64 +260,12 @@ class ContextManagerMiddleware(AgentMiddleware):
         return total
 
     def _messages_to_dicts(self, messages: Sequence[BaseMessage]) -> list[dict[str, Any]]:
-        """将 BaseMessage 列表转换为 Dict 列表"""
-        result = []
-        for msg in messages:
-            role_map = {
-                HumanMessage: "user",
-                AIMessage: "assistant",
-                SystemMessage: "system",
-                ToolMessage: "tool",
-            }
-            role = role_map.get(type(msg), "unknown")
-            content = content_to_str(msg.content)
-            entry: dict[str, Any] = {"role": role, "content": content}
-            if hasattr(msg, "id") and msg.id:
-                entry["id"] = msg.id
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                entry["tool_calls"] = msg.tool_calls
-            if hasattr(msg, "additional_kwargs") and "memory_tier" in msg.additional_kwargs:
-                entry["memory_tier"] = msg.additional_kwargs["memory_tier"]
-            if isinstance(msg, ToolMessage):
-                entry["tool_call_id"] = msg.tool_call_id
-            result.append(entry)
-        return result
+        """BaseMessage → dict：委托统一适配层单源（phase6a G3 归一）。"""
+        return messages_to_dicts(list(messages))
 
     def _dicts_to_messages(self, dicts: list[dict[str, Any]]) -> list[BaseMessage]:
-        """将 Dict 列表转换回 BaseMessage 列表"""
-        result = []
-        for d in dicts:
-            role = d.get("role", "unknown")
-            content = d.get("content", "")
-            msg_id = d.get("id")
-            memory_tier = d.get("memory_tier")
-
-            additional_kwargs = {}
-            if memory_tier:
-                additional_kwargs["memory_tier"] = memory_tier
-
-            if role == "user":
-                msg = HumanMessage(content=content, additional_kwargs=additional_kwargs)
-            elif role == "assistant":
-                tool_calls = d.get("tool_calls")
-                if tool_calls:
-                    msg = AIMessage(content=content, tool_calls=tool_calls, additional_kwargs=additional_kwargs)
-                else:
-                    msg = AIMessage(content=content, additional_kwargs=additional_kwargs)
-            elif role == "system":
-                msg = SystemMessage(content=content, additional_kwargs=additional_kwargs)
-            elif role == "tool":
-                tool_call_id = d.get("tool_call_id", "")
-                msg = ToolMessage(content=content, tool_call_id=tool_call_id, additional_kwargs=additional_kwargs)
-            else:
-                msg = HumanMessage(content=content, additional_kwargs=additional_kwargs)
-
-            # 保留消息 id，确保 add_messages reducer 能正确替换而非追加
-            if msg_id:
-                msg.id = msg_id
-
-            result.append(msg)
-        return result
+        """dict → BaseMessage：委托统一适配层单源（phase6a G3 归一）。"""
+        return dicts_to_messages(dicts)
 
     def process_messages(
         self,

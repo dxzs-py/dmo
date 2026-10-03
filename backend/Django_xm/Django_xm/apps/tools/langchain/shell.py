@@ -39,18 +39,33 @@ _HIGH_RISK_KEYWORDS = ("install", "remove", "delete", "format", "write")
 _UNIX_ONLY_COMMANDS = {"ls", "cat", "head", "tail", "wc", "find", "which"}
 _WINDOWS_ONLY_COMMANDS = {"dir", "type", "where"}
 
+# ── manage.py 子命令枚举白名单（F-01 修复）────────────────────────
+# `python manage.py` 裸前缀放行过宽：shell/dbshell/shell_plus 子命令等价
+# 任意代码执行（shell -c 可 exec 任意 Python，且不含组合符绕过拼接检测）。
+# 现约定：manage.py 后首参数（子命令）必须精确命中下列只读/安全集合才免审批。
+_PYTHON_INTERPRETER_TOKENS = frozenset({"python", "python3"})
+_MANAGE_PY_SAFE_SUBCOMMANDS = frozenset(
+    {
+        "help",  # 帮助（只读）
+        "check",  # 项目自检（只读）
+        "showmigrations",  # 迁移状态查看（只读）
+        "test",  # 跑项目测试（与白名单 python -m pytest/unittest 同级语义）
+    }
+)
+# 等价任意代码执行的子命令显式黑名单（双保险第二层：即使白名单枚举遗漏
+# 也被此处拦截；第一层为 BLOCKED_PATTERNS 全局正则，工具层直接拒绝）
+_MANAGE_PY_BLOCKED_SUBCOMMANDS = frozenset({"shell", "dbshell", "shell_plus"})
+
 DEFAULT_WHITELIST_COMMANDS: list[str] = [
     # 浏览器自动化
     "agent-browser",
     # 文档转换
     "pandoc",
-    # Python 高频安全脚本（仅限 manage.py / pytest，其他 python 调用需审批）
-    "python manage.py",
-    "python manage.py help",
+    # Python 高频安全脚本
+    # 注意：manage.py 不再整条前缀放行（F-01），其子命令由
+    # _MANAGE_PY_SAFE_SUBCOMMANDS 专用枚举校验，不走通用前缀匹配
     "python -m pytest",
     "python -m unittest",
-    "python3 manage.py",
-    "python3 manage.py help",
     "python3 -m pytest",
     "python3 -m unittest",
     # pip 只读子命令
@@ -136,6 +151,10 @@ BLOCKED_PATTERNS: list[str] = [
     r"\bnet\s+localgroup\b",
     r"\bpowershell\s+-enc\b",
     r"\bpowershell\s+-e\b",
+    # manage.py 等价任意代码执行的交互式子命令（F-01：shell/dbshell/shell_plus）
+    # 双保险第一层：按原始命令串匹配（不受 shlex 反斜杠转义影响），工具层直接拒绝；
+    # 覆盖引号变体（manage.py "shell"）与大小写变体（re.IGNORECASE）
+    r"\bmanage\.py\s+[\"']?(?:dbshell|shell_plus|shell)\b",
 ]
 
 # 最大输出长度（字符）
@@ -273,6 +292,36 @@ def _tokenize_command(command: str) -> list[str] | None:
         return None
 
 
+def _is_manage_py_command(tokens: list[str]) -> bool:
+    """判定 tokens 是否为 `python manage.py` 命令形态（精确词匹配，大小写敏感）
+
+    首词必须是 python/python3（绝对路径解释器如 C:/Python/python.exe 不匹配，
+    fail-closed）；第二词必须精确为 manage.py（禁止路径变体，防止指向任意脚本）。
+    """
+    return (
+        len(tokens) >= 2
+        and tokens[0] in _PYTHON_INTERPRETER_TOKENS
+        and tokens[1] == "manage.py"
+    )
+
+
+def _is_manage_py_subcommand_whitelisted(tokens: list[str]) -> bool:
+    """manage.py 形态的子命令枚举校验（F-01）
+
+    manage.py 后首参数必须命中安全子命令集合；shell/dbshell/shell_plus 显式
+    拒绝（双保险第二层）；migrate 仅在携带 --check（只读检查形态）时放行；
+    其余一律拒绝（走审批，不自动放行）。
+    """
+    subcommand = tokens[2] if len(tokens) > 2 else ""
+    if subcommand in _MANAGE_PY_BLOCKED_SUBCOMMANDS:
+        return False
+    if subcommand in _MANAGE_PY_SAFE_SUBCOMMANDS:
+        return True
+    if subcommand == "migrate":
+        return "--check" in tokens[3:]
+    return False
+
+
 def _is_command_whitelisted(command: str) -> bool:
     """检查命令是否在白名单中（严格匹配，fail-closed）
 
@@ -282,6 +331,9 @@ def _is_command_whitelisted(command: str) -> bool:
        - 单词条目（如 "curl"）：首词全等
        - 多词条目（如 "git status"）：前 N 个词全等
        防止白名单命令名出现在参数位置或经子串误判放行（S-01）
+    3. python manage.py 形态不适用通用前缀匹配（F-01）：
+       即使自定义 SHELL_EXEC_WHITELIST 含 manage.py 条目，也强制走子命令
+       枚举校验（_is_manage_py_subcommand_whitelisted），防止前缀过宽回潮
     任一不满足 → 返回 False（走既有审批路径，不自动放行）
     """
     if _has_shell_composition(command):
@@ -290,6 +342,9 @@ def _is_command_whitelisted(command: str) -> bool:
     tokens = _tokenize_command(command)
     if not tokens:
         return False
+
+    if _is_manage_py_command(tokens):
+        return _is_manage_py_subcommand_whitelisted(tokens)
 
     for wl_cmd in _get_whitelist_commands():
         wl_tokens = wl_cmd.split()
@@ -643,11 +698,12 @@ class ShellExecTool(AsyncToolMixin, BaseTool):
     )
     description: str = (
         "执行 Shell 命令并返回输出结果。"
-        "适用场景：需要运行命令行工具（如 agent-browser、pandoc、python manage.py 等）、查看系统信息、执行自动化任务。"
+        "适用场景：需要运行命令行工具（如 agent-browser、pandoc、python manage.py 安全子命令等）、查看系统信息、执行自动化任务。"
         "不适用：文件读写（应使用 fs_read_file/fs_write_file）、网络搜索（应使用 web_search）。"
         "参数：command-要执行的命令（必填），timeout-超时秒数（默认60），working_dir-工作目录（默认当前目录）。"
-        "安全策略：白名单命令（agent-browser、pandoc、python manage.py、git status 等）直接执行；"
-        "非白名单命令（含 python/node/npx 等可执行任意代码的解释器）需走审批流程；"
+        "安全策略：白名单命令（agent-browser、pandoc、git status、python manage.py help/check/showmigrations/test/migrate --check 等安全子命令）直接执行；"
+        "manage.py 的 shell/dbshell/shell_plus 子命令被禁止（等价任意代码执行）；"
+        "manage.py 其他子命令（migrate/runserver/collectstatic 等）与非白名单命令（含 python/node/npx 等可执行任意代码的解释器）需走审批流程；"
         "携带拼接/替换/重定向/管道符号（; && || | > < $( ` 换行）的命令强制走审批"
         "（防止 curl x; bash s.sh、echo $(evil) 等绕过）；"
         "危险命令（rm -rf、shutdown 等）始终拒绝。"

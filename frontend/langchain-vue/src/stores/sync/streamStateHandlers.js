@@ -1,12 +1,8 @@
 import { logger } from '@/utils/logger'
 import { StreamState } from '@/types'
 import { ElNotification } from 'element-plus'
-import {
-  findMessageById,
-  getSession,
-  getCurrentVersion,
-  getLastAssistantMessage,
-} from './helpers'
+import { findMessageById, resolveStreamTargetMessage } from '@/utils/messageOperations'
+import { getSession, getCurrentVersion } from './helpers'
 import { finalizeToolCallsForResearchResult } from './messageIntegrity'
 
 /**
@@ -37,6 +33,7 @@ import { finalizeToolCallsForResearchResult } from './messageIntegrity'
  *   handleStreamInterrupted: (sessionId: string, payload: Object) => void,
  *   handleStreamCompleted: (sessionId: string, payload: Object) => void,
  *   handleStreamFinalized: (sessionId: string, payload: Object) => Promise<void>,
+ *   handleBudgetExceeded: (sessionId: string, payload: Object) => void,
  * }}
  */
 export const createStreamStateHandlers = (ctx) => {
@@ -274,13 +271,8 @@ export const createStreamStateHandlers = (ctx) => {
     const content = payload.data?.content || payload.content || ''
     if (!content) return
     const session = getSession(sessionStore, sessionId)
-    let targetMsg = null
-    if (payload.messageId) {
-      targetMsg = findMessageById(session, payload.messageId)
-    }
-    if (!targetMsg) {
-      targetMsg = getLastAssistantMessage(session)
-    }
+    // 定位收敛（spec 组 5）：精确按 messageId，兜底末条 assistant（原内联展开等价迁移）
+    const targetMsg = resolveStreamTargetMessage(session, payload.messageId)
     if (!targetMsg) {
       logger.debug(`[Sync] stream_reasoning 未找到目标消息: session=${sessionId}, message=${payload.messageId || '(兜底)'}`)
       return
@@ -334,14 +326,8 @@ export const createStreamStateHandlers = (ctx) => {
     const taskId = payload.taskId || payload.data?.researchTaskId || (payload.data && payload.data.taskId) || null
     const messageId = payload.messageId || (payload.data && payload.data.messageId) || null
 
-    // 定位目标消息（优先按 messageId，兜底最后一条 assistant 消息）
-    let targetMsg = null
-    if (messageId) {
-      targetMsg = findMessageById(session, messageId)
-    }
-    if (!targetMsg) {
-      targetMsg = getLastAssistantMessage(session)
-    }
+    // 定位目标消息（spec 组 5 收敛：精确按 messageId，兜底最后一条 assistant 消息）
+    const targetMsg = resolveStreamTargetMessage(session, messageId)
 
     if (!targetMsg) {
       logger.warn(`[Sync] stream_interrupted 未找到目标消息: session=${sessionId}, message=${messageId || '(兜底)'}`)
@@ -422,13 +408,8 @@ export const createStreamStateHandlers = (ctx) => {
     // 普通聊天模式消息不会处于 INTERRUPTED 状态，不受此判断影响，行为与原有逻辑一致。
     if (payload.finalized !== true) {
       const earlyMessageId = payload.messageId
-      let earlyTargetMsg = null
-      if (earlyMessageId) {
-        earlyTargetMsg = findMessageById(session, earlyMessageId)
-      }
-      if (!earlyTargetMsg) {
-        earlyTargetMsg = getLastAssistantMessage(session)
-      }
+      // 定位收敛（spec 组 5）：精确按 messageId，兜底末条 assistant（原内联展开等价迁移）
+      const earlyTargetMsg = resolveStreamTargetMessage(session, earlyMessageId)
       if (earlyTargetMsg && earlyTargetMsg.streamState === StreamState.INTERRUPTED) {
         logger.info(
           `[Sync] stream_completed(finalized=${payload.finalized}) 消息处于 INTERRUPTED（深度研究模式），` +
@@ -447,10 +428,10 @@ export const createStreamStateHandlers = (ctx) => {
     const hasResearchResult = payload.taskId && (payload.finalReport !== undefined || payload.error)
     if (hasResearchResult) {
       const messageId = payload.messageId
-      let targetMsg = null
-      if (messageId) {
-        targetMsg = findMessageById(session, messageId)
-      }
+      // 三级定位（原语义保留，spec 组 5）：精确按 messageId → researchTaskId 关联消息
+      // （研究回写专属中间层，比末条 assistant 更精确，不得并入 resolveStreamTargetMessage）
+      // → 末条 assistant 兜底
+      let targetMsg = findMessageById(session, messageId)
       if (!targetMsg) {
         // 通过 researchTaskId 查找关联消息
         targetMsg = [...session.messages].reverse().find(m =>
@@ -459,7 +440,7 @@ export const createStreamStateHandlers = (ctx) => {
       }
       if (!targetMsg) {
         // 最后一个 assistant 消息
-        targetMsg = getLastAssistantMessage(session)
+        targetMsg = resolveStreamTargetMessage(session, null)
       }
 
       if (!targetMsg) {
@@ -560,13 +541,8 @@ export const createStreamStateHandlers = (ctx) => {
     // === 深度研究结果处理结束 ===
 
     const messageId = payload.messageId
-    let targetMsg = null
-    if (messageId) {
-      targetMsg = findMessageById(session, messageId)
-    }
-    if (!targetMsg) {
-      targetMsg = getLastAssistantMessage(session)
-    }
+    // 定位收敛（spec 组 5）：精确按 messageId，兜底末条 assistant（原内联展开等价迁移）
+    const targetMsg = resolveStreamTargetMessage(session, messageId)
 
     if (!targetMsg) {
       logger.info(`[Sync] 流式完成但未找到目标消息: session=${sessionId}, message=${messageId || '(兜底)'}`)
@@ -683,13 +659,8 @@ export const createStreamStateHandlers = (ctx) => {
     if (!session?.messages) return
 
     const messageId = payload.messageId
-    let targetMsg = null
-    if (messageId) {
-      targetMsg = findMessageById(session, messageId)
-    }
-    if (!targetMsg) {
-      targetMsg = getLastAssistantMessage(session)
-    }
+    // 定位收敛（spec 组 5）：精确按 messageId，兜底末条 assistant（原内联展开等价迁移）
+    const targetMsg = resolveStreamTargetMessage(session, messageId)
 
     if (!targetMsg) {
       logger.info(`[Sync] stream_finalized 未找到目标消息: session=${sessionId}, message=${messageId || '(兜底)'}`)
@@ -737,11 +708,11 @@ export const createStreamStateHandlers = (ctx) => {
     }
 
     // 同步完成后再标记 COMPLETED（纳入保护态，防止后续覆盖）
-    // 重新查找 targetMsg，因为 requestFullSync 可能替换了消息对象引用
+    // 重新查找 targetMsg，因为 requestFullSync 可能替换了消息对象引用。
+    // 定位收敛（spec 组 5）：与同函数首次定位语义对齐——messageId 未命中时
+    // 兜底末条 assistant（原实现此处不兜底返回 null，属与首次定位的偶然不一致，统一之）
     const refreshedSession = getSession(sessionStore, sessionId)
-    const refreshedTarget = messageId
-      ? findMessageById(refreshedSession, messageId)
-      : getLastAssistantMessage(refreshedSession)
+    const refreshedTarget = resolveStreamTargetMessage(refreshedSession, messageId)
 
     if (refreshedTarget
         && refreshedTarget.streamState !== StreamState.INTERRUPTED
@@ -758,11 +729,39 @@ export const createStreamStateHandlers = (ctx) => {
     }
   }
 
+  /**
+   * 会话 Token 预算耗尽提示（budget_exceeded，spec D6 补消费）
+   *
+   * 后端 SessionTokenBudgetGuard 在执行循环检查点超限时发布（stream/loop.py
+   * _check_session_budget），本轮生成已由后端熔断终止。此处向用户展示可见
+   * 警告提示（所有浏览器一致消费，payload 为 toCamelCase 后的 camelCase）。
+   *
+   * @param {string} sessionId
+   * @param {Object} payload - toCamelCase 后：
+   *   { source, sourceId, sessionId, data: { sessionId, usedTokens, budgetLimit } }
+   */
+  const handleBudgetExceeded = (sessionId, payload) => {
+    const data = payload?.data || {}
+    const { usedTokens, budgetLimit } = data
+    const hasCounts = typeof usedTokens === 'number' && typeof budgetLimit === 'number' && budgetLimit > 0
+    const detail = hasCounts ? `（已用 ${usedTokens} / 上限 ${budgetLimit} tokens）` : ''
+    logger.warn(
+      `[Sync] 会话 Token 预算耗尽: session=${sessionId}, used=${usedTokens}, limit=${budgetLimit}`
+    )
+    ElNotification({
+      title: 'Token 预算已达上限',
+      message: `本会话 Token 预算已耗尽，本次生成已自动停止${detail}。可在设置中调整预算后重试。`,
+      type: 'warning',
+      duration: 8000,
+    })
+  }
+
   return {
     handleStreamEvent,
     applyStreamReasoning,
     handleStreamInterrupted,
     handleStreamCompleted,
     handleStreamFinalized,
+    handleBudgetExceeded,
   }
 }

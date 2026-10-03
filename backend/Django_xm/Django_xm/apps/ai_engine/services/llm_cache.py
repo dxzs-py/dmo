@@ -7,7 +7,8 @@
 依赖关系：
 - 本模块是底层基础设施，不依赖 llm_factory / llm_fallback
 - 上层 llm_factory 通过 cached_model_creation 共用模型缓存
-- 全局 LLM 请求缓存由 cache_manager.setup_langchain_cache 承担
+- 全局 LLM 请求缓存轨道（原 langchain 全局缓存接线入口）已下线，
+  模型响应缓存由 cache_manager.ModelResponseCacheService 唯一承担
 
 参考：
 - https://reference.langchain.com/python/langchain/rate_limiters

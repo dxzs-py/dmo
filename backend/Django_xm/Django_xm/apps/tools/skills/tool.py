@@ -341,26 +341,6 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
             return match.group(1).strip()
         return content.strip()
 
-    # ------------------------------------------------------------------
-    # Level 3 资源加载
-    # ------------------------------------------------------------------
-
-    def _load_resource(self, resource_path: str) -> str | None:
-        """按需加载 Skill 资源文件（Level 3 Execution）
-
-        Args:
-            resource_path: 相对于 Skill 根目录的文件路径
-
-        Returns:
-            文件内容，未找到返回 None
-        """
-        if not self.spec.skill_dir:
-            return None
-        from Django_xm.apps.tools.skills.loader import SkillLoader
-
-        loader = SkillLoader()
-        return loader.load_resource(self.spec.name, resource_path)
-
 
 # ---------------------------------------------------------------------------
 # 工厂函数

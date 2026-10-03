@@ -56,7 +56,6 @@ from Django_xm.apps.learning.services.study_flow import (
     WorkflowAlreadyFinishedError,
     _ensure_session_created,
     _get_cached_study_flow,
-    _invalidate_study_flow_cache,
     _is_cache_entry_valid,
     _persist_attempt_and_lock_questions,
     _study_flow_cache,
@@ -311,13 +310,6 @@ class StudyFlowCacheTests(UnitTestCase):
         self.assertNotIn("t-lru-1", _study_flow_cache)
         self.assertIn("t-lru-3", _study_flow_cache)
         self.assertLessEqual(len(_study_flow_cache), 2)
-
-    def test_invalidate_clears_process_cache(self):
-        """失效清理移除进程内条目"""
-        with mock.patch(f"{_SF}.get_checkpointer", return_value=MemorySaver()):
-            _get_cached_study_flow("t-inv")
-            _invalidate_study_flow_cache("t-inv")
-        self.assertNotIn("t-inv", _study_flow_cache)
 
 
 class StartStudyFlowTests(TestCase):
@@ -733,28 +725,6 @@ class WorkflowServiceTests(TestCase):
         self.addCleanup(_clear_cache)
         self.user = User.objects.create_user(username="sf-service", password="pw123456")
 
-    def test_start_workflow_maps_result(self):
-        """start_workflow 结果映射（status/message/thread_id）"""
-        flow_result = {
-            "current_step": "waiting_for_answers",
-            "learning_plan": {"topic": "闭包"},
-            "quiz": _make_quiz(),
-            "retry_count": 0,
-        }
-        with mock.patch(f"{_WS}.start_study_flow", return_value=flow_result) as start:
-            result = WorkflowService.start_workflow("什么是闭包", thread_id="t-svc-1", user_id=self.user.id)
-        self.assertEqual(result["thread_id"], "t-svc-1")
-        self.assertEqual(result["status"], "waiting_for_answers")
-        self.assertEqual(result["message"], "学习计划和练习题已生成")
-        self.assertEqual(result["quiz"]["total_points"], 10)
-        start.assert_called_once()
-
-    def test_start_workflow_generates_thread_id(self):
-        """未传 thread_id → 自动生成 study_ 前缀"""
-        with mock.patch(f"{_WS}.start_study_flow", return_value={"current_step": "waiting_for_answers"}):
-            result = WorkflowService.start_workflow("Q")
-        self.assertTrue(result["thread_id"].startswith("study_"))
-
     def test_submit_maps_retry_status(self):
         """should_retry=True → status=retry"""
         with mock.patch(f"{_WS}.submit_answers", return_value={"should_retry": True, "retry_count": 1}):
@@ -820,20 +790,3 @@ class WorkflowServiceTests(TestCase):
         with mock.patch(f"{_WS}.get_workflow_history", return_value=[{"step": 1}]) as history:
             self.assertEqual(WorkflowService.get_workflow_history("t-svc-9"), [{"step": 1}])
         history.assert_called_once_with("t-svc-9")
-
-
-class CrossAppTests(TestCase):
-    """cross_app.get_user_workflow_count：跨 app 计数"""
-
-    def test_counts_undeleted_sessions(self):
-        """软删除会话不计数；无会话用户计数为 0"""
-        from Django_xm.apps.learning.services.cross_app import get_user_workflow_count
-
-        user = User.objects.create_user(username="sf-cross", password="pw123456")
-        other = User.objects.create_user(username="sf-cross-other", password="pw123456")
-        WorkflowSession.objects.create(thread_id="t-cross-1", user_question="Q", created_by=user)
-        WorkflowSession.objects.create(thread_id="t-cross-2", user_question="Q", created_by=user)
-        deleted = WorkflowSession.objects.create(thread_id="t-cross-3", user_question="Q", created_by=user)
-        deleted.soft_delete()
-        self.assertEqual(get_user_workflow_count(user), 2)
-        self.assertEqual(get_user_workflow_count(other), 0)

@@ -81,7 +81,6 @@ pydantic>=2.12.5
 pydantic-settings>=2.13.1
 python-dotenv>=1.0.1
 PyYAML>=6.0.3
-loguru>=0.7.3
 aiosqlite>=0.22.1
 numpy>=2.4.3
 # pandas 必须 >=2.2.3 以兼容 numpy 2.x（pandas 2.0.x 按 numpy<2 编译，

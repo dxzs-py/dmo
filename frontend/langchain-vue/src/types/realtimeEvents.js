@@ -19,13 +19,11 @@ export const EventType = {
   // 消息通道事件
   MESSAGE_ADDED: 'message_added',
   MESSAGE_UPDATED: 'message_updated',
-  MESSAGE_DELETED: 'message_deleted',
   MESSAGES_DELETED: 'messages_deleted',
   MESSAGE_REGENERATED: 'message_regenerated',
   MESSAGE_REGENERATE_REVERTED: 'message_regenerate_reverted',
 
   // 流式生命周期事件
-  STREAM_STARTED: 'stream_started',
   STREAM_EVENT: 'stream_event',
   STREAM_COMPLETED: 'stream_completed',
   STREAM_FINALIZED: 'stream_finalized',
@@ -35,6 +33,8 @@ export const EventType = {
   STREAM_SUGGESTIONS: 'stream_suggestions',
   STREAM_CONTEXT: 'stream_context',
   STREAM_CONTENT_UPDATE: 'stream_content_update',
+  // 会话级 Token 硬预算耗尽（SessionTokenBudgetGuard，spec D6 补消费）
+  BUDGET_EXCEEDED: 'budget_exceeded',
 
   // 工具调用生命周期事件（7 个）
   TOOL_CALL_PENDING: 'tool_call_pending',

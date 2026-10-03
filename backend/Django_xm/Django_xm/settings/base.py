@@ -380,12 +380,14 @@ CELERY_TASK_ROUTES = {
     "approvals.process_outbox": {"queue": "celery"},
 }
 
-ATTACHMENT_DEFAULT_RETENTION_DAYS = int(os.environ.get("ATTACHMENT_DEFAULT_RETENTION_DAYS", "30"))
-ATTACHMENT_CLEANUP_HOUR = int(os.environ.get("ATTACHMENT_CLEANUP_HOUR", "3"))
-ATTACHMENT_STORAGE_WARNING_THRESHOLD = float(os.environ.get("ATTACHMENT_STORAGE_WARNING_THRESHOLD", "80"))
-ATTACHMENT_STORAGE_CRITICAL_THRESHOLD = float(os.environ.get("ATTACHMENT_STORAGE_CRITICAL_THRESHOLD", "95"))
-ATTACHMENT_DEDUP_ENABLED = os.environ.get("ATTACHMENT_DEDUP_ENABLED", "true").lower() == "true"
-ATTACHMENT_MAX_TOTAL_SIZE_MB = int(os.environ.get("ATTACHMENT_MAX_TOTAL_SIZE_MB", "5120"))
+# 附件治理配置：真相源为 ProjectSettings（apps/core/config.py，env 键名一致映射），
+# 此处仅做 Django settings 通道装配（ARCH-05，禁止 os.environ 直读旁路）。
+ATTACHMENT_DEFAULT_RETENTION_DAYS = project_cfg.attachment_default_retention_days
+ATTACHMENT_CLEANUP_HOUR = project_cfg.attachment_cleanup_hour
+ATTACHMENT_STORAGE_WARNING_THRESHOLD = project_cfg.attachment_storage_warning_threshold
+ATTACHMENT_STORAGE_CRITICAL_THRESHOLD = project_cfg.attachment_storage_critical_threshold
+ATTACHMENT_DEDUP_ENABLED = project_cfg.attachment_dedup_enabled
+ATTACHMENT_MAX_TOTAL_SIZE_MB = project_cfg.attachment_max_total_size_mb
 
 from celery.schedules import crontab
 
@@ -400,7 +402,7 @@ CELERY_BEAT_SCHEDULE = {
     },
     "cleanup-expired-attachments-daily": {
         "task": "chat.cleanup_expired_attachments",
-        "schedule": crontab(hour=int(os.environ.get("ATTACHMENT_CLEANUP_HOUR", "3")), minute=0),
+        "schedule": crontab(hour=ATTACHMENT_CLEANUP_HOUR, minute=0),
     },
     "cleanup-old-task-records-daily": {
         "task": "base.cleanup_old_task_records",
@@ -420,19 +422,26 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
+# MCP SSRF 豁免开关（env→settings 桥，ARCH-05）：common/net/guards.py 经
+# SSRF_EXEMPT_SETTING 读取本属性。默认 False；仅隔离调试环境临时豁免，
+# 生产环境严禁开启（豁免内网校验引入 SSRF 风险）。
+MCP_SSRF_ALLOW_PRIVATE_ADDRESSES = project_cfg.mcp_ssrf_allow_private_addresses
+
 # AI Engine Settings
 AI_RATE_LIMIT_MAX_MODEL_CALLS = 50
 
 # Phase D: Docker 沙箱执行层配置
 # HIGH 级工具调用在 Docker 容器内执行，防止不可逆变更影响宿主系统。
 # 开发环境默认关闭（ENABLED=False），生产环境通过环境变量启用。
+# 真相源为 ProjectSettings 的 sandbox_* 字段（SANDBOX_* env 键一致映射，ARCH-05），
+# common/sandbox/executor.py 经 settings.SANDBOX_CONFIG 统一读取（结构键名保持不变）。
 SANDBOX_CONFIG = {
-    "ENABLED": os.environ.get("SANDBOX_ENABLED", "false").lower() == "true",
-    "DOCKER_IMAGE": os.environ.get("SANDBOX_IMAGE", "python:3.11-slim"),
-    "MEMORY_LIMIT": os.environ.get("SANDBOX_MEMORY", "512m"),
-    "CPU_LIMIT": int(os.environ.get("SANDBOX_CPUS", "1")),
-    "NETWORK_MODE": os.environ.get("SANDBOX_NETWORK", "none"),
-    "SESSION_TIMEOUT": int(os.environ.get("SANDBOX_SESSION_TIMEOUT", "3600")),
+    "ENABLED": project_cfg.sandbox_enabled,
+    "DOCKER_IMAGE": project_cfg.sandbox_image,
+    "MEMORY_LIMIT": project_cfg.sandbox_memory,
+    "CPU_LIMIT": project_cfg.sandbox_cpus,
+    "NETWORK_MODE": project_cfg.sandbox_network,
+    "SESSION_TIMEOUT": project_cfg.sandbox_session_timeout,
     # 挂载最小化（沙箱加固）：仅挂载 DATA_DIR 到容器 /workspace，
     # 不再挂载整个项目根（容器内破坏性操作不触及挂载区外的宿主文件）
     "WORK_DIR_MOUNT": str(DATA_DIR),

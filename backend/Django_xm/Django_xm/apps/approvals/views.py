@@ -13,7 +13,7 @@ import logging
 
 from drf_spectacular.utils import extend_schema
 from rest_framework.exceptions import NotFound
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -26,6 +26,7 @@ from Django_xm.apps.approvals.services.approval_gateway import CircuitBreakerErr
 from Django_xm.apps.core.throttling import SensitiveOperationRateThrottle
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.exceptions import BaseAppError
+from Django_xm.common.observability import approval_metrics
 from Django_xm.common.responses import success_response
 
 logger = logging.getLogger(__name__)
@@ -346,3 +347,67 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
             interrupt_id,
             log_prefix="[ApprovalResume]",
         )
+
+
+class ApprovalMetricsSnapshotView(APIView):
+    """审批监控指标快照（管理员专用，Spec D3）。
+
+    暴露 approval_metrics.snapshot() 全量计数（写时累加 + 读时聚合）：
+    - pending_count / total（created/approved/rejected/timeout/auto_approved）
+    - risk_distribution（safe/controlled/high）
+    - sandbox（success/failure/success_rate）
+    - high_risk_windows（F3 熔断窗口聚合） / latency / thresholds
+
+    Redis 不可用时指标采集器静默降级，返回全 0 快照而非抛异常。
+    """
+
+    permission_classes = [IsAdminUser]
+
+    @extend_schema(
+        responses={
+            200: {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "integer", "example": 200},
+                    "message": {"type": "string"},
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "pending_count": {"type": "integer"},
+                            "total": {
+                                "type": "object",
+                                "properties": {
+                                    "created": {"type": "integer"},
+                                    "approved": {"type": "integer"},
+                                    "rejected": {"type": "integer"},
+                                    "timeout": {"type": "integer"},
+                                    "auto_approved": {"type": "integer"},
+                                },
+                            },
+                            "risk_distribution": {
+                                "type": "object",
+                                "properties": {
+                                    "safe": {"type": "integer"},
+                                    "controlled": {"type": "integer"},
+                                    "high": {"type": "integer"},
+                                },
+                            },
+                            "sandbox": {
+                                "type": "object",
+                                "properties": {
+                                    "success": {"type": "integer"},
+                                    "failure": {"type": "integer"},
+                                    "success_rate": {"type": "number", "nullable": True},
+                                },
+                            },
+                            "high_risk_windows": {"type": "object"},
+                            "latency": {"type": "object"},
+                            "thresholds": {"type": "object"},
+                        },
+                    },
+                },
+            }
+        },
+    )
+    def get(self, request):
+        return success_response(data=approval_metrics.snapshot())

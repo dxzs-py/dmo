@@ -15,7 +15,7 @@
     已删除（死代码）。
 """
 
-from Django_xm.common.constants import TIMEOUT_DECISION
+from Django_xm.common.constants import TIMEOUT_DECISION  # noqa: F401 - 再导出：middleware.py / approval/__init__ 经此模块引用
 
 
 def build_timeout_tool_message(tool_call_id: str, tool_name: str = ""):

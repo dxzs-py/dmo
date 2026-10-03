@@ -29,7 +29,7 @@ class _SettingsStub:
 
 
 class RedisUrlResolutionTests(SimpleTestCase):
-    """get_redis_url / get_redis_chat_url / get_redis_password 解析链。"""
+    """get_redis_url / get_redis_password 解析链。"""
 
     def test_django_setting_takes_precedence_over_env(self):
         """Django settings 属性优先于环境变量（base.py 已完成 env 合并）。"""
@@ -54,11 +54,6 @@ class RedisUrlResolutionTests(SimpleTestCase):
             mock.patch.dict(os.environ, {}, clear=True),
         ):
             self.assertEqual(connections.get_redis_url(), connections.DEFAULT_REDIS_URL)
-
-    def test_chat_url_resolution(self):
-        """chat_sessions 缓存通道独立解析。"""
-        with override_settings(REDIS_CHAT_URL="redis://chat-host:6379/7"):
-            self.assertEqual(connections.get_redis_chat_url(), "redis://chat-host:6379/7")
 
     def test_password_returns_raw_value_for_django_cache(self):
         """get_redis_password 保留原始值（django_redis 接受空字符串）。"""

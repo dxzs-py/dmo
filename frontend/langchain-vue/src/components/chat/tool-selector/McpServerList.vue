@@ -4,6 +4,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Edit, Check, Warning, VideoPlay, Refresh } from '@element-plus/icons-vue'
 import { toolsAPI } from '@/api/tools'
 import { useToolsStore } from '@/stores/tools'
+import { extractErrorMessage } from '@/utils/apiErrorHandler'
+import { useSelectableList } from '@/composables/useSelectableList'
 import McpUploadDialog from '../McpUploadDialog.vue'
 
 const props = defineProps({
@@ -46,25 +48,18 @@ const openUploadDialog = () => {
 }
 defineExpose({ openUploadDialog })
 
-// ── 选择操作 ──
-const isMcpSelected = (name) => props.selected.includes(name)
+// ── 选择操作（状态机收敛到 useSelectableList；键形态差异经 getKey 注入） ──
+const { isSelected, toggle, selectAll, clear, deselect } = useSelectableList({
+  items: mcpServers,
+  getKey: (server) => server.name,
+  selected: () => props.selected,
+  emit,
+})
 
-const toggleMcpServer = (name) => {
-  const idx = props.selected.indexOf(name)
-  if (idx >= 0) {
-    emit('update:selected', props.selected.filter(n => n !== name))
-  } else {
-    emit('update:selected', [...props.selected, name])
-  }
-}
-
-const selectAllMcp = () => {
-  emit('update:selected', mcpServers.value.map(s => s.name))
-}
-
-const clearMcp = () => {
-  emit('update:selected', [])
-}
+const isMcpSelected = isSelected
+const toggleMcpServer = toggle
+const selectAllMcp = selectAll
+const clearMcp = clear
 
 const handleDeleteMcpServer = (name) => withPopoverLock(async () => {
   try {
@@ -77,11 +72,11 @@ const handleDeleteMcpServer = (name) => withPopoverLock(async () => {
   try {
     await toolsAPI.deleteMcpServer(name)
     ElMessage.success(`MCP Server "${name}" 已删除`)
-    emit('update:selected', props.selected.filter(n => n !== name))
+    deselect(name)
     toolsStore.invalidateMcpServers()
     fetchMcpServers()
   } catch (e) {
-    ElMessage.error('删除失败: ' + (e.response?.data?.message || e.message))
+    ElMessage.error('删除失败: ' + extractErrorMessage(e))
   }
 })
 
@@ -101,7 +96,7 @@ const handleTestMcpServer = (name) => withPopoverLock(async () => {
       mcpTestResult.value = { name, success: false, message: `连接失败${data.error ? '：' + data.error : ''}` }
     }
   } catch (e) {
-    mcpTestResult.value = { name, success: false, message: '连接测试失败: ' + (e.response?.data?.message || e.message) }
+    mcpTestResult.value = { name, success: false, message: '连接测试失败: ' + extractErrorMessage(e) }
   } finally {
     mcpTestingName.value = null
   }

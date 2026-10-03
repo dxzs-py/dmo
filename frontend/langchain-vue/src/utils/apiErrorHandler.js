@@ -196,67 +196,8 @@ export async function handleApiError(error, options = {}) {
   }
 }
 
-export function handleValidationError(errors, context = '') {
-  const errorMessages = []
-
-  if (Array.isArray(errors)) {
-    errors.forEach(err => {
-      if (typeof err === 'string') {
-        errorMessages.push(err)
-      } else if (err.field && err.message) {
-        errorMessages.push(`${err.field}: ${err.message}`)
-      } else if (err.message) {
-        errorMessages.push(err.message)
-      }
-    })
-  } else if (typeof errors === 'object' && errors !== null) {
-    Object.entries(errors).forEach(([field, value]) => {
-      if (Array.isArray(value)) {
-        value.forEach(msg => errorMessages.push(`${field}: ${msg}`))
-      } else if (typeof value === 'string') {
-        errorMessages.push(`${field}: ${value}`)
-      } else if (value?.message) {
-        errorMessages.push(`${field}: ${value.message}`)
-      }
-    })
-  }
-
-  if (context) {
-    errorMessages.unshift(`[${context}]`)
-  }
-
-  const fullMessage = errorMessages.join('\n')
-
-  ElMessage.error(fullMessage)
-
-  return fullMessage
-}
-
-export function createErrorHandler(componentName = '') {
-  return (error, customOptions = {}) => {
-    return handleApiError(error, {
-      ...customOptions,
-      showNotification: componentName ? true : false,
-    })
-  }
-}
-
-export function wrapWithErrorHandling(asyncFn, options = {}) {
-  return async (...args) => {
-    try {
-      return await asyncFn(...args)
-    } catch (error) {
-      handleApiError(error, options)
-      throw error
-    }
-  }
-}
-
 export default {
   handleApiError,
-  handleValidationError,
-  createErrorHandler,
-  wrapWithErrorHandling,
   ERROR_MESSAGES,
   BIZ_ERROR_CODES,
 }

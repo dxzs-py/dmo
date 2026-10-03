@@ -173,13 +173,6 @@ class TaskManager:
 
         return task_data
 
-    def register_thread(self, task_id: str, thread: threading.Thread) -> None:
-        self._threads[task_id] = thread
-
-    def unregister_thread(self, task_id: str) -> None:
-        if task_id in self._threads:
-            del self._threads[task_id]
-
     def delete_task(self, task_id: str, user_id: int | None = None) -> bool:
         """
         软删除研究任务
@@ -210,19 +203,6 @@ class TaskManager:
             return False
 
         return True
-
-    def task_exists(self, task_id: str, user_id: int | None = None) -> bool:
-        """
-        检查任务是否存在
-        当 user_id 不为 None 时，强制验证任务归属
-        """
-        if user_id is None:
-            if task_id in self._cache:
-                return True
-            return ResearchTask.objects.filter(task_id=task_id).exists()
-
-        qs = ResearchTask.objects.filter(task_id=task_id, created_by_id=user_id)
-        return qs.exists()
 
 
 _task_manager = None

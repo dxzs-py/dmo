@@ -7,11 +7,11 @@
 - 工具调用生命周期事件（7 个）：覆盖 pending → waiting/running →
   completed/failed/timeout/rejected 的完整状态机
 - 审批事件（6 个）：pending / processing / waiting / approved / rejected / timeout
-- 流式事件（11 个）：started / completed / finalized / interrupted +
+- 流式事件（10 个）：completed / finalized / interrupted +
   reasoning / sources / suggestions / context / content_update +
   subagent_content / stream_event 通用事件
 - 会话事件（3 个）：session_created / updated / deleted
-- 消息事件（7 个）：message_added / updated / deleted / messages_deleted +
+- 消息事件（6 个）：message_added / updated / messages_deleted +
   regenerated / regenerate_reverted / finalized
 - 另有子代理状态（subagent_status_change）、任务（5 个）、工作流（4 个）事件
 
@@ -75,7 +75,6 @@ class EventType(StrEnum):
     APPROVAL_TIMEOUT = "approval_timeout"  # 审批已超时
 
     # === 流式事件（SSE + WebSocket）===
-    STREAM_STARTED = "stream_started"  # 流式会话已开始（通知非触发浏览器显示"正在思考"）
     STREAM_COMPLETED = "stream_completed"  # 流式会话已完成（通知所有浏览器更新终态）
     STREAM_FINALIZED = "stream_finalized"  # 流式输出已持久化（非请求浏览器可安全拉取后端数据）
     STREAM_INTERRUPTED = "stream_interrupted"  # 流被中断（深度研究模式：聊天流式连接结束，执行服务仍在运行）
@@ -99,7 +98,6 @@ class EventType(StrEnum):
     SESSION_DELETED = "session_deleted"
     MESSAGE_ADDED = "message_added"  # 新消息创建
     MESSAGE_UPDATED = "message_updated"  # 消息内容更新
-    MESSAGE_DELETED = "message_deleted"  # 单条消息删除
     MESSAGES_DELETED = "messages_deleted"  # 批量消息删除
     MESSAGE_REGENERATED = "message_regenerated"  # 消息重新生成（版本归档 + 新版本切换）
     MESSAGE_REGENERATE_REVERTED = "message_regenerate_reverted"  # 重新生成回滚
@@ -351,7 +349,7 @@ _PAYLOAD_TYPE_MAP: dict[EventType, type] = {
     EventType.STREAM_INTERRUPTED: StreamPayload,
     EventType.BUDGET_EXCEEDED: StreamPayload,
     EventType.TASK_PROGRESS: TaskProgressPayload,
-    # STREAM_STARTED / STREAM_COMPLETED / SESSION_* / MESSAGE_* 事件无固定 payload schema，校验时跳过必填字段检查
+    # STREAM_COMPLETED / SESSION_* / MESSAGE_* 事件无固定 payload schema，校验时跳过必填字段检查
 }
 
 # === 各事件类型的必填字段（用于 validate_payload 强制校验）===
@@ -387,8 +385,7 @@ _REQUIRED_FIELDS: dict[EventType, tuple[str, ...]] = {
     EventType.STREAM_INTERRUPTED: ("source", "source_id", "data"),
     # 预算耗尽事件：source + source_id 必填，data 携带 used_tokens/budget_limit（COST-01）
     EventType.BUDGET_EXCEEDED: ("source", "source_id", "data"),
-    # STREAM_STARTED / STREAM_COMPLETED / STREAM_FINALIZED：source + source_id 必填（无 data 字段）
-    EventType.STREAM_STARTED: ("source", "source_id"),
+    # STREAM_COMPLETED / STREAM_FINALIZED：source + source_id 必填（无 data 字段）
     EventType.STREAM_COMPLETED: ("source", "source_id"),
     EventType.STREAM_FINALIZED: ("source", "source_id"),
     # SESSION_* / MESSAGE_* 无必填字段
@@ -400,7 +397,7 @@ _REQUIRED_FIELDS: dict[EventType, tuple[str, ...]] = {
 # - 工具事件 7 个独立：tool_call_pending / tool_call_waiting / ...
 # - 审批事件 5 个独立：approval_pending / approval_processing / ...
 # - 流式事件保持原名：stream_event（reasoning/sources/suggestions/context/content_update）
-#   / stream_started / stream_completed / stream_finalized
+#   / stream_completed / stream_finalized
 # - 会话/消息事件保持原名
 
 _WS_EVENT_NAME_MAP: dict[EventType, str] = {
@@ -424,7 +421,6 @@ _WS_EVENT_NAME_MAP: dict[EventType, str] = {
     EventType.STREAM_CONTEXT: "stream_event",
     EventType.STREAM_CONTENT_UPDATE: "stream_event",
     EventType.STREAM_SUBAGENT_CONTENT: "stream_subagent_content",
-    EventType.STREAM_STARTED: "stream_started",
     EventType.STREAM_COMPLETED: "stream_completed",
     EventType.STREAM_FINALIZED: "stream_finalized",
     EventType.STREAM_INTERRUPTED: "stream_interrupted",
@@ -434,7 +430,6 @@ _WS_EVENT_NAME_MAP: dict[EventType, str] = {
     EventType.SESSION_DELETED: "session_deleted",
     EventType.MESSAGE_ADDED: "message_added",
     EventType.MESSAGE_UPDATED: "message_updated",
-    EventType.MESSAGE_DELETED: "message_deleted",
     EventType.MESSAGES_DELETED: "messages_deleted",
     EventType.MESSAGE_REGENERATED: "message_regenerated",
     EventType.MESSAGE_REGENERATE_REVERTED: "message_regenerate_reverted",
@@ -525,19 +520,3 @@ def validate_payload(event_type: EventType, payload: dict) -> None:
         if val is not None and not val:
             # 空字符串视为未设置，清除以避免歧义
             payload[optional_str_field] = None
-
-
-def is_tool_lifecycle_event(event_type: EventType) -> bool:
-    """判断是否为工具调用生命周期事件。"""
-    payload_type = _PAYLOAD_TYPE_MAP.get(event_type)
-    return payload_type in (ToolCallLifecyclePayload, ToolCallRejectedPayload)
-
-
-def is_approval_event(event_type: EventType) -> bool:
-    """判断是否为审批事件。"""
-    return event_type in _PAYLOAD_TYPE_MAP and _PAYLOAD_TYPE_MAP[event_type] is ApprovalPayload
-
-
-def is_stream_event(event_type: EventType) -> bool:
-    """判断是否为流式事件。"""
-    return event_type in _PAYLOAD_TYPE_MAP and _PAYLOAD_TYPE_MAP[event_type] is StreamPayload

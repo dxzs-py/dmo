@@ -115,43 +115,6 @@ class SkillRegistryService:
         """返回所有预置技能定义"""
         return list(cls._ensure_presets())
 
-    @classmethod
-    def register_preset(
-        cls,
-        name: str,
-        description: str,
-        mode: str = "pipeline",
-        steps: list[dict] | None = None,
-    ) -> SkillSpec:
-        """注册预置技能（幂等，同名则更新）
-
-        Args:
-            name: 技能名称
-            description: 技能描述
-            mode: 执行模式
-            steps: 步骤字典列表
-
-        Returns:
-            注册的 SkillSpec
-        """
-        presets = cls._ensure_presets()
-        skill_steps = [SkillStep(**s) for s in (steps or [])]
-        spec = SkillSpec(
-            name=name,
-            description=description,
-            mode=mode,
-            steps=skill_steps,
-            version="1.0.0",
-            source="system",
-        )
-        # 同名替换
-        for i, existing in enumerate(presets):
-            if existing.name == name:
-                presets[i] = spec
-                return spec
-        presets.append(spec)
-        return spec
-
     # ---- 查询 ----
 
     @classmethod

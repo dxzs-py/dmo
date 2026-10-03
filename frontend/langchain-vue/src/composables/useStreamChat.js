@@ -2,6 +2,7 @@ import { ref, readonly } from 'vue'
 import { chatAPI } from '@/api/chat'
 import { useRealtimeSync } from './useRealtimeSync'
 import { useSessionStore } from '@/stores/session'
+import { resolveStreamTargetMessage } from '@/utils/messageOperations'
 import { StreamState } from '@/types'
 import { logger } from '../utils/logger'
 
@@ -66,21 +67,14 @@ function waitForStreamEnd(sessionId, messageId, signal) {
       fail(new DOMException('Aborted', 'AbortError'))
     }
 
-    /** 定位等待消息：优先按 messageId，兜底最后一条 assistant 消息 */
+    /**
+     * 定位等待消息（spec 组 5 收敛）：精确按 messageId，兜底末条 assistant
+     * （原 findTargetMessage 闭包内联 backendId/id 双匹配 + 末条 assistant
+     * 扫描兜底，与 resolveStreamTargetMessage 语义一致，等价迁移）。
+     */
     const findTargetMessage = () => {
       const session = sessionStore.sessions.find(s => s.id === sessionId)
-      const messages = session?.messages || []
-      if (messageId) {
-        const byId = messages.find(m =>
-          m.backendId?.toString() === messageId.toString()
-          || m.id?.toString() === messageId.toString()
-        )
-        if (byId) return byId
-      }
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === 'assistant') return messages[i]
-      }
-      return null
+      return resolveStreamTargetMessage(session, messageId)
     }
 
     /** 轮询兜底：消息状态到达终态即结束 */

@@ -135,18 +135,6 @@ class StudyFlowState(TypedDict):
     """发生错误的节点名称"""
 
 
-class QuizQuestion(TypedDict):
-    """练习题单题结构"""
-
-    id: str
-    type: str
-    question: str
-    options: list[str] | None
-    answer: str
-    explanation: str
-    points: int
-
-
 class RetrievedDocument(TypedDict):
     """检索文档结构"""
 

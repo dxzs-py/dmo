@@ -11,6 +11,7 @@ import { useSessionStore } from '../stores/session'
 import { useUserStore } from '../stores/user'
 import { useRealtimeSync } from '../composables/useRealtimeSync'
 import { buildUploadFormData, notifyEmbeddingFallback, getUploadErrorMessage, trackUploadTask } from '../utils/knowledgeUpload'
+import { trackEvent } from '@/utils/analytics'
 
 const sessionStore = useSessionStore()
 const userStore = useUserStore()
@@ -67,6 +68,10 @@ const cleanupKnowledgeBaseView = () => {
   if (cacheTimer) {
     clearInterval(cacheTimer)
     cacheTimer = null
+  }
+  if (crossKbTimer) {
+    clearTimeout(crossKbTimer)
+    crossKbTimer = null
   }
   if (cancelUploadTask) {
     cancelUploadTask()
@@ -314,6 +319,88 @@ function handleFileChange(file, fileList) {
   uploadFiles.value = fileList
 }
 
+// ─── 跨库搜索（POST /knowledge/search/ 按库并发，前端聚合展示） ───
+const crossKbDialog = ref(false)
+const crossKbQuery = ref('')
+const crossKbResults = ref([])
+const crossKbLoading = ref(false)
+const crossKbSearched = ref(false)
+let crossKbTimer = null
+
+const CROSS_KB_DEBOUNCE_MS = 300
+const CROSS_KB_PER_KB_TOP_K = 3
+
+function formatScore(score) {
+  return typeof score === 'number' ? score.toFixed(3) : '—'
+}
+
+function resetCrossKbResults() {
+  crossKbResults.value = []
+  crossKbSearched.value = false
+}
+
+function handleCrossKbInput() {
+  if (crossKbTimer) {
+    clearTimeout(crossKbTimer)
+    crossKbTimer = null
+  }
+  if (!crossKbQuery.value.trim()) {
+    resetCrossKbResults()
+    return
+  }
+  crossKbTimer = setTimeout(() => {
+    crossKbTimer = null
+    handleCrossKbSearch()
+  }, CROSS_KB_DEBOUNCE_MS)
+}
+
+async function handleCrossKbSearch() {
+  const query = crossKbQuery.value.trim()
+  if (!query || crossKbLoading.value) return
+  if (!knowledgeBases.value.length) {
+    ElMessage.warning('暂无知识库，请先创建')
+    return
+  }
+  crossKbLoading.value = true
+  crossKbSearched.value = true
+  // 埋点：跨库搜索执行（fire-and-forget，静默失败）
+  trackEvent('cross_kb_search', { queryLength: query.length, kbCount: knowledgeBases.value.length }, { category: 'knowledge' })
+  try {
+    const settled = await Promise.allSettled(
+      knowledgeBases.value.map(kb => knowledgeAPI.searchAll({ indexName: kb.id, query, k: CROSS_KB_PER_KB_TOP_K }))
+    )
+    const aggregated = []
+    let failedCount = 0
+    settled.forEach((outcome, idx) => {
+      if (outcome.status !== 'fulfilled' || outcome.value.data?.code !== 200) {
+        failedCount++
+        return
+      }
+      const kb = knowledgeBases.value[idx]
+      for (const item of outcome.value.data.data || []) {
+        aggregated.push({
+          kbName: kb.name,
+          content: item.content,
+          score: item.score,
+          docTitle: item.metadata?.originalName || item.metadata?.source || item.metadata?.fileName || '未知来源',
+        })
+      }
+    })
+    // 相关度 score 越大越相关（后端按 score >= threshold 过滤语义），缺失分数排末尾
+    crossKbResults.value = aggregated.sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity))
+    if (failedCount === knowledgeBases.value.length) {
+      ElMessage.error('跨库搜索失败，请稍后重试')
+    } else if (failedCount > 0) {
+      logger.warn(`跨库搜索：${failedCount} 个知识库检索失败已跳过`)
+    }
+  } catch (error) {
+    logger.error('跨库搜索失败:', error)
+    ElMessage.error('跨库搜索失败')
+  } finally {
+    crossKbLoading.value = false
+  }
+}
+
 async function loadCacheInfo() {
   cacheLoading.value = true
   try {
@@ -375,6 +462,7 @@ async function handleClearCache(scope = 'all') {
         clearable
         class="search-input"
       />
+      <el-button :icon="Search" @click="crossKbDialog = true">跨库搜索</el-button>
       <el-button type="primary" :icon="Plus" @click="createDialog = true">
         创建知识库
       </el-button>
@@ -653,6 +741,34 @@ v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.docu
       </div>
       <el-empty v-else-if="!testLoading" description="输入查询进行检索测试" :image-size="80" />
     </el-dialog>
+
+    <el-dialog v-model="crossKbDialog" title="跨库搜索" width="700px" @close="resetCrossKbResults">
+      <el-input
+        v-model="crossKbQuery"
+        placeholder="输入查询，在全部知识库中检索..."
+        clearable
+        @input="handleCrossKbInput"
+        @keyup.enter="handleCrossKbSearch"
+      >
+        <template #append>
+          <el-button :icon="Search" :loading="crossKbLoading" @click="handleCrossKbSearch" />
+        </template>
+      </el-input>
+      <div v-loading="crossKbLoading" class="cross-kb-results">
+        <template v-if="crossKbResults.length">
+          <div v-for="(item, idx) in crossKbResults" :key="idx" class="cross-kb-item">
+            <div class="cross-kb-item-header">
+              <el-tag size="small">{{ item.kbName }}</el-tag>
+              <span class="cross-kb-doc">{{ item.docTitle }}</span>
+              <el-tag size="small" type="info" class="cross-kb-score">相关度: {{ formatScore(item.score) }}</el-tag>
+            </div>
+            <p class="cross-kb-content">{{ item.content }}</p>
+          </div>
+        </template>
+        <el-empty v-else-if="crossKbSearched && !crossKbLoading" description="未找到相关内容" :image-size="80" />
+        <el-empty v-else-if="!crossKbLoading" description="输入查询，在全部知识库中统一检索" :image-size="80" />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -778,6 +894,48 @@ v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.docu
   font-size: 14px;
   margin: 0;
   line-height: 1.6;
+}
+
+.cross-kb-results {
+  margin-top: 16px;
+  min-height: 200px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.cross-kb-item {
+  padding: 12px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.cross-kb-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.cross-kb-doc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.cross-kb-score {
+  flex-shrink: 0;
+}
+
+.cross-kb-content {
+  font-size: 14px;
+  margin: 0;
+  line-height: 1.6;
+  word-break: break-word;
 }
 
 .upload-tip {

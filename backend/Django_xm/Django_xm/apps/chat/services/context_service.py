@@ -46,22 +46,6 @@ class ContextService:
         except Exception as e:
             logger.warning(f"ContextService: ContextManager 初始化失败: {e}")
 
-    def apply_compaction(self, chat_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if self._context_manager is not None:
-            try:
-                processed, metadata = self._context_manager.process_messages(chat_history)
-                if metadata.get("compression", {}).get("compressed"):
-                    logger.info(
-                        f"上下文压缩: {metadata['compression']['original_tokens']} -> "
-                        f"{metadata['compression']['compressed_tokens']} tokens, "
-                        f"压缩率 {metadata['compression']['ratio']:.1%}"
-                    )
-                return processed
-            except Exception as e:
-                logger.warning(f"ContextManager 压缩失败，返回原始消息: {e}")
-
-        return chat_history
-
     def apply_context_engineering(
         self,
         chat_history: list[dict[str, Any]],

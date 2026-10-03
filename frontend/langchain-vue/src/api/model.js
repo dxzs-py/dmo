@@ -12,17 +12,6 @@ export const modelAPI = {
     })
   },
 
-  getHelperModel() {
-    return apiClient.get('/ai-engine/helper-model/')
-  },
-
-  setHelperModel(providerId = '', modelName = '') {
-    return apiClient.put('/ai-engine/helper-model/', {
-      providerId: providerId,
-      modelName: modelName,
-    })
-  },
-
   // AI 设置（统一管理默认模型、辅助模型、Embedding 模型）
   getAISettings() {
     return apiClient.get('/ai-engine/settings/')

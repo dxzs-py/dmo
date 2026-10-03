@@ -2,15 +2,16 @@
 
 历史多路独立解析（env 直读、各自回退）收敛至本模块，消费方禁止自行解析：
 
-- ``apps/ai_engine/services/redis_async_client.py``（Checkpointer Redis 热缓存）
-- ``apps/cache_manager/services/cache_service.py::RedisDirectClient``（缓存运维直连）
+- ``apps/ai_engine/services/redis_async_client.py``（Checkpointer Redis 热缓存，异步专用）
+- ``common/redis_utils.py::get_direct_redis_client``（同步直连唯一出口；
+  ``cache_manager/services/cache_service.py::RedisDirectClient`` 经其委托）
 - ``apps/ai_engine/services/checkpointer_factory.py``（Checkpointer/Store 的 PG 连接串）
 - ``common/signal_bus.py``（跨进程信令 Pub/Sub，复用 Celery broker 连接串）
 
 分层边界（.importlinter：common 禁止依赖 apps）：
 env 变量与 Pydantic 真相源（``apps/core/config.py``）的合并在
 ``settings/base.py`` 完成，以 Django settings 属性（``REDIS_URL`` /
-``REDIS_PASSWORD`` / ``REDIS_CHAT_URL`` / ``CELERY_BROKER_URL``）为通道，
+``REDIS_PASSWORD`` / ``CELERY_BROKER_URL``）为通道，
 本模块经 ``django.conf`` 惰性读取，不直接导入 apps 层。
 
 URL 优先级语义（取各历史消费方现状中最严格者，行为保持）：
@@ -20,8 +21,8 @@ URL 优先级语义（取各历史消费方现状中最严格者，行为保持�
    的独立进程），直接读环境变量；
 3. 兜底默认值与 Pydantic 真相源字段默认值严格一致。
 
-注意：不同通道（default cache / chat cache / Celery broker）历史上就是
-三条独立连接串（含各自 DB 号），本模块按通道分别提供 getter，
+注意：不同通道（default cache / Celery broker）历史上就是
+两条独立连接串（含各自 DB 号），本模块按通道分别提供 getter，
 不按 host:port + db 号合成 URL，避免行为漂移。
 
 密码语义：Django cache（django_redis）接受空字符串密码；直连 redis-py
@@ -38,7 +39,6 @@ from django.core.exceptions import ImproperlyConfigured
 
 # 兜底默认值：与 apps/core/config.py Pydantic 字段默认值严格一致（行为保持）
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/1"
-DEFAULT_REDIS_CHAT_URL = "redis://127.0.0.1:6379/2"
 DEFAULT_SIGNAL_REDIS_URL = "redis://127.0.0.1:6379/3"
 DEFAULT_POSTGRES_HOST = "127.0.0.1"
 DEFAULT_POSTGRES_PORT = "5432"
@@ -68,11 +68,6 @@ def get_redis_url() -> str:
     return _resolve_setting("REDIS_URL", DEFAULT_REDIS_URL)
 
 
-def get_redis_chat_url() -> str:
-    """Chat 会话缓存 Redis URL（chat_sessions cache 专用）。"""
-    return _resolve_setting("REDIS_CHAT_URL", DEFAULT_REDIS_CHAT_URL)
-
-
 def get_redis_password() -> str:
     """Redis 密码（原始值，空字符串表示无密码，供 django_redis 使用）。"""
     return _resolve_setting("REDIS_PASSWORD", "")
@@ -81,7 +76,7 @@ def get_redis_password() -> str:
 def get_redis_config() -> dict[str, Any]:
     """Redis 连接配置（供直连 redis-py 的客户端使用）。
 
-    password 与历史直连消费方（redis_async_client / RedisDirectClient）
+    password 与直连消费方（redis_async_client / redis_utils.get_direct_redis_client）
     语义一致：空字符串归一化为 ``None``（redis-py 不接受空字符串密码）。
 
     Returns:

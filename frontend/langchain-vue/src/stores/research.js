@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, markRaw, triggerRef } from 'vue'
 import { logger } from '@/utils/logger'
 import { ResearchTaskStatus } from '@/types'
+import { createTerminalProtectedStatusMap } from '@/stores/statusMap'
 import {
   addOrUpdateToolCallInMap,
   updateOrAddToolResultInMap,
@@ -12,12 +13,6 @@ import {
   _mergeToolCalls,
   sortToolCallsForDisplay,
 } from '@/utils/messageOperations'
-
-/**
- * 任务状态终态集合（不可被非终态覆盖）。
- * 与 task.status 字段配合，防止后端滞后快照（running/pending）覆盖本地已完成状态。
- */
-const TASK_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
 
 /**
  * 深度研究统一状态 Pinia Store
@@ -41,17 +36,6 @@ const TASK_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
 export const useResearchStore = defineStore('research', () => {
   /** 所有研究任务的工具调用状态（按 taskId 索引） */
   const tasks = ref(new Map())
-
-  /**
-   * 任务状态 Map（按 taskId 索引）
-   *
-   * 替代 DeepResearchView 组件本地 `task` ref，作为深度研究模块的统一任务状态源。
-   * 由 setTaskStatus / updateTaskFromEvent 写入，由 DeepResearchView 通过
-   * getTaskStatus（建议在 computed 中调用）读取，实现跨浏览器实时同步。
-   *
-   * 数据结构：Map<taskId, ref({taskId, status, finalReport, ...})>
-   */
-  const taskInfo = ref(new Map())
 
   // ==================== 内部辅助 ====================
 
@@ -125,93 +109,15 @@ export const useResearchStore = defineStore('research', () => {
   // 防止后端滞后快照（running/pending）覆盖本地已完成状态。
   // 与 messageOperations.js 中 STATUS_PRIORITY 对 toolCall.status 的保护机制对齐。
 
-  /**
-   * 获取或创建指定 task 的状态 ref
-   * @param {string} taskId - 研究任务 ID
-   * @returns {import('vue').Ref<Object>|null} 任务状态 ref（task 不存在 taskId 时返回 null）
-   */
-  const _ensureTaskInfo = (taskId) => {
-    if (!taskId) return null
-    if (!taskInfo.value.has(taskId)) {
-      taskInfo.value.set(taskId, ref(null))
-    }
-    return taskInfo.value.get(taskId)
-  }
-
-  /**
-   * 合并式更新任务状态（替代 DeepResearchView 的 `task.value = { ...task.value, ...fresh }`）
-   *
-   * 状态优先级保护规则：
-   * - 旧 status 是终态 + 新 status 是非终态 → 保留旧 status（防止滞后快照覆盖）
-   * - 新 status 是终态 → 直接覆盖（终态是权威）
-   * - 其他情况 → 用新 status 覆盖
-   *
-   * 其他字段（finalReport / currentStep / message 等）直接合并更新。
-   *
-   * @param {string} taskId - 研究任务 ID
-   * @param {Object} fresh - 新的任务数据（部分字段即可，会与现有数据合并）
-   * @param {Object} [options]
-   * @param {boolean} [options.force=false] - 强制覆盖（跳过状态优先级保护）
-   * @returns {Object|null} 更新后的任务状态（taskId 无效时返回 null）
-   */
-  const setTaskStatus = (taskId, fresh, options = {}) => {
-    if (!taskId || !fresh || typeof fresh !== 'object') return null
-    const taskRef = _ensureTaskInfo(taskId)
-    if (!taskRef) return null
-
-    const current = taskRef.value
-    const force = options.force === true
-
-    // 首次设置：直接写入
-    if (!current) {
-      taskRef.value = { ...fresh }
-      logger.info(`[Research] setTaskStatus 首次设置: taskId=${taskId}, status=${fresh.status}`)
-      return taskRef.value
-    }
-
-    // 状态优先级保护（非 force 模式）
-    const newStatus = fresh.status
-    const oldStatus = current.status
-    if (!force && newStatus && oldStatus
-        && TASK_TERMINAL_STATUSES.has(oldStatus)
-        && !TASK_TERMINAL_STATUSES.has(newStatus)) {
-      logger.warn(
-        `[Research] setTaskStatus 状态保护: taskId=${taskId}, ` +
-        `旧 status=${oldStatus}(终态) 不被新 status=${newStatus}(非终态) 覆盖`
-      )
-      // 保留旧 status，但其他字段可以合并
-      const otherFields = { ...fresh }
-      delete otherFields.status
-      taskRef.value = { ...current, ...otherFields, status: oldStatus }
-      return taskRef.value
-    }
-
-    // 正常合并更新
-    taskRef.value = { ...current, ...fresh }
-    if (newStatus && newStatus !== oldStatus) {
-      logger.info(
-        `[Research] setTaskStatus 状态变更: taskId=${taskId}, ` +
-        `oldStatus=${oldStatus}, newStatus=${newStatus}`
-      )
-    }
-    return taskRef.value
-  }
-
-  /**
-   * 获取指定 task 的状态（响应式，建议在 computed 中调用）
-   *
-   * 在 DeepResearchView 中使用示例：
-   *   const currentTaskId = ref(null)
-   *   const task = computed(() => researchStore.getTaskStatus(currentTaskId.value))
-   *
-   * @param {string} taskId - 研究任务 ID
-   * @returns {Object|null} 任务状态对象（taskId 无效或未设置时返回 null）
-   */
-  const getTaskStatus = (taskId) => {
-    if (!taskId) return null
-    const taskRef = taskInfo.value.get(taskId)
-    return taskRef?.value || null
-  }
+  // 任务状态 Map 操作集（spec D10：ensure/get/set 与 workflow.js 收敛为
+  // statusMap.js 的 createTerminalProtectedStatusMap 单一实现；日志前缀与
+  // 方法名保持原 [Research] setTaskStatus 文案，终态保护规则见工厂 JSDoc）
+  const {
+    map: taskInfo,
+    ensure: _ensureTaskInfo,
+    get: getTaskStatus,
+    set: setTaskStatus,
+  } = createTerminalProtectedStatusMap({ logTag: 'Research', actionName: 'setTaskStatus' })
 
   /**
    * 从 stream_completed 实时事件更新任务状态
@@ -499,7 +405,6 @@ export const useResearchStore = defineStore('research', () => {
 
   return {
     tasks,
-    taskInfo,
     addOrUpdateToolCall,
     updateOrAddToolResult,
     setApprovalToToolCall,

@@ -26,9 +26,19 @@ from pydantic import Field
 from Django_xm.apps.core.config import (
     ProjectSettings,
 )
-from Django_xm.apps.core.config import (
-    setup_loguru_logging as _setup_loguru_logging,
-)
+
+
+# ==================== Agent 递归深度常量（3A-P2-1）====================
+# LangGraph graph invoke/astream 的 recursion_limit 三档取值（代码级常量，
+# 不进 settings：取值为执行拓扑的工程判断而非运维可调项，避免配置面扩大）。
+# 置于 ai_engine 配置模块（底层引擎，chat/research/agent_hub 均可合法依赖）。
+# 取值依据：
+# - CHAT=500：单轮对话 agent，工具循环步数适中；
+# - RESEARCH=1000：深度研究多轮规划 + 子代理编排，链路更深；
+# - SUBAGENT=200：子代理任务面窄而浅，超限由 GraphRecursionError 兜底。
+AGENT_RECURSION_LIMIT_CHAT = 500
+AGENT_RECURSION_LIMIT_RESEARCH = 1000
+AGENT_RECURSION_LIMIT_SUBAGENT = 200
 
 
 class Settings(ProjectSettings):
@@ -82,11 +92,6 @@ class Settings(ProjectSettings):
 
     # ==================== 高德地图配置 ====================
     amap_key: str = Field(default="", description="高德地图 API 密钥")
-
-    # ==================== Agent 配置 ====================
-    agent_max_iterations: int = Field(default=15, ge=1, le=100, description="Agent 最大迭代次数")
-
-    agent_max_execution_time: float | None = Field(default=None, description="Agent 最大执行时间(秒)")
 
     # ==================== 会话 Token 硬预算（COST-01）====================
     # 会话（thread/session）级累计 token 硬熔断上限：执行循环每轮 LLM 调用后检查
@@ -179,27 +184,7 @@ class Settings(ProjectSettings):
         default=5000, ge=0, le=100000, description="RAG Pipeline 全文注入 token 阈值"
     )
 
-    rag_max_docs_in_result: int = Field(default=10, ge=1, le=50, description="RAG Pipeline 格式化输出最大文档数")
-
-    rag_max_doc_content_length: int = Field(
-        default=800, ge=100, le=10000, description="RAG Pipeline 单文档内容截断长度"
-    )
-
-    rag_quality_retrieval_threshold: float = Field(
-        default=0.5, ge=0.0, le=1.0, description="RAG Pipeline 检索质量评分阈值"
-    )
-
-    rag_quality_generation_threshold: float = Field(
-        default=0.6, ge=0.0, le=1.0, description="RAG Pipeline 生成质量评分阈值"
-    )
-
-    rag_max_retry_count: int = Field(default=1, ge=0, le=5, description="RAG Pipeline 最大重检索次数")
-
     rag_rrf_constant: int = Field(default=60, ge=1, le=200, description="RAG Pipeline RRF 融合常数")
-
-    rag_agent_max_iterations: int = Field(default=10, ge=1, le=50, description="RAG Agent 最大迭代数")
-
-    rag_agent_return_source_documents: bool = Field(default=True, description="是否返回来源文档")
 
     # ==================== Checkpointer 配置 ====================
     checkpointer_backend: str = Field(default="postgres", description="Checkpointer 后端: sqlite/memory/postgres")
@@ -217,25 +202,10 @@ class Settings(ProjectSettings):
     )
 
     # ==================== Store 配置 ====================
-    store_enabled: bool = Field(default=False, description="是否自动注入 Store（长期记忆）到 Agent")
-
     store_backend: str = Field(default="postgres", description="Store 后端: memory/postgres")
-
-    # ==================== Summarization 配置 ====================
-    summarization_trigger_tokens: int = Field(
-        default=4000, ge=500, le=100000, description="SummarizationMiddleware 触发摘要的 token 阈值"
-    )
-
-    summarization_keep_messages: int = Field(
-        default=20, ge=2, le=100, description="SummarizationMiddleware 保留的最近消息数"
-    )
 
     # ==================== Agent Cache 配置 ====================
     agent_cache_enabled: bool = Field(default=False, description="是否自动注入 Agent 级别缓存（InMemoryCache）")
-
-    llm_cache_enabled: bool = Field(default=False, description="是否启用全局 LLM Cache（langchain_core.llm_cache）")
-
-    llm_cache_type: str = Field(default="memory", description="LLM Cache 类型: memory/semantic")
 
     # ==================== Guardrails 配置 ====================
     guardrails_enabled: bool = Field(default=False, description="是否全局启用 Guardrails Middleware")
@@ -245,8 +215,6 @@ class Settings(ProjectSettings):
     guardrails_enable_pii: bool = Field(default=False, description="是否启用 PII 检测与脱敏")
 
     guardrails_max_message_count: int = Field(default=100, ge=1, description="Guardrails 最大消息数量限制")
-
-    guardrails_blocked_tools: str = Field(default="", description="Guardrails 额外屏蔽的工具名（逗号分隔）")
 
     # ==================== LangSmith 配置 ====================
     langsmith_api_key: str = Field(default="", description="LangSmith API 密钥")
@@ -295,24 +263,6 @@ class Settings(ProjectSettings):
         "判定为无进展循环并 BLOCK。适用于所有工具（按 tool_fingerprint 注册表）。",
     )
 
-    # ---- 校验方法 ----
-
-    def validate_required_keys(self) -> None:
-        if not self.secret_key:
-            raise ValueError("SECRET_KEY 未设置！请通过环境变量或 .env 文件配置。")
-        if not self.openai_api_key and not self.debug:
-            raise ValueError("OPENAI_API_KEY 未设置！非调试模式下为必需项。")
-
-    # ---- 便捷属性 ----
-
-    @property
-    def indexes_dir(self) -> str:
-        return self.vector_store_path
-
-    @property
-    def uploads_dir(self) -> str:
-        return self.data_uploads_path
-
     def get_openai_config(self) -> dict[str, Any]:
         config: dict[str, Any] = {
             "api_key": self.openai_api_key,
@@ -323,12 +273,6 @@ class Settings(ProjectSettings):
         if self.openai_max_tokens is not None:
             config["max_tokens"] = self.openai_max_tokens
         return config
-
-    def get_tavily_config(self) -> dict[str, Any]:
-        return {
-            "api_key": self.tavily_api_key,
-            "max_results": self.tavily_max_results,
-        }
 
 
 # ==================== 单例管理 ====================
@@ -347,11 +291,6 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-
-
-# ==================== 日志工具（代理到 core.config）====================
-
-setup_loguru_logging = _setup_loguru_logging
 
 
 # ==================== 模型注册表 ====================
