@@ -26,7 +26,6 @@ from django.test import TestCase
 from Django_xm.apps.approvals.models import Approval
 from Django_xm.apps.approvals.services import approval_service
 from Django_xm.apps.approvals.services.approval_service import (
-    _publish_tool_call_lifecycle_event,
     _publish_tool_call_running_event,
     _publish_tool_call_waiting_event,
     publish_tool_call_rejected_event,

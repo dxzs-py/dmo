@@ -53,19 +53,11 @@ export const useModelStore = defineStore('model', () => {
       if (data?.code === 200 && data?.data?.providers) {
         providers.value = data.data.providers
 
-        // 尝试从数据库读取用户保存的默认模型
-        let savedProvider = null
-        let savedModel = null
-        try {
-          const settingsRes = await modelAPI.getAISettings()
-          const settingsData = settingsRes.data?.data
-          if (settingsData?.current?.defaultChatModel?.providerId) {
-            savedProvider = settingsData.current.defaultChatModel.providerId
-            savedModel = settingsData.current.defaultChatModel.modelName
-          }
-        } catch {
-          // 忽略，使用默认逻辑
-        }
+        // 系统默认模型直接取自 providers 响应（后端从 SystemConfig.default_chat_model
+        // 派生 defaultProvider/defaultModel 公开字段，经 axios 拦截器转 camelCase）。
+        // 不再请求 IsAdminUser 的 /ai-engine/settings/，普通用户加载零 403。
+        const savedProvider = data.data.defaultProvider || null
+        const savedModel = data.data.defaultModel || null
 
         if (savedProvider && providers.value.find(p => p.id === savedProvider && p.available)) {
           currentProviderId.value = savedProvider

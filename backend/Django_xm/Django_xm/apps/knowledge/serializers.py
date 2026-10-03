@@ -95,21 +95,38 @@ class EmptyIndexCreateSerializer(IndexNameValidationMixin, serializers.Serialize
     overwrite = serializers.BooleanField(default=False, required=False, help_text="是否覆盖已存在的索引")
 
 
-class SearchRequestSerializer(serializers.Serializer):
-    """检索请求序列化器。"""
+class SearchAllRequestSerializer(serializers.Serializer):
+    """跨库聚合检索请求序列化器（views_rag.SearchAllView.post）。"""
 
-    index_name = serializers.CharField(required=True, help_text="索引名称")
     query = serializers.CharField(min_length=1, required=True, help_text="检索查询")
-    k = serializers.IntegerField(default=4, required=False, max_value=20, help_text="返回文档数量（最大 20）")
+    k = serializers.IntegerField(
+        default=4, required=False, min_value=1, max_value=20, help_text="全局返回结果数量（最大 20）"
+    )
+    index_names = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        allow_null=True,
+        help_text="指定检索的索引名称列表（原始名，非全名）；缺省为当前用户全部知识库",
+    )
     score_threshold = serializers.FloatField(required=False, allow_null=True, help_text="相似度阈值")
 
 
-class SearchResultSerializer(serializers.Serializer):
-    """检索结果序列化器。"""
+class SearchAllResultItemSerializer(serializers.Serializer):
+    """跨库聚合检索结果条目序列化器。"""
 
     content = serializers.CharField()
     metadata = serializers.DictField()
     score = serializers.FloatField(required=False, allow_null=True)
+    source_index = serializers.CharField(help_text="来源知识库原始名")
+    fused_rank = serializers.IntegerField(help_text="RRF 融合后全局排名（1 起）")
+
+
+class SearchAllResponseSerializer(serializers.Serializer):
+    """跨库聚合检索响应序列化器。"""
+
+    results = SearchAllResultItemSerializer(many=True)
+    searched_indexes = serializers.IntegerField(help_text="成功检索的索引数")
+    failed_indexes = serializers.IntegerField(help_text="检索失败被跳过的索引数")
 
 
 class CreateKnowledgeBaseSerializer(serializers.Serializer):

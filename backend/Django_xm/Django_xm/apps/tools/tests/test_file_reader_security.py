@@ -13,7 +13,6 @@
 """
 
 import tempfile
-import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -22,7 +21,7 @@ import django
 django.setup()
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.test import TestCase
 
 from Django_xm.apps.attachments.services.cross_app import get_attachment_by_id
 from Django_xm.apps.tools.langchain.file_reader import (

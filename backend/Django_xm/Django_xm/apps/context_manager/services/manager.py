@@ -47,6 +47,19 @@ from Django_xm.common.messages import content_to_str
 
 logger = get_logger(__name__)
 
+# 跨会话记忆摘要指令（spec D2/P2）：本轮压缩与增量合并共用 summarize_long_text 通道
+_TURN_SUMMARY_INSTRUCTION = (
+    "请将以下一轮对话的要点压缩为不超过3句话的中文摘要，"
+    "保留用户意图、关键结论与偏好信息，直接输出摘要文本，不要任何额外说明。"
+)
+_TURN_SUMMARY_MERGE_INSTRUCTION = (
+    "以下是同一会话的历史累积摘要与本轮新增摘要，请将两者合并为不超过5句话的中文累积摘要，"
+    "保留历史关键决策与实体，并纳入本轮新要点，直接输出合并后的摘要文本，不要任何额外说明。"
+)
+# 合并去重后的容量上限（与 EntityExtractor.extract_from_messages / extract_decisions 现有截断上限一致）
+_CROSS_SESSION_ENTITY_LIMIT = 30
+_CROSS_SESSION_DECISION_LIMIT = 10
+
 
 @dataclass
 class ContextManagementConfig:
@@ -689,20 +702,66 @@ class ContextManager:
             logger.exception("保存会话上下文失败")
             return False
 
+    def _load_session_context_data(self, session_id: str) -> dict[str, Any] | None:
+        """读取该会话已保存的跨会话记忆条目（spec P2 增量合并读侧）。
+
+        返回 save_session_context 写入的原始结构（session_id/summary/
+        key_entities/key_decisions/saved_at），无条目或读取失败一律返回 None
+        （按无旧摘要处理，增量合并自动降级为纯本轮摘要写入），不向外抛出。
+        """
+        if not self.user_id:
+            return None
+        store = self._ensure_store()
+        if store is None:
+            return None
+        namespace = (str(self.user_id), "session_contexts")
+        try:
+            item = store.get(namespace, session_id)
+        except Exception as e:
+            logger.debug(f"读取旧会话摘要失败（按无旧摘要处理）: session={session_id}, error={e}")
+            return None
+        if item is None:
+            return None
+        data = item.value if hasattr(item, "value") else item
+        return data if isinstance(data, dict) else None
+
+    @staticmethod
+    def _merge_unique_values(old_values: Any, new_values: Any, limit: int) -> list[str]:
+        """新旧实体/决策合并去重（保序：旧值在前维持历史权重，新值追加），截断至现有抽取上限。"""
+        merged: list[str] = []
+        seen: set[str] = set()
+        for value in list(old_values or []) + list(new_values or []):
+            text = str(value or "").strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(text)
+        return merged[:limit]
+
     def save_turn_summary(
         self,
         session_id: str,
         user_message: str,
         assistant_content: str,
     ) -> bool:
-        """会话终态摘要记忆写入（spec D2）：将本轮对话压缩为摘要并写入跨会话记忆。
+        """会话终态摘要记忆写入（spec D2 + P2 增量合并）：将本轮对话压缩为摘要并写入跨会话记忆。
 
         摘要复用统一引擎轻量摘要通道（summarize_long_text：轻量模型 → 辅助模型
         → SystemConfig 默认 → 兜底），实体/决策复用引擎规则抽取唯一实现，
         写入委托 save_session_context（含 cross_session_enabled 检查与容量淘汰语义）。
 
-        异常语义：摘要模型解析/调用失败异常向上抛出，由调用方（chat finalizer）
-        静默降级；摘要为空时返回 False 跳过写入，不阻塞调用方主流程。
+        增量合并（spec P2）：写入前读取该会话旧摘要（_load_session_context_data），
+        摘要 LLM 输入 =「历史累积摘要 + 本轮摘要」→ 输出 ≤5 句累积摘要；
+        实体/决策新旧合并去重（旧值在前，截断至现有抽取上限），
+        多轮对话的早期决策/实体不再因覆盖写丢失。
+
+        降级链：无旧摘要 → 纯本轮摘要（现状逻辑）；本轮摘要生成失败/为空 →
+        返回 False 跳过写入；合并 LLM 调用失败 → 降级保存本轮摘要（本轮数据
+        不丢，warning 留痕）。全程异常不向外抛（调用方 chat finalizer 已有
+        降级包裹，此处再兜底），统一返回 False。
         """
         if not self.config.cross_session_enabled or not self.user_id:
             return False
@@ -712,28 +771,61 @@ class ContextManager:
         if not user_text or not assistant_text:
             return False
 
-        engine = self._compression_engine or ContextCompressionEngine(CompressionConfig())
-        turn_text = f"用户：{user_text}\n\n助手：{assistant_text}"
-        summary = engine.summarize_long_text(
-            turn_text,
-            "请将以下一轮对话的要点压缩为不超过3句话的中文摘要，"
-            "保留用户意图、关键结论与偏好信息，直接输出摘要文本，不要任何额外说明。",
-        )
-        summary = (summary or "").strip()
-        if not summary:
-            logger.debug(f"会话摘要为空，跳过跨会话记忆写入: session={session_id}")
-            return False
+        try:
+            engine = self._compression_engine or ContextCompressionEngine(CompressionConfig())
+            turn_text = f"用户：{user_text}\n\n助手：{assistant_text}"
 
-        turn_messages = [
-            {"role": "user", "content": user_text},
-            {"role": "assistant", "content": assistant_text},
-        ]
-        return self.save_session_context(
-            session_id=session_id,
-            summary=summary,
-            key_entities=EntityExtractor.extract_from_messages(turn_messages),
-            key_decisions=ContextCompressionEngine.extract_decisions(turn_messages),
-        )
+            # 1) 本轮摘要（现状逻辑）
+            try:
+                turn_summary = (engine.summarize_long_text(turn_text, _TURN_SUMMARY_INSTRUCTION) or "").strip()
+            except Exception:
+                logger.warning(f"本轮摘要生成失败，跳过跨会话记忆写入: session={session_id}", exc_info=True)
+                return False
+            if not turn_summary:
+                logger.debug(f"会话摘要为空，跳过跨会话记忆写入: session={session_id}")
+                return False
+
+            # 2) 读取旧摘要（spec P2 增量合并）
+            old_data = self._load_session_context_data(session_id) or {}
+            old_summary = str(old_data.get("summary") or "").strip()
+
+            # 3) 合并摘要：旧摘要 + 本轮摘要 → 累积摘要；合并 LLM 失败降级为本轮摘要
+            final_summary = turn_summary
+            if old_summary:
+                merge_text = f"【历史累积摘要】\n{old_summary}\n\n【本轮新增摘要】\n{turn_summary}"
+                try:
+                    merged = (engine.summarize_long_text(merge_text, _TURN_SUMMARY_MERGE_INSTRUCTION) or "").strip()
+                except Exception:
+                    logger.warning(f"摘要合并调用失败，降级保存本轮摘要: session={session_id}", exc_info=True)
+                    merged = ""
+                if merged:
+                    final_summary = merged
+
+            # 4) 实体/决策新旧合并去重（保持现有抽取上限）
+            turn_messages = [
+                {"role": "user", "content": user_text},
+                {"role": "assistant", "content": assistant_text},
+            ]
+            merged_entities = self._merge_unique_values(
+                old_data.get("key_entities"),
+                EntityExtractor.extract_from_messages(turn_messages),
+                _CROSS_SESSION_ENTITY_LIMIT,
+            )
+            merged_decisions = self._merge_unique_values(
+                old_data.get("key_decisions"),
+                ContextCompressionEngine.extract_decisions(turn_messages),
+                _CROSS_SESSION_DECISION_LIMIT,
+            )
+
+            return self.save_session_context(
+                session_id=session_id,
+                summary=final_summary,
+                key_entities=merged_entities,
+                key_decisions=merged_decisions,
+            )
+        except Exception:
+            logger.warning(f"跨会话记忆写入异常（兜底吞没，不阻塞调用方）: session={session_id}", exc_info=True)
+            return False
 
     def _load_cross_session_context(self, query: str) -> str:
         store = self._ensure_store()

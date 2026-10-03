@@ -12,7 +12,6 @@
 
 import os
 from types import SimpleNamespace
-from unittest import mock
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.test")
 import django

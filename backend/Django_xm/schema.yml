@@ -780,22 +780,28 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/knowledge/search/:
+  /api/v1/knowledge/search-all/:
     post:
-      operationId: knowledge_search_create
+      operationId: knowledge_search_all_create
+      description: |-
+        跨库聚合检索：单次 embedding → 并发检索用户全部（或指定）索引 → RRF 融合。
+
+        排序语义：各库绝对 score 跨库不可比，融合按排名倒数（RRF，k=60），
+        融合分 = Σ 1/(rrf_k + 库内排名)；同库内相对顺序保持不变。
+        单库异常计入 failed_indexes 不中断整体；全部失败/空结果返回 200 + 空数组。
       tags:
       - knowledge
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SearchRequest'
+              $ref: '#/components/schemas/SearchAllRequest'
           application/x-www-form-urlencoded:
             schema:
-              $ref: '#/components/schemas/SearchRequest'
+              $ref: '#/components/schemas/SearchAllRequest'
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/SearchRequest'
+              $ref: '#/components/schemas/SearchAllRequest'
         required: true
       security:
       - jwtAuth: []
@@ -806,7 +812,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SearchResult'
+                $ref: '#/components/schemas/SearchAllResponse'
           description: ''
   /api/v1/learning/{thread_id}/attempts/:
     get:
@@ -1219,24 +1225,6 @@ paths:
   /api/v1/research/{task_id}/files/:
     get:
       operationId: research_files_retrieve
-      parameters:
-      - in: path
-        name: task_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - research
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/research/results/{task_id}/:
-    get:
-      operationId: research_results_retrieve
       parameters:
       - in: path
         name: task_id
@@ -1698,7 +1686,13 @@ paths:
   /api/v1/users/captcha/:
     get:
       operationId: users_captcha_retrieve
-      description: 获取图形验证码
+      description: |-
+        获取图形验证码
+
+        生成链路（图像渲染 + 缓存写入）整体包裹异常处理：瞬时故障（PIL 渲染异常、
+        缓存后端不可达等）时 logger.exception 留下完整 traceback（此前该路径异常
+        以裸 500 形式出现且无迹可循），并按异常驱动单轨制抛出 BaseAppError，
+        由全局异常处理器返回结构化 503 响应，而非裸 500。
       tags:
       - users
       security:
@@ -1708,6 +1702,8 @@ paths:
       - {}
       responses:
         '200':
+          description: No response body
+        '503':
           description: No response body
   /api/v1/users/change-password/:
     post:
@@ -2545,13 +2541,10 @@ components:
         * `user` - 用户
         * `assistant` - 助手
         * `system` - 系统
-    SearchRequest:
+    SearchAllRequest:
       type: object
-      description: 检索请求序列化器。
+      description: 跨库聚合检索请求序列化器（views_rag.SearchAllView.post）。
       properties:
-        index_name:
-          type: string
-          description: 索引名称
         query:
           type: string
           description: 检索查询
@@ -2559,19 +2552,43 @@ components:
         k:
           type: integer
           maximum: 20
+          minimum: 1
           default: 4
-          description: 返回文档数量（最大 20）
+          description: 全局返回结果数量（最大 20）
+        index_names:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: 指定检索的索引名称列表（原始名，非全名）；缺省为当前用户全部知识库
         score_threshold:
           type: number
           format: double
           nullable: true
           description: 相似度阈值
       required:
-      - index_name
       - query
-    SearchResult:
+    SearchAllResponse:
       type: object
-      description: 检索结果序列化器。
+      description: 跨库聚合检索响应序列化器。
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchAllResultItem'
+        searched_indexes:
+          type: integer
+          description: 成功检索的索引数
+        failed_indexes:
+          type: integer
+          description: 检索失败被跳过的索引数
+      required:
+      - failed_indexes
+      - results
+      - searched_indexes
+    SearchAllResultItem:
+      type: object
+      description: 跨库聚合检索结果条目序列化器。
       properties:
         content:
           type: string
@@ -2582,9 +2599,17 @@ components:
           type: number
           format: double
           nullable: true
+        source_index:
+          type: string
+          description: 来源知识库原始名
+        fused_rank:
+          type: integer
+          description: RRF 融合后全局排名（1 起）
       required:
       - content
+      - fused_rank
       - metadata
+      - source_index
     TokenRefresh:
       type: object
       properties:

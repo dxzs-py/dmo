@@ -17,6 +17,7 @@
 """
 
 import os
+from unittest import mock
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.test")
 import django
@@ -27,11 +28,14 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
 
+from Django_xm.common.error_codes import ErrorCode
+
 User = get_user_model()
 
 LOGIN_URL = "/api/v1/users/login/"
 REGISTER_URL = "/api/v1/users/register/"
 INFO_URL = "/api/v1/users/info/"
+CAPTCHA_URL = "/api/v1/users/captcha/"
 
 # 满足 serializers.PASSWORD_COMPLEXITY_PATTERN 的测试口令
 VALID_PASSWORD = "Abcdef1!@#"
@@ -139,6 +143,36 @@ class UserInfoViewTests(TestCase):
         self.assertEqual(data["username"], "infouser")
         self.assertIn("is_staff", data)
         self.assertFalse(data["is_staff"])
+
+
+class CaptchaViewTests(TestCase):
+    """验证码接口：正常路径 + 生成链路故障韧性（P1 双层防御的后端侧）。"""
+
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_captcha_success_returns_png_with_key_header(self):
+        """正常路径：200 + PNG 内容 + X-Captcha-Key 响应头（含缓存写入全链路）。"""
+        resp = self.client.get(CAPTCHA_URL)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp["Content-Type"], "image/png")
+        self.assertTrue(resp["X-Captcha-Key"])
+        self.assertTrue(resp.content)
+
+    def test_captcha_generation_failure_returns_structured_503(self):
+        """生成链路异常 → logger.exception 留痕 + 结构化 503（SERVICE_UNAVAILABLE），非裸 500。"""
+        with (
+            mock.patch("Django_xm.apps.users.views.CaptchaGenerator") as mock_generator_cls,
+            mock.patch("Django_xm.apps.users.views.logger") as mock_logger,
+        ):
+            mock_generator_cls.return_value.generate.side_effect = RuntimeError("boom")
+            resp = self.client.get(CAPTCHA_URL)
+
+        self.assertEqual(resp.status_code, 503)
+        body = resp.json()
+        self.assertEqual(body["code"], int(ErrorCode.SERVICE_UNAVAILABLE))
+        self.assertEqual(body["message"], "验证码服务暂时不可用，请重试")
+        mock_logger.exception.assert_called_once()
 
 
 class SoftDeleteMobileReleaseTests(TestCase):

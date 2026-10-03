@@ -10,14 +10,26 @@ def search_vector_store(
     query: str,
     k: int = 4,
     score_threshold: float | None = None,
+    query_embedding: list[float] | None = None,
 ) -> list[tuple]:
+    """向量库打分检索。
+
+    query_embedding 为 None 时由向量库自行 embed query（现行为）；
+    提供预计算 embedding 时走 by-vector 检索（跨库聚合场景复用同一次 embed）。
+    """
     logger.info(f"搜索向量库: query='{query[:50]}...', k={k}")
 
     try:
-        results = vector_store.similarity_search_with_score(
-            query=query,
-            k=k,
-        )
+        if query_embedding is not None:
+            results = vector_store.similarity_search_with_score_by_vector(
+                query_embedding,
+                k=k,
+            )
+        else:
+            results = vector_store.similarity_search_with_score(
+                query=query,
+                k=k,
+            )
 
         if score_threshold is not None:
             results = [(doc, score) for doc, score in results if score >= score_threshold]

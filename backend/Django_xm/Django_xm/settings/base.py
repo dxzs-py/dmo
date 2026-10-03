@@ -315,9 +315,6 @@ SERVER_EMAIL = project_cfg.default_from_email
 
 LOCALE_PATHS = [BASE_DIR / "locale"]
 
-APP_NAME = project_cfg.app_name
-APP_VERSION = project_cfg.app_version
-
 DATA_DIR = PROJECT_ROOT / project_cfg.data_dir
 INDEXES_DIR = PROJECT_ROOT / app_cfg.vector_store_path
 UPLOADS_DIR = PROJECT_ROOT / project_cfg.data_uploads_path
@@ -427,9 +424,6 @@ CELERY_BEAT_SCHEDULE = {
 # 生产环境严禁开启（豁免内网校验引入 SSRF 风险）。
 MCP_SSRF_ALLOW_PRIVATE_ADDRESSES = project_cfg.mcp_ssrf_allow_private_addresses
 
-# AI Engine Settings
-AI_RATE_LIMIT_MAX_MODEL_CALLS = 50
-
 # Phase D: Docker 沙箱执行层配置
 # HIGH 级工具调用在 Docker 容器内执行，防止不可逆变更影响宿主系统。
 # 开发环境默认关闭（ENABLED=False），生产环境通过环境变量启用。
@@ -446,12 +440,12 @@ SANDBOX_CONFIG = {
     # 不再挂载整个项目根（容器内破坏性操作不触及挂载区外的宿主文件）
     "WORK_DIR_MOUNT": str(DATA_DIR),
 }
-AI_RATE_LIMIT_MAX_TOOL_CALLS = 30
+
+# AI Engine Settings
 AI_LLM_TIMEOUT = 120.0
 AI_LLM_MAX_RETRIES = 3
 AI_DEFAULT_PROVIDER = "deepseek"
 AI_MODEL_CACHE_MAXSIZE = 32
-AI_TOOL_PERMISSION_CACHE_TIMEOUT = 3600
 AI_DEFAULT_MODEL_TOKEN_LIMIT = 128000
 
 AI_HELPER_MODEL_PROVIDER = ""

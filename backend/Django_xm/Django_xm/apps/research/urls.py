@@ -2,7 +2,6 @@ from django.urls import path
 
 from .views import (
     DeepResearchContinueView,
-    DeepResearchResultView,
     DeepResearchStartView,
     DeepResearchStatusView,
     DeepResearchTaskDeleteView,
@@ -31,5 +30,4 @@ urlpatterns = [
     path("tasks/<str:task_id>/", DeepResearchTaskDeleteView.as_view(), name="tasks_delete"),
     path("status/<str:task_id>/", DeepResearchStatusView.as_view(), name="status"),
     path("stream/<str:task_id>/", deep_research_stream, name="stream"),
-    path("results/<str:task_id>/", DeepResearchResultView.as_view(), name="results"),
 ]

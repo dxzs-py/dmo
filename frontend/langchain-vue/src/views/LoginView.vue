@@ -55,9 +55,10 @@
             <img
               :src="captchaSrc"
               class="captcha-img"
+              :class="{ 'is-loading': captchaLoading }"
               alt="验证码"
               title="点击刷新"
-              @click="refreshCaptcha"
+              @click="refreshCaptcha()"
             />
           </div>
         </el-form-item>
@@ -108,7 +109,11 @@ const formRef = ref(null)
 const loading = ref(false)
 const captchaSrc = ref('')
 const captchaKey = ref('')
+const captchaLoading = ref(false)
 const isExpired = ref(false)
+
+// 验证码加载失败自动重试延迟（仅重试 1 次，防循环）
+const CAPTCHA_RETRY_DELAY_MS = 600
 
 const validateUsername = (rule, value, callback) => {
   if (!value) {
@@ -159,13 +164,47 @@ onMounted(() => {
   }
 })
 
-async function refreshCaptcha() {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function revokeCaptchaSrc() {
+  if (captchaSrc.value) {
+    URL.revokeObjectURL(captchaSrc.value)
+    captchaSrc.value = ''
+  }
+}
+
+// 单次加载验证码；请求异常或非 2xx 响应均由 axios 拦截器以 reject 抛出
+async function loadCaptcha() {
+  const response = await userAPI.getCaptcha()
+  captchaKey.value = response.headers['x-captcha-key']
+  const nextSrc = URL.createObjectURL(response.data)
+  revokeCaptchaSrc()
+  captchaSrc.value = nextSrc
+}
+
+/**
+ * 加载/刷新验证码；失败后自动重试 1 次（600ms 延迟，防循环），
+ * 全程 captchaLoading 置位防 UI 抖动与并发刷新；重试仍失败时
+ * 保留手动刷新入口（点击验证码图片）。
+ */
+async function refreshCaptcha(options = {}) {
+  if (captchaLoading.value) return
+  captchaLoading.value = true
   try {
-    const response = await userAPI.getCaptcha()
-    captchaKey.value = response.headers['x-captcha-key']
-    captchaSrc.value = URL.createObjectURL(response.data)
-  } catch (error) {
-    logger.error('获取验证码失败:', error)
+    try {
+      await loadCaptcha()
+    } catch (error) {
+      logger.error('获取验证码失败:', error)
+      if (options.autoRetry === false) return
+      await sleep(CAPTCHA_RETRY_DELAY_MS)
+      await loadCaptcha()
+    }
+  } catch (retryError) {
+    logger.error('验证码自动重试仍失败:', retryError)
+  } finally {
+    captchaLoading.value = false
   }
 }
 
@@ -267,6 +306,12 @@ async function handleLogin() {
   border: 1px solid #dcdfe6;
   transition: border-color 0.2s;
   flex-shrink: 0;
+}
+
+/* 加载/自动重试期间置灰并禁点，防抖动 */
+.captcha-img.is-loading {
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 .captcha-img:hover {

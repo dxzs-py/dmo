@@ -11,7 +11,6 @@ STREAM_EVENT（event_type 恒为 "stream_event"），原始子类型信息此前
 """
 
 import os
-from unittest import mock
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.test")
 import django

@@ -10,7 +10,7 @@ import {
 } from './toolCallStateMachine.js'
 
 // 状态机导出（终态判定等）统一收敛到 toolCallStateMachine.js（唯一权威），
-// 此处 re-export 保持既有调用方（session.js / research.js）导入路径不变。
+// 此处 re-export 保持既有调用方（session/toolCallState.js / research.js）导入路径不变。
 export { isTerminalStatus }
 
 /**

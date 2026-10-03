@@ -224,7 +224,6 @@ const removeStep = (index) => {
     <!-- 技能包上传模式（仅新增） -->
     <div v-if="!isEdit && mode === 'package'">
       <el-upload
-        ref="uploadRef"
         :auto-upload="false"
         :limit="1"
         accept=".zip"

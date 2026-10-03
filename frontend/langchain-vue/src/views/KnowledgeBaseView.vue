@@ -319,7 +319,7 @@ function handleFileChange(file, fileList) {
   uploadFiles.value = fileList
 }
 
-// ─── 跨库搜索（POST /knowledge/search/ 按库并发，前端聚合展示） ───
+// ─── 跨库搜索（POST /knowledge/search-all/ 单请求：后端单次 embedding + RRF 融合） ───
 const crossKbDialog = ref(false)
 const crossKbQuery = ref('')
 const crossKbResults = ref([])
@@ -328,7 +328,7 @@ const crossKbSearched = ref(false)
 let crossKbTimer = null
 
 const CROSS_KB_DEBOUNCE_MS = 300
-const CROSS_KB_PER_KB_TOP_K = 3
+const CROSS_KB_TOP_K = 3
 
 function formatScore(score) {
   return typeof score === 'number' ? score.toFixed(3) : '—'
@@ -363,35 +363,27 @@ async function handleCrossKbSearch() {
   }
   crossKbLoading.value = true
   crossKbSearched.value = true
-  // 埋点：跨库搜索执行（fire-and-forget，静默失败）
-  trackEvent('cross_kb_search', { queryLength: query.length, kbCount: knowledgeBases.value.length }, { category: 'knowledge' })
   try {
-    const settled = await Promise.allSettled(
-      knowledgeBases.value.map(kb => knowledgeAPI.searchAll({ indexName: kb.id, query, k: CROSS_KB_PER_KB_TOP_K }))
-    )
-    const aggregated = []
-    let failedCount = 0
-    settled.forEach((outcome, idx) => {
-      if (outcome.status !== 'fulfilled' || outcome.value.data?.code !== 200) {
-        failedCount++
-        return
+    const response = await knowledgeAPI.searchAll({ query, k: CROSS_KB_TOP_K })
+    if (response.data?.code === 200) {
+      const payload = response.data.data || {}
+      crossKbResults.value = (payload.results || []).map(item => ({
+        kbName: item.sourceIndex,
+        content: item.content,
+        score: item.score,
+        docTitle: item.metadata?.originalName || item.metadata?.source || '未知来源',
+      }))
+      if (payload.searchedIndexes === 0 && payload.failedIndexes > 0) {
+        ElMessage.error('跨库搜索失败，请稍后重试')
+      } else if (payload.failedIndexes > 0) {
+        ElMessage.warning(`部分知识库检索失败(${payload.failedIndexes})`)
       }
-      const kb = knowledgeBases.value[idx]
-      for (const item of outcome.value.data.data || []) {
-        aggregated.push({
-          kbName: kb.name,
-          content: item.content,
-          score: item.score,
-          docTitle: item.metadata?.originalName || item.metadata?.source || item.metadata?.fileName || '未知来源',
-        })
-      }
-    })
-    // 相关度 score 越大越相关（后端按 score >= threshold 过滤语义），缺失分数排末尾
-    crossKbResults.value = aggregated.sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity))
-    if (failedCount === knowledgeBases.value.length) {
-      ElMessage.error('跨库搜索失败，请稍后重试')
-    } else if (failedCount > 0) {
-      logger.warn(`跨库搜索：${failedCount} 个知识库检索失败已跳过`)
+      // 埋点：跨库搜索执行（fire-and-forget，静默失败）
+      trackEvent(
+        'cross_kb_search',
+        { queryLength: query.length, kbCount: knowledgeBases.value.length, resultsCount: crossKbResults.value.length },
+        { category: 'knowledge' }
+      )
     }
   } catch (error) {
     logger.error('跨库搜索失败:', error)

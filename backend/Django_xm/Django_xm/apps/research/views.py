@@ -319,51 +319,6 @@ class DeepResearchStatusView(APIView):
         return success_response(data=response_data)
 
 
-class DeepResearchResultView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(responses={200: EmptySerializer})
-    def get(self, request, task_id):
-        try:
-            task = ResearchTask.objects.select_related("created_by").get(
-                task_id=task_id,
-                created_by=request.user,
-                is_deleted=False,
-            )
-        except ResearchTask.DoesNotExist:
-            raise NotFound("研究任务不存在") from None
-
-        if task.status != "completed":
-            status_msg = "研究任务尚未完成" if task.status == "running" else "研究任务失败"
-            return success_response(
-                data={
-                    "status": task.status,
-                    "thread_id": task.task_id,
-                    "query": task.query,
-                },
-                message=status_msg,
-            )
-
-        cached_status = get_task_status(task_id)
-        result = cached_status.get("result", {}) if cached_status else {}
-
-        return success_response(
-            data={
-                "status": "completed",
-                "task_id": task.task_id,
-                "query": task.query,
-                "report": task.final_report,
-                "plan": result.get("plan"),
-                "steps_completed": result.get("steps_completed"),
-                "created_at": task.created_at.isoformat() if task.created_at else "",
-                "updated_at": task.updated_at.isoformat() if task.updated_at else "",
-                "enable_web_search": task.enable_web_search,
-                "enable_doc_analysis": task.enable_doc_analysis,
-                "knowledge_base_ids": task.knowledge_base_ids or [],
-            }
-        )
-
-
 class DeepResearchTaskDeleteView(APIView):
     permission_classes = [IsAuthenticated]
 

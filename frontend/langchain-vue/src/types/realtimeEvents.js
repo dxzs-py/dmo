@@ -10,7 +10,7 @@
  *
  * @enum {string}
  */
-export const EventType = {
+const EventType = {
   // 会话通道事件
   SESSION_CREATED: 'session_created',
   SESSION_UPDATED: 'session_updated',

@@ -179,15 +179,27 @@ class UserInfoView(APIView):
 class CaptchaView(APIView):
     """
     获取图形验证码
+
+    生成链路（图像渲染 + 缓存写入）整体包裹异常处理：瞬时故障（PIL 渲染异常、
+    缓存后端不可达等）时 logger.exception 留下完整 traceback（此前该路径异常
+    以裸 500 形式出现且无迹可循），并按异常驱动单轨制抛出 BaseAppError，
+    由全局异常处理器返回结构化 503 响应，而非裸 500。
     """
 
     permission_classes = [AllowAny]
 
-    @extend_schema(responses={200: EmptySerializer})
+    @extend_schema(responses={200: EmptySerializer, 503: EmptySerializer})
     def get(self, request):
-        captcha_key = str(uuid.uuid4())
-        generator = CaptchaGenerator()
-        _code, image_buf = generator.generate(captcha_key)
+        try:
+            captcha_key = str(uuid.uuid4())
+            generator = CaptchaGenerator()
+            _code, image_buf = generator.generate(captcha_key)
+        except Exception:
+            logger.exception("[Captcha] 生成失败")
+            raise BaseAppError(
+                "验证码服务暂时不可用，请重试",
+                business_code=ErrorCode.SERVICE_UNAVAILABLE,
+            ) from None
 
         return HttpResponse(image_buf, content_type="image/png", headers={"X-Captcha-Key": captcha_key})
 

@@ -9,7 +9,7 @@ from .views_kb import (
 )
 from .views_rag import (
     RAGQueryView,
-    RAGSearchView,
+    SearchAllView,
     rag_query_stream,
 )
 
@@ -18,7 +18,7 @@ app_name = "knowledge"
 urlpatterns = [
     # RAG 查询/检索/流式
     path("query/", RAGQueryView.as_view(), name="query"),
-    path("search/", RAGSearchView.as_view(), name="search"),
+    path("search-all/", SearchAllView.as_view(), name="knowledge_search_all"),
     path("query/stream/", rag_query_stream, name="query_stream"),
     # 知识库管理（资源化路由，dj-07 收敛：indices/ 旧路由已删除）
     path("knowledge-bases/", KnowledgeBaseListView.as_view(), name="knowledge_bases_list"),

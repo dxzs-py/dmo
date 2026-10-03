@@ -505,7 +505,7 @@ class UnifiedRagPipeline:
         return "知识库中未找到与您问题相关的信息。"
 
     # ═══════════════════════════════════════════════════════════════════════════════
-    # 统一原始打分检索入口（Level 0）：kb_service / RAGSearchView 共用
+    # 统一原始打分检索入口（Level 0）：kb_service / SearchAllView 共用
     # ═══════════════════════════════════════════════════════════════════════════════
 
     @staticmethod
@@ -516,10 +516,11 @@ class UnifiedRagPipeline:
         score_threshold: float | None = None,
         reload_vector_store: Callable[[], VectorStore] | None = None,
         required_dim: int | None = None,
+        query_embedding: list[float] | None = None,
     ) -> list[tuple[Document, float | None]]:
         """原始打分检索（Level 0）：向量库相似度打分检索 + 维度不匹配自愈重试。
 
-        kb_service.search_knowledge_base 与 views_rag.RAGSearchView 的统一检索内核
+        kb_service.search_knowledge_base 与 views_rag.SearchAllView 的统一检索内核
         （ARCH-08 入口收敛）：此前两处各自内联 search_vector_store 调用，
         且仅 kb_service 持有 pgvector 维度自愈逻辑，口径不一。
 
@@ -530,6 +531,8 @@ class UnifiedRagPipeline:
             score_threshold: 相似度阈值，检索后过滤低于该值的结果
             reload_vector_store: 自愈重建向量库的回调；不提供时维度不匹配异常原样上抛
             required_dim: 索引期望的向量维度（自愈重置 pgvector 运行时缓存用）
+            query_embedding: 预计算的 query 向量；提供时走 by-vector 检索（跨库
+                聚合场景 embedding 仅算一次），None 时保持现行为由向量库自行 embed
 
         Returns:
             (Document, score) 元组列表；score 可能为 None（取决于后端打分能力）
@@ -540,7 +543,9 @@ class UnifiedRagPipeline:
         from Django_xm.apps.knowledge.vector_store import search_vector_store
 
         try:
-            return search_vector_store(vector_store, query, k=k, score_threshold=score_threshold)
+            return search_vector_store(
+                vector_store, query, k=k, score_threshold=score_threshold, query_embedding=query_embedding
+            )
         except Exception as e:
             if "different vector dimensions" not in str(e) or reload_vector_store is None:
                 raise
@@ -561,7 +566,9 @@ class UnifiedRagPipeline:
 
             IndexManager._cache.clear()
             rebuilt = reload_vector_store()
-            return search_vector_store(rebuilt, query, k=k, score_threshold=score_threshold)
+            return search_vector_store(
+                rebuilt, query, k=k, score_threshold=score_threshold, query_embedding=query_embedding
+            )
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # 兼容入口: 基于 documents 列表（构建 InMemoryVectorStore 后委托）

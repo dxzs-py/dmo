@@ -6,6 +6,7 @@ import { ElMessage } from 'element-plus'
 import { User, Lock, Phone, Upload, ChatDotRound, Document, DataAnalysis, Calendar, Warning } from '@element-plus/icons-vue'
 import { userAPI } from '@/api/user'
 import { logger } from '../utils/logger'
+import { extractErrorMessage } from '../utils/apiErrorHandler'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -234,7 +235,7 @@ async function handleDeleteAccount() {
     }
   } catch (error) {
     logger.error('账号注销失败:', error)
-    ElMessage.error(error.response?.data?.message || '账号注销失败，请稍后重试')
+    ElMessage.error('账号注销失败: ' + extractErrorMessage(error))
   } finally {
     deleteLoading.value = false
   }

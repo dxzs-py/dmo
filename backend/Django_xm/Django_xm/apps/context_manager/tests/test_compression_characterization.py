@@ -19,7 +19,6 @@ mock 点说明：LLM 调用统一在引擎实例上 patch _get_compression_model
 
 import os
 import unittest
-from typing import Any
 from unittest import mock
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.test")

@@ -15,8 +15,8 @@ export const knowledgeAPI = {
   getDocuments(kbId) { return apiClient.get(`/knowledge/knowledge-bases/${kbId}/documents/`) },
   deleteDocument(kbId, filename) { return apiClient.delete(`/knowledge/knowledge-bases/${kbId}/documents/${filename}/`) },
   testSearch(kbId, data) { return apiClient.post(`/knowledge/knowledge-bases/${kbId}/search/`, data) },
-  /** 跨库搜索：对单个知识库索引执行打分检索，跨库场景由调用方按库并发聚合 */
-  searchAll(data) { return apiClient.post('/knowledge/search/', data) },
+  /** 跨库聚合搜索：后端单次 embedding + 并发检索 + RRF 融合，返回统一 top-k */
+  searchAll(data) { return apiClient.post('/knowledge/search-all/', data) },
 }
 
 export const ragAPI = {
