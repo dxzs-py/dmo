@@ -7,7 +7,7 @@ import { logger } from '@/utils/logger'
  * research.js 与 workflow.js 原各自定义同值 Set（TASK_TERMINAL_STATUSES /
  * WORKFLOW_TERMINAL_STATUSES），spec D10 收敛为单源。
  */
-export const TERMINAL_PROTECTED_STATUSES = new Set(['completed', 'failed', 'cancelled'])
+const TERMINAL_PROTECTED_STATUSES = new Set(['completed', 'failed', 'cancelled'])
 
 /**
  * 创建终态保护的响应式状态 Map 操作集（spec D10）

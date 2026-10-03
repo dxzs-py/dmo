@@ -47,6 +47,10 @@ except ImportError:
 
 logger = get_logger(__name__)
 
+# 实体/决策抽取的合并去重容量上限（save_turn_summary 增量合并沿用同一常量，勿双份硬编码）
+EXTRACTED_ENTITIES_LIMIT = 30
+EXTRACTED_DECISIONS_LIMIT = 10
+
 
 class SummaryQuality(BaseModel):
     completeness: float = Field(default=0.0, ge=0, le=1, description="完整性评分")
@@ -352,7 +356,7 @@ class EntityExtractor:
             if key not in seen and key not in EntityExtractor._STOP_WORDS:
                 seen.add(key)
                 unique.append(e)
-        return unique[:30]
+        return unique[:EXTRACTED_ENTITIES_LIMIT]
 
     @staticmethod
     def _extract_user_entities(text: str) -> list[str]:
@@ -836,7 +840,7 @@ class ContextCompressionEngine:
                 matches = re.findall(pattern, content)
                 decisions.extend(matches)
 
-        return decisions[:10]
+        return decisions[:EXTRACTED_DECISIONS_LIMIT]
 
     # 公开决策抽取入口（spec D2 跨会话记忆写入等旁路复用唯一实现，消除私有访问）
     extract_decisions = _extract_decisions

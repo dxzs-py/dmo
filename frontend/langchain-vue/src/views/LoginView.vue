@@ -189,7 +189,7 @@ async function loadCaptcha() {
  * 全程 captchaLoading 置位防 UI 抖动与并发刷新；重试仍失败时
  * 保留手动刷新入口（点击验证码图片）。
  */
-async function refreshCaptcha(options = {}) {
+async function refreshCaptcha() {
   if (captchaLoading.value) return
   captchaLoading.value = true
   try {
@@ -197,7 +197,6 @@ async function refreshCaptcha(options = {}) {
       await loadCaptcha()
     } catch (error) {
       logger.error('获取验证码失败:', error)
-      if (options.autoRetry === false) return
       await sleep(CAPTCHA_RETRY_DELAY_MS)
       await loadCaptcha()
     }

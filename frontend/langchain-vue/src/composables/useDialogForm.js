@@ -86,5 +86,6 @@ export function useDialogForm({
     }
   }
 
-  return { visible, isEdit, dialogTitle, form, resetForm, handleClose, handleSubmit, submitting }
+  // resetForm 为模块内部状态机步骤（handleSubmit/onReset 使用），不对外导出
+  return { visible, isEdit, dialogTitle, form, handleClose, handleSubmit, submitting }
 }

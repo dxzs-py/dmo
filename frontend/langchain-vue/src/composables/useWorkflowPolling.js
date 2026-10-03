@@ -81,7 +81,6 @@ export function useWorkflowPolling({ execution, answersForm, onTerminal }) {
     startPolling: schedulePolling,
     stopPolling,
     pollNow,
-    currentDelay: currentPollInterval,
     stepBackoff: backoffPollInterval,
     resetBackoff: resetPollInterval,
   } = usePollingLoop({

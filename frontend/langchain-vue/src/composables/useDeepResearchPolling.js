@@ -97,7 +97,6 @@ export function useDeepResearchPolling({
     startPolling,
     stopPolling,
     pollNow,
-    currentDelay: currentPollInterval,
     stepBackoff: backoffPollInterval,
     resetBackoff: resetPollInterval,
   } = usePollingLoop({

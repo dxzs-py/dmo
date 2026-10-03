@@ -28,6 +28,8 @@ from Django_xm.apps.context_manager.services.compression import (
     CompressionStrategy,
     ContextCompressionEngine,
     EntityExtractor,
+    EXTRACTED_DECISIONS_LIMIT,
+    EXTRACTED_ENTITIES_LIMIT,
     MemoryTier,
     TokenEstimator,
     messages_to_dicts,
@@ -56,9 +58,9 @@ _TURN_SUMMARY_MERGE_INSTRUCTION = (
     "以下是同一会话的历史累积摘要与本轮新增摘要，请将两者合并为不超过5句话的中文累积摘要，"
     "保留历史关键决策与实体，并纳入本轮新要点，直接输出合并后的摘要文本，不要任何额外说明。"
 )
-# 合并去重后的容量上限（与 EntityExtractor.extract_from_messages / extract_decisions 现有截断上限一致）
-_CROSS_SESSION_ENTITY_LIMIT = 30
-_CROSS_SESSION_DECISION_LIMIT = 10
+# 合并去重后的容量上限（单一权威常量：compression.py 抽取截断与本处合并共用）
+_CROSS_SESSION_ENTITY_LIMIT = EXTRACTED_ENTITIES_LIMIT
+_CROSS_SESSION_DECISION_LIMIT = EXTRACTED_DECISIONS_LIMIT
 
 
 @dataclass

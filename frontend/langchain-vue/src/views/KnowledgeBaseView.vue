@@ -335,19 +335,21 @@ function formatScore(score) {
 }
 
 function resetCrossKbResults() {
+  // 关闭对话框/清空输入时同步取消挂起的防抖请求，避免关框后幽灵搜索
+  if (crossKbTimer) {
+    clearTimeout(crossKbTimer)
+    crossKbTimer = null
+  }
   crossKbResults.value = []
   crossKbSearched.value = false
 }
 
 function handleCrossKbInput() {
-  if (crossKbTimer) {
-    clearTimeout(crossKbTimer)
-    crossKbTimer = null
-  }
   if (!crossKbQuery.value.trim()) {
     resetCrossKbResults()
     return
   }
+  clearTimeout(crossKbTimer)
   crossKbTimer = setTimeout(() => {
     crossKbTimer = null
     handleCrossKbSearch()
