@@ -586,7 +586,12 @@ def _collect_tool_calls_with_subagents(
     """
     new_tool_calls: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
-    for _key, _entry in (tool_entries or {}).items():
+    # 快照迭代：容器是主/子代理共享的活字典，工具事件发布协程可能在
+    # "审批/业务等待挂起前落库"的并发窗口中追加新 key（挂起 ≠ 流结束），
+    # 直接 .items() 会撞 RuntimeError: dictionary changed size during
+    # iteration。取"此刻为止"的一致快照；晚到的条目由会话最终结束
+    # （finally）的再次落库补齐（persist_chat_tool_calls 为多次调用语义）。
+    for _key, _entry in list((tool_entries or {}).items()):
         persisted_entry = _build_entry_from_container(_entry, _key)
         if persisted_entry is None:
             continue

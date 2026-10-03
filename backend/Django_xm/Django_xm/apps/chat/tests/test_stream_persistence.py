@@ -451,5 +451,39 @@ class PersistContentAppendTests(unittest.TestCase):
         message_fake.save.assert_not_called()
 
 
+class CollectToolCallsSnapshotTests(unittest.TestCase):
+    """_collect_tool_calls_with_subagents 快照迭代回归测试。
+
+    容器 ``data["_tool_entries"]`` 为主/子代理共享的活字典：审批/业务等待
+    挂起前落库（persist_chat_tool_calls）与工具事件发布协程
+    （aggregate_tool_entry 追加新 key）并发时，直接 ``.items()`` 迭代会抛
+    ``RuntimeError: dictionary changed size during iteration``（实测
+    fastapi.log 落库失败告警）。修复后为快照迭代：只收集"此刻为止"的
+    条目，晚到条目由会话最终结束的再次落库补齐。
+    """
+
+    def test_snapshot_iteration_ignores_concurrent_appends(self):
+        container = {
+            "call_1": {"id": "call_1", "name": "tool_a", "status": "success"},
+        }
+
+        def fake_build(entry, key):
+            # 模拟 publish 协程恰在迭代窗口往容器追加新条目
+            if len(container) == 1:
+                container["call_2"] = {"id": "call_2", "name": "tool_b", "status": "success"}
+            return {"id": key, "name": entry.get("name", "")}
+
+        with mock.patch.object(
+            MODULE, "_build_entry_from_container", side_effect=fake_build
+        ):
+            result = MODULE._collect_tool_calls_with_subagents(container)
+
+        # 不抛 RuntimeError；快照只含迭代开始时已存在的 call_1
+        self.assertEqual([c["id"] for c in result], ["call_1"])
+
+    def test_none_container_returns_empty(self):
+        self.assertEqual(MODULE._collect_tool_calls_with_subagents(None), [])
+
+
 if __name__ == "__main__":
     unittest.main()
