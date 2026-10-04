@@ -20,13 +20,12 @@ from rest_framework_simplejwt.views import TokenRefreshView as _TokenRefreshView
 
 from Django_xm.apps.cache_manager.services.cache_service import CACHE_PREFIX_USAGE_STATS
 from Django_xm.apps.core.throttling import LoginRateThrottle, MetaRateThrottle, SensitiveOperationRateThrottle
-from Django_xm.common.captcha_mixin import CaptchaMixin
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.responses import success_response
 from Django_xm.common.serializers import EmptySerializer
 
-from .captcha import CaptchaGenerator
+from .captcha import CaptchaGenerator, CaptchaMixin
 from .models import User
 from .serializers import (
     BindPhoneSerializer,

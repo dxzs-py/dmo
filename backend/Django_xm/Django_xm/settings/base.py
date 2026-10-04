@@ -326,6 +326,13 @@ TOOLS_SKILLS_DIR = TOOLS_DIR / "skills"
 TOOLS_LANGCHAIN_DIR = TOOLS_DIR / "langchain"
 TOOLS_MCP_DIR = TOOLS_DIR / "mcp"
 
+# ==================== 验证码字体（跨平台渲染一致性） ====================
+# 仓库内置 DejaVu Sans（Bitstream Vera 许可，允许再分发，见 apps/users/fonts/LICENSE_DEJAVU）。
+# 不依赖系统字体的原因：Linux / WSL2 / 容器镜像默认不提供 arial.ttf，缺失时 PIL 会降级为
+# 位图字体并丢弃 font_size，字符实际仅 6px 高（画布 40px），验证码将无法辨认。
+# 需换字体时覆盖此路径即可（目标字体文件须存在于服务器，且覆盖全部候选字符的字形）。
+CAPTCHA_FONT_PATH = BASE_DIR / "apps" / "users" / "fonts" / "DejaVuSans.ttf"
+
 # LOGS_DIR / CELERYBEAT_DIR：RotatingFileHandler 与 Celery beat 均不会自动创建父目录，
 # Git 又不跟踪空目录，故在此统一创建，保障克隆后可直接启动。
 LOGS_DIR = BASE_DIR.parent / "logs"
