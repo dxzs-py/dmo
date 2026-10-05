@@ -546,10 +546,11 @@ def invalidate_chat_cache(user_id=None):
         user_id: 用户 ID
     """
     if user_id is not None:
-        # 键名必须与唯一写入方对齐：analytics_service 写入
-        # "analytics:dashboard:user_{id}"（修复前误删 "dashboard:user_{id}"，
-        # 与真实键错配导致失效永不命中，仅靠 300s 短 TTL 兜底）
-        CacheService.delete(f"analytics:dashboard:user_{user_id}")
+        # 键名必须与唯一写入方对齐：analytics_service 用 CACHE_PREFIX_DASHBOARD 写入
+        # "analytics:dashboard:user_{id}"。此处**必须复用同一常量**，不可裸写字符串：
+        # 历史 bug 正是误删 "dashboard:user_{id}"（漏了 analytics: 前缀），与真实键
+        # 错配导致失效永不命中，只能靠 300s 短 TTL 兜底。前缀一旦变更，两处必须同步。
+        CacheService.delete(f"{CACHE_PREFIX_DASHBOARD}:user_{user_id}")
 
 
 def invalidate_knowledge_cache(user_id=None, user_index_name=None):
