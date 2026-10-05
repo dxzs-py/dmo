@@ -136,7 +136,9 @@ class ShellExecApprovalPolicy(ApprovalPolicy):
     风险分级（RiskLevel）：
         - 黑名单命令 → SAFE（工具内部直接拒绝，不需审批）
         - 白名单命令 → SAFE（安全命令，自动通过）
-        - HIGH_RISK_KEYWORDS 命中 → HIGH（install/remove/delete/format/write）
+        - HIGH 级词表命中 → HIGH（权威词表见
+          common/sandbox/executor.HIGH_RISK_COMMAND_PATTERNS，B3 单源；
+          禁止在本模块重建副本）
         - 其他命令 → CONTROLLED
 
     判定逻辑委托 shell.assess_command_risk_level（tools 侧权威实现，

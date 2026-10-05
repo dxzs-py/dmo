@@ -7,12 +7,15 @@
 finalize_batch_approvals / execute_research_async 等外部依赖全部 mock，仅验证执行器编排逻辑。
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
-    python -m unittest Django_xm.services.fastapi_service.tests.test_session_executor
+    python manage.py test Django_xm.services.fastapi_service.tests.test_session_executor --noinput
+    （⚠️ 禁止 python -m unittest 直跑：绕过 Django 测试运行器会连接真实 dev 库，
+    无测试库隔离，已发生过测试数据污染，见 .trae/memory/2026-10-05.md 第五批教训）
 """
 
 import asyncio
 import contextlib
 import os
+import time
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -361,6 +364,204 @@ class TestSessionManager(unittest.TestCase):
             assert kwargs["params"]["resume_mode"] is True
 
         asyncio.run(_case())
+
+    # ── B5：PENDING 超时补偿（start 信令丢失→自愈）──────────────────
+
+    @staticmethod
+    def _make_pending_task(task_id="t-pending"):
+        from django.utils import timezone
+
+        return mock.Mock(
+            task_id=task_id,
+            query="研究量子计算",
+            created_by_id=7,
+            session_id="s9",
+            enable_web_search=False,
+            enable_doc_analysis=False,
+            enable_sandbox=False,
+            knowledge_base_ids=[],
+            use_mcp=False,
+            selected_mcp_servers=[],
+            selected_tools=[],
+            model="deepseek-chat",
+            created_at=timezone.now(),
+        )
+
+    def test_recover_pending_stale_compensated_fresh_start(self):
+        """信令丢失自愈：PENDING 超时任务以全新启动补偿（不带 resume_mode）。"""
+        async def _case():
+            manager = self._make_manager()
+            pending_task = self._make_pending_task()
+            with mock.patch(
+                "Django_xm.services.fastapi_service.session_manager.SessionExecutor"
+            ) as ex_cls, mock.patch(
+                "Django_xm.apps.research.models.ResearchTask.objects"
+            ) as objects:
+                # 第一次 filter（active）返回空，第二次 filter（stale pending）返回任务
+                objects.filter.side_effect = [[], [pending_task]]
+                await manager.recover_unfinished()
+            assert ex_cls.call_count == 1
+            params = ex_cls.call_args.kwargs["params"]
+            assert params["thread_id"] == "t-pending"
+            assert params["query"] == "研究量子计算"
+            # 从未执行的任务无 checkpoint：必须全新启动，不得走 resume 路径
+            assert "resume_mode" not in params
+
+        asyncio.run(_case())
+
+    def test_recover_pending_threshold_aligned_query(self):
+        """补偿扫描按 PENDING + created_at<now-5min 口径过滤（阈值可传参覆盖）。"""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from Django_xm.apps.research.models import ResearchTaskStatus
+
+        async def _case():
+            manager = self._make_manager()
+            filter_calls = []
+            returns = [[], []]
+
+            def _fake_filter(**kwargs):
+                filter_calls.append(kwargs)
+                return returns.pop(0)
+
+            with mock.patch(
+                "Django_xm.services.fastapi_service.session_manager.SessionExecutor"
+            ), mock.patch(
+                "Django_xm.apps.research.models.ResearchTask.objects"
+            ) as objects:
+                objects.filter.side_effect = _fake_filter
+                await manager.recover_unfinished(pending_timeout_minutes=2)
+
+            assert filter_calls[0]["status__in"] == [
+                ResearchTaskStatus.RUNNING,
+                ResearchTaskStatus.AWAITING_APPROVAL,
+            ]
+            assert filter_calls[1]["status"] == ResearchTaskStatus.PENDING
+            cutoff = filter_calls[1]["created_at__lt"]
+            # 阈值口径：cutoff ≈ now - 2min（容差 10s 覆盖执行耗时）
+            delta = timezone.now() - cutoff
+            assert timedelta(minutes=2) <= delta < timedelta(minutes=2, seconds=10)
+
+        asyncio.run(_case())
+
+    def test_recover_active_wins_over_pending_dedup(self):
+        """同一任务同时出现在 active 与 pending 扫描（竞态窗口）：只启动一次且按 active 语义。"""
+        async def _case():
+            manager = self._make_manager()
+            task = mock.Mock(
+                task_id="t-dup",
+                query="q",
+                created_by_id=1,
+                session_id="s1",
+                enable_web_search=True,
+                enable_doc_analysis=False,
+                enable_sandbox=False,
+                knowledge_base_ids=[],
+                use_mcp=False,
+                selected_mcp_servers=[],
+                selected_tools=[],
+                model="gpt-4o",
+            )
+            with mock.patch(
+                "Django_xm.services.fastapi_service.session_manager.SessionExecutor"
+            ) as ex_cls, mock.patch(
+                "Django_xm.apps.research.models.ResearchTask.objects"
+            ) as objects:
+                objects.filter.side_effect = [[task], [task]]
+                await manager.recover_unfinished()
+            assert ex_cls.call_count == 1
+            assert ex_cls.call_args.kwargs["params"]["resume_mode"] is True
+
+        asyncio.run(_case())
+
+    def test_recover_skips_in_memory_session(self):
+        """迟到信令竞态防护：任务会话已在内存（信令已生效）时不重复补偿。"""
+        async def _case():
+            manager = self._make_manager()
+            pending_task = self._make_pending_task(task_id="t-live")
+            manager._sessions["t-live"] = object()  # 会话已激活（如迟到信令先到）
+            with mock.patch(
+                "Django_xm.services.fastapi_service.session_manager.SessionExecutor"
+            ) as ex_cls, mock.patch(
+                "Django_xm.apps.research.models.ResearchTask.objects"
+            ) as objects:
+                objects.filter.side_effect = [[], [pending_task]]
+                await manager.recover_unfinished()
+            assert ex_cls.call_count == 0
+
+        asyncio.run(_case())
+
+    # ── B6：挂起会话 watchdog（子代理挂死→父会话兜底）────────────────
+
+    def test_suspended_timeout_triggers_finalize(self):
+        """挂起超过最大存活时长 → 触发终态化：任务失败态 + 槽位移除。"""
+        async def _case():
+            ex = _make_executor(thread_id="t-hang")
+            # 模拟子代理挂死：会话进入业务等待挂起且已超过存活时长
+            ex._suspended = True
+            ex._suspended_since = time.monotonic() - 9999
+            manager = ex.manager
+            with mock.patch.object(
+                SessionExecutor, "_handle_failure", new_callable=mock.AsyncMock
+            ) as fail_mock, mock.patch.object(
+                SessionExecutor, "_release_checkpointer", new_callable=mock.AsyncMock
+            ):
+                triggered = ex.enforce_suspended_timeout(7200)
+                # 终态化是异步任务：让出事件循环使其完成
+                await asyncio.sleep(0)
+                await asyncio.gather(*list(ex._background_tasks))
+            assert triggered is True
+            fail_mock.assert_awaited_once()
+            assert "子代理长时间未返回" in fail_mock.await_args.args[0]
+            manager.remove_session.assert_called_once_with("t-hang")
+
+        asyncio.run(_case())
+
+    def test_suspended_within_timeout_not_finalized(self):
+        """挂起未超时长 → 不触发（合法长等待，如子代理仍在工作）。"""
+        ex = _make_executor(thread_id="t-fresh")
+        ex._suspended = True
+        ex._suspended_since = time.monotonic() - 10
+        assert ex.enforce_suspended_timeout(7200) is False
+        assert ex._finalized_by_watchdog is False
+
+    def test_active_session_not_finalized(self):
+        """非挂起态（活跃执行/未启动）→ watchdog 不干预。"""
+        ex = _make_executor(thread_id="t-active")
+        assert ex.suspended_since is None
+        assert ex.enforce_suspended_timeout(7200) is False
+
+    def test_suspended_finalize_idempotent(self):
+        """防重：watchdog 重复扫描不重复触发终态化。"""
+        async def _case():
+            ex = _make_executor(thread_id="t-dup")
+            ex._suspended = True
+            ex._suspended_since = time.monotonic() - 9999
+            with mock.patch.object(
+                SessionExecutor, "_handle_failure", new_callable=mock.AsyncMock
+            ), mock.patch.object(
+                SessionExecutor, "_release_checkpointer", new_callable=mock.AsyncMock
+            ):
+                assert ex.enforce_suspended_timeout(7200) is True
+                assert ex.enforce_suspended_timeout(7200) is False  # 已触发，防重
+                await asyncio.gather(*list(ex._background_tasks))
+
+        asyncio.run(_case())
+
+    def test_manager_watchdog_sweeps_sessions(self):
+        """SessionManager 周期扫描对全部会话执行 watchdog 检查。"""
+        manager = SessionManager()
+        ex_a = _make_executor(thread_id="t-a")
+        ex_b = mock.Mock()
+        ex_b.thread_id = "t-b"
+        ex_b.enforce_suspended_timeout.return_value = False
+        manager._sessions["t-a"] = ex_a
+        manager._sessions["t-b"] = ex_b
+        manager._enforce_suspended_watchdog()
+        ex_b.enforce_suspended_timeout.assert_called_once()
+        assert ex_b.enforce_suspended_timeout.call_args.args[0] > 0
 
 
 class TestRetrySubagentInjection(unittest.TestCase):

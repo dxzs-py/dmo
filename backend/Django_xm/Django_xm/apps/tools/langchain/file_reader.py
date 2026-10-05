@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from Django_xm.apps.ai_engine.config import settings as app_cfg
 from Django_xm.apps.tools.base import AsyncToolMixin
+from Django_xm.apps.tools.langchain.external_content import wrap_external_content
 from Django_xm.apps.tools.langchain.filesystem import FilesystemContextMixin, check_path_allowed
 
 logger = logging.getLogger(__name__)
@@ -452,7 +453,8 @@ class FileReaderTool(AsyncToolMixin, BaseTool):
         try:
             content = read_file_content(file_path)
             logger.info(f"📄 文件读取成功: {len(content)} 字符")
-            return content
+            # B4 注入隔离：文件正文属外部数据，包裹后进上下文（防提示注入）
+            return wrap_external_content(f"文件 {file_path}", content)
         except FileNotFoundError:
             return f"错误：文件不存在: {file_path}"
         except ValueError as e:

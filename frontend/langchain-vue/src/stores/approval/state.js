@@ -23,7 +23,8 @@ export const createApprovalState = () => {
   /**
    * 统一待审批 Map
    * key: interruptId
-   * value: { source: 'chat'|'deep_research', taskId?, sessionId?, approvalData, createdAt }
+   * value: { source: 'chat'|'deep_research', taskId?, sessionId?, approvalData,
+   *          createdAt, expiresAt?（后端 payload 真实超时点 epoch ms，FE-6） }
    */
   const pendingApprovals = ref(new Map())
 

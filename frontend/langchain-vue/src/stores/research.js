@@ -113,7 +113,6 @@ export const useResearchStore = defineStore('research', () => {
   // statusMap.js 的 createTerminalProtectedStatusMap 单一实现；日志前缀与
   // 方法名保持原 [Research] setTaskStatus 文案，终态保护规则见工厂 JSDoc）
   const {
-    map: taskInfo,
     ensure: _ensureTaskInfo,
     get: getTaskStatus,
     set: setTaskStatus,

@@ -5,6 +5,7 @@ import { logger } from '@/utils/logger'
 import { ElMessage } from 'element-plus'
 import { StreamState } from '@/types'
 import { getResearchStore } from './state'
+import { resolveApprovalExpiryMs } from './constants'
 
 /**
  * 审批执行（REST 封装，ARCH-13 拆分）
@@ -159,12 +160,16 @@ export const createRestActions = (ctx) => {
       // 超时恢复失败：审批已终态 TIMEOUT，不回退为 pending（无意义且会覆盖终态）
       if (timeoutResume) return
       // 恢复审批状态（数据源归属互斥路由，与 processing/rejected 一致）
+      const now = Date.now()
       pendingApprovals.value.set(toolCallId, {
         source,
         taskId,
         sessionId,
         approvalData: { ...approvalData, state: 'pending' },
-        createdAt: Date.now(),
+        createdAt: now,
+        // 保留后端原超时点：审批失败回退 pending 不重置后端计时，
+        // 仍以 payload expiresAt（若 approvalData 携带）为准
+        expiresAt: resolveApprovalExpiryMs(approvalData.expiresAt, now),
       })
       if (sessionId) {
         sessionStore.updateToolCallApprovalState(sessionId, toolCallId, 'pending')

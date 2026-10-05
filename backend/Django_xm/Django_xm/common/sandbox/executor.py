@@ -612,34 +612,75 @@ class SandboxExecutor:
             )
 
 
-# HIGH 级命令模式（与 policies.ShellExecApprovalPolicy.HIGH_RISK_KEYWORDS 对齐）
-_HIGH_RISK_PATTERNS = [
+# ── HIGH 级命令权威词表（单一真源，B3）────────────────────────────
+# 消费方（必须同源，禁止各自维护副本）：
+# - 本模块 should_sandbox / is_high_risk_command（沙箱路由兜底）
+# - apps/tools/langchain/shell.py _assess_command_risk_level（审批风险评级，
+#   经 agent_hub ApprovalPolicy.assess_risk 委托）
+# 语义：全部为小写子串匹配（command.lower() 后 any(pattern in cmd)）。
+# 2026-10-05 扩展（deep-audit §8.1/补充审计）：合并原 shell 侧 5 个宽泛关键字
+# （install/remove/delete/format/write），并新增解释器/计划任务/证书工具等
+# 逃逸面模式。SANDBOX_ENABLED=true 时这些命令强制进容器（fail-closed）；
+# 沙箱关闭时经审批放行后才会落回本机。
+HIGH_RISK_COMMAND_PATTERNS: tuple[str, ...] = (
+    # ── 文件系统破坏 ──
     "rm -rf",
     "rm -r ",
     "rmdir",
     "del /f",
     "del /s",
-    "format ",
+    "format",
+    # ── 系统/磁盘 ──
     "shutdown",
     "mkfs",
     "dd if=",
     "> /dev/sd",
     "chmod -R 777",
-    "curl | sh",
-    "curl | bash",
-    "wget | sh",
-    "wget | bash",
-    ":(){:|:&};:",  # fork bomb
     "reg delete",
     "reg add",
-]
+    "vssadmin delete shadows",
+    "wevtutil cl",
+    # ── 远程代码执行/下载执行 ──
+    # 管道执行：任何来源（curl/wget/cat/...）管道给 sh/bash。原表曾用
+    # "curl | sh" 等字面模式，要求 curl 与管道符相邻，真实命令
+    # "curl https://x | sh" 永远无法命中（潜伏缺陷，B3 修复）。
+    "| sh",
+    "| bash",
+    "|sh",
+    "|bash",
+    # fork bomb：只锚定 distinctive 前缀 ":(){"，容忍变体空格
+    # （原全字面模式 ":(){:|:&};:" 对 ":(){ :|:& };:" 失效）
+    ":(){",
+    "certutil -urlcache",
+    "bitsadmin /transfer",
+    "mshta",
+    # ── 解释器直接执行（等价任意代码）──
+    "python -c",
+    "python3 -c",
+    "node -e",
+    "invoke-expression",
+    "iex (",
+    # ── 计划任务/网络工具 ──
+    "schtasks ",
+    "nc -",
+    "ncat ",
+    "netcat ",
+    # ── 原 shell 侧宽泛关键字（保持既有审批行为，无降级）──
+    "install",
+    "remove",
+    "delete",
+    "write",
+)
+
+# 兼容别名（历史引用；新代码一律使用公开名）
+_HIGH_RISK_PATTERNS = HIGH_RISK_COMMAND_PATTERNS
 
 
-def _is_high_risk_command(command: str) -> bool:
-    """简单 HIGH 级命令检测（双重保护，与 policy.assess_risk 独立）。
+def is_high_risk_command(command: str) -> bool:
+    """HIGH 级命令检测（权威实现，沙箱路由兜底 + 审批评级同源）。
 
     即使 policy 判定为 CONTROLLED，如果命令包含高危模式，
-    沙箱路由仍会将其路由到容器内执行。
+    沙箱路由仍会将其路由到容器内执行（fail-closed）。
 
     Args:
         command: 待检测的命令
@@ -648,7 +689,13 @@ def _is_high_risk_command(command: str) -> bool:
         True 表示命令匹配 HIGH 级模式
     """
     cmd_lower = command.lower().strip()
-    return any(pattern in cmd_lower for pattern in _HIGH_RISK_PATTERNS)
+    # 模式同样归一小写（修复既有潜在缺陷：原表 "chmod -R 777" 含大写 R，
+    # 在小写化命令上永远无法命中）
+    return any(pattern.lower() in cmd_lower for pattern in HIGH_RISK_COMMAND_PATTERNS)
+
+
+# 兼容别名（历史引用；新代码一律使用公开名）
+_is_high_risk_command = is_high_risk_command
 
 
 # 模块级单例

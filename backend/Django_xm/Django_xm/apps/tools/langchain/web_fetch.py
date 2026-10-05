@@ -7,6 +7,7 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from Django_xm.apps.tools.errors import TOOL_VERSION, StandardToolResult, ToolStatus
+from Django_xm.apps.tools.langchain.external_content import wrap_external_content
 from Django_xm.common.net.guards import BlockedAddressError, assert_url_not_private
 
 logger = logging.getLogger(__name__)
@@ -163,14 +164,20 @@ class WebFetchTool(BaseTool):
             result = f"网页内容 ({url}):\n\n{content}"
             if len(result) > MAX_CONTENT_LENGTH:
                 result = result[:MAX_CONTENT_LENGTH]
+            # B4 注入隔离：先截断后包裹，保证信封完整（长度软上限偏差见模块说明）
+            result = wrap_external_content(f"网页 {url}", result)
             return StandardToolResult(
                 content=result,
                 source="web_fetch",
                 metadata={"url": url, "prompt": prompt},
             ).to_tool_message()
 
+        result = f"网页内容 ({url}):\n\n{content}"
+        if len(result) > MAX_CONTENT_LENGTH:
+            result = result[:MAX_CONTENT_LENGTH]
+        result = wrap_external_content(f"网页 {url}", result)
         return StandardToolResult(
-            content=f"网页内容 ({url}):\n\n{content}",
+            content=result,
             source="web_fetch",
             metadata={"url": url},
         ).to_tool_message()

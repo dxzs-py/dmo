@@ -158,3 +158,32 @@ class DocumentMemoryService:
             logger.exception("生成文档摘要失败")
             fallback = truncated[:200].replace("\n", " ").strip()
             return f"[自动截取] {fallback}..."
+
+
+def enqueue_document_memory_save(attachment) -> bool:
+    """附件上传成功后投递文档记忆写侧任务（D-006 接线，best-effort）。
+
+    设计：
+    - LLM 摘要耗时秒级，经 Celery 异步生成，不阻塞上传接口；
+    - 投递失败（如 broker 不可用）仅记日志，绝不影响上传主流程——
+      文档记忆是增强能力，不是上传契约的一部分；
+    - 图片附件跳过（build_document_context 只消费文本摘要）。
+
+    Args:
+        attachment: ChatAttachment 实例（已落库）。
+
+    Returns:
+        True 表示已投递；False 表示跳过或投递失败。
+    """
+    mime = (attachment.mime_type or "").lower()
+    if mime.startswith("image/"):
+        return False
+    try:
+        from Django_xm.tasks.chat_tasks import save_document_memory
+
+        save_document_memory.delay(attachment.id)
+        logger.info(f"文档记忆写侧任务已投递: attachment={attachment.id}")
+        return True
+    except Exception:
+        logger.exception(f"文档记忆写侧任务投递失败（不影响上传）: attachment={attachment.id}")
+        return False

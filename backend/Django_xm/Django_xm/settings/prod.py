@@ -5,9 +5,10 @@ Django settings for Django_xm project - 生产环境配置
 重要: 本文件为生产环境专用，请勿在开发环境使用!
 """
 
+import copy
 import sys
 
-from .base import *
+from .base import *  # noqa: F401,F403 — prod 继承 base 全量配置，仅覆盖差异项
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -74,42 +75,24 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
-LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "verbose": {"format": "%(levelname)s %(asctime)s %(module)s %(lineno)d %(message)s"},
-        "simple": {"format": "%(levelname)s %(module)s %(lineno)d %(message)s"},
-    },
-    "handlers": {
-        "file": {
-            "level": "WARNING",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": str(BASE_DIR.parent / "logs" / "django_prod.log"),
-            "maxBytes": 100 * 1024 * 1024,
-            "backupCount": 14,
-            "formatter": "verbose",
-            "encoding": "utf-8",
-        },
-    },
-    "loggers": {
-        "django": {
-            "handlers": ["file"],
-            "level": "INFO",
-            "propagate": True,
-        },
-        "django.security": {
-            "handlers": ["file"],
-            "level": "WARNING",
-            "propagate": False,
-        },
-        "langchain": {
-            "handlers": ["file"],
-            "level": "WARNING",
-            "propagate": False,
-        },
-    },
-}
+# ---- 生产 LOGGING：以 base 为底增量覆盖 ----
+# 修复（audit-supplement-remediate B1）：原实现整体替换 LOGGING，导致
+# ①redact_sensitive 脱敏过滤器丢失（生产 4xx/5xx 的 ?token=<JWT> 不脱敏）；
+# ②base 中全部 Django_xm.apps.* / services logger 丢失（应用日志仅剩
+#   lastResort 输出 WARNING+ 到 stderr，django_prod.log 实际只收框架日志）。
+# 现策略：深拷贝 base.LOGGING，仅覆盖 file handler 的生产参数（独立文件 +
+# 生产轮转规格）。console 保留 require_debug_true（DEBUG=False 时自然静默）；
+# file 级别取 base 的 INFO（应用 logger 多为 DEBUG 级，若钳到 WARNING 会
+# 再次丢失应用日志）。文件名按 SERVICE_ROLE 角色区分，延续 base.py:495-498
+# 的多进程分文件设计（避免 web 与 fastapi 服务竞争写同一文件）。
+LOGGING = copy.deepcopy(LOGGING)
+LOGGING["handlers"]["file"].update(
+    {
+        "filename": str(BASE_DIR.parent / "logs" / LOG_FILE_NAME.replace(".log", "_prod.log")),
+        "maxBytes": 100 * 1024 * 1024,
+        "backupCount": 14,
+    }
+)
 
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     "max_connections": 20,

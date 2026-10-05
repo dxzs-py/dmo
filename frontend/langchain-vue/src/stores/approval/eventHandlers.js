@@ -3,7 +3,7 @@ import { getInterruptId } from '@/utils/messageOperations'
 import { logger } from '@/utils/logger'
 import { ElMessage } from 'element-plus'
 import { resolveEffectiveSessionId } from './sessionRouting'
-import { formatApprovalTimeoutHint, APPROVAL_SYNC_DEBOUNCE_MS } from './constants'
+import { formatApprovalTimeoutHint, APPROVAL_SYNC_DEBOUNCE_MS, resolveApprovalExpiryMs } from './constants'
 
 /**
  * 审批事件消费入口（ARCH-13 拆分：WS/SSE 审批事件处理的唯一权威）
@@ -122,13 +122,16 @@ export const createEventHandlers = (ctx) => {
     // DeepResearchView.taskPendingApprovals 过滤 entry.taskId === tid 永不命中，
     // 审批面板（含确认/拒绝按钮）不渲染、任务卡在"等待审批"。
     const effectiveTaskId = data.taskId || taskId || null
+    const now = Date.now()
 
     pendingApprovals.value.set(toolCallId, {
       source: effectiveSource,
       taskId: effectiveTaskId,
       sessionId: entrySessionId,
       approvalData,
-      createdAt: Date.now(),
+      createdAt: now,
+      // 后端 payload 的真实超时点（ISO 字符串解析），缺失回退 createdAt+常量
+      expiresAt: resolveApprovalExpiryMs(data.expiresAt, now),
     })
 
     // 同步到 session store（仅 chat 来源有 sessionId 时）

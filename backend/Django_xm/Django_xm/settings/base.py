@@ -495,7 +495,8 @@ SHELL_EXEC_ALLOWED_DIRS = [DATA_DIR, MEDIA_ROOT]
 # 按服务角色隔离日志文件，避免多进程竞争写同一文件、日志混杂无法按服务区分：
 # - Web/Django 进程（runserver/gunicorn/celery）：django.log（历史默认，SERVICE_ROLE 未设置）
 # - FastAPI 执行服务（8001）：fastapi.log（services/fastapi_service/main.py 设置 SERVICE_ROLE=fastapi）
-# 注意：prod.py 定义独立 LOGGING（django_prod.log）覆盖本配置，按生产策略另行调整。
+# 注意：prod.py 以本 LOGGING 为底做增量覆盖（保留过滤器与 app loggers，仅替换
+# file handler 的生产文件名与轮转参数，*_prod.log），不得整体替换本配置。
 SERVICE_ROLE = os.environ.get("SERVICE_ROLE", "web")
 LOG_FILE_NAME = "fastapi.log" if SERVICE_ROLE == "fastapi" else "django.log"
 
@@ -537,6 +538,16 @@ LOGGING = {
         },
     },
     "loggers": {
+        # "Django_xm" 兜底 logger（B2）：接住未显式枚举的项目命名空间
+        # （knowledge/learning/users/attachments/analytics/cache_manager/core/
+        #  tasks 等），使 core/logging_utils.get_logger 归流后这些模块的日志
+        # 进入 file+console 管线并吃 redact_sensitive 脱敏；显式枚举的子
+        # logger 均 propagate=False，不会在本层重复输出。
+        "Django_xm": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
         "django": {
             "handlers": ["console", "file"],
             "propagate": True,

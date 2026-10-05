@@ -1,7 +1,7 @@
 import { logger } from '@/utils/logger'
 import { getEventTaskId } from '@/utils/eventRouting'
 import { ResearchTaskStatus } from '@/types'
-import { TOOL_CALL_EVENT_TYPES, APPROVAL_EVENT_TYPES } from '@/types/realtimeEvents'
+import { TOOL_CALL_EVENT_TYPES, APPROVAL_EVENT_TYPES, EventType } from '@/types/realtimeEvents'
 import { scheduleSubagentsRefresh } from '@/composables/useSubagents'
 
 /**

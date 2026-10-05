@@ -1,6 +1,7 @@
 import { useSessionStore } from '@/stores/session'
 import { getInterruptId } from '@/utils/messageOperations'
 import { logger } from '@/utils/logger'
+import { resolveApprovalExpiryMs } from './constants'
 
 /**
  * 审批快照/历史恢复（ARCH-13 拆分）
@@ -43,12 +44,15 @@ export const createRestoreActions = (ctx) => {
           const toolCallId = getInterruptId(approval) || tc.id || ''
           if (toolCallId && !pendingApprovals.value.has(toolCallId)) {
             const isDeepResearch = approval.source === 'deep_research'
+            const now = Date.now()
             pendingApprovals.value.set(toolCallId, {
               source: isDeepResearch ? 'deep_research' : 'chat',
               taskId: approval.taskId || null,
               sessionId,
               approvalData: approval,
-              createdAt: Date.now(),
+              createdAt: now,
+              // 快照恢复同样消费后端 expiresAt（缺失回退 createdAt+常量）
+              expiresAt: resolveApprovalExpiryMs(approval.expiresAt, now),
             })
           }
         }
@@ -91,12 +95,15 @@ export const createRestoreActions = (ctx) => {
 
     logger.info(`[ApprovalStore] restoreFromSSEHistory: 恢复审批 ${toolCallId}, taskId=${taskId}, tool=${approvalData.toolName}`)
 
+    const now = Date.now()
     pendingApprovals.value.set(toolCallId, {
       source: 'deep_research',
       taskId,
       sessionId: effectiveSessionId,
       approvalData: { ...approvalData, state: 'pending' },
-      createdAt: Date.now(),
+      createdAt: now,
+      // SSE 历史审批同样消费后端 expiresAt（缺失回退 createdAt+常量）
+      expiresAt: resolveApprovalExpiryMs(approvalData.expiresAt, now),
     })
 
     // 同步到 session store（聊天模块恢复时需要，确保消息中的审批 UI 可见）

@@ -192,11 +192,14 @@ class SandboxExecutorTests(SimpleTestCase):
 
     @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
     def test_controlled_risk_without_task_switch_local(self):
-        """受控级 + 任务开关关闭 → 本机（用户未选择沙箱）。"""
+        """受控级 + 任务开关关闭 → 本机（用户未选择沙箱）。
+
+        夹具用 python --version（B3 词表扩展后 python -c 已升 HIGH，
+        不再是受控级样例）。"""
         executor = SandboxExecutor()
         self.assertFalse(
             executor.should_sandbox(
-                "python -c 'import shutil'", risk_level="controlled", enable_sandbox=False
+                "python --version", risk_level="controlled", enable_sandbox=False
             )
         )
 
@@ -212,8 +215,11 @@ class SandboxExecutorTests(SimpleTestCase):
     def test_none_risk_legacy_substring_only(self):
         """未提供 risk_level（兼容直调）保持旧行为：仅高危子串兜底生效。"""
         executor = SandboxExecutor()
-        self.assertFalse(executor.should_sandbox("python -c 'x'", enable_sandbox=True))
+        # 受控命令（B3 后 python -c 已升 HIGH，受控样例改用 --version）
+        self.assertFalse(executor.should_sandbox("python --version", enable_sandbox=True))
         self.assertTrue(executor.should_sandbox("rm -rf /tmp/x", enable_sandbox=True))
+        # B3 词表扩展：python -c 现属 HIGH，无 risk_level 也被子串兜底拦截进沙箱
+        self.assertTrue(executor.should_sandbox("python -c 'x'", enable_sandbox=True))
 
     @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
     def test_execute_high_risk_forced_despite_switch_off(self):
@@ -249,7 +255,7 @@ class SandboxExecutorTests(SimpleTestCase):
             return_value=fake_process,
         ):
             result = executor.execute(
-                "python -c 'x'", risk_level="controlled", enable_sandbox=False
+                "python --version", risk_level="controlled", enable_sandbox=False
             )
 
         self.assertFalse(result.sandboxed)

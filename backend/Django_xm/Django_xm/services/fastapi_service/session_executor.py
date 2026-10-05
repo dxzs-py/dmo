@@ -94,6 +94,10 @@ class SessionExecutor:
         # 真正结束（成功/失败/取消）时才释放 checkpointer + 移除会话槽。
         self._agent = None
         self._suspended = False
+        # 挂起起始时刻（monotonic 秒，B6 挂起 watchdog 判定依据；非挂起态为 None）
+        self._suspended_since: float | None = None
+        # watchdog 终态化已触发标志（防周期扫描重复触发）
+        self._finalized_by_watchdog = False
         self._wait_interrupt_id = ""
         # 业务等待挂起（批量 fan-out/fan-in）：一次等待多个子代理，全部终态后恢复
         self._wait_subagent_thread_ids: list[str] = []
@@ -144,6 +148,89 @@ class SessionExecutor:
     def check_stop_requested(self) -> bool:
         """安全点检查：是否收到停止请求。执行循环在迭代边界调用。"""
         return self._stop_requested
+
+    # ------------------------------------------------------------------
+    # 挂起 watchdog（B6）
+    # ------------------------------------------------------------------
+    @property
+    def suspended_since(self) -> float | None:
+        """业务等待挂起起始时刻（monotonic 秒；非挂起态为 None）。
+
+        公开只读：供 SessionManager 挂起 watchdog 判定，避免跨对象访问
+        _suspended 私有标志。
+        """
+        return self._suspended_since
+
+    def enforce_suspended_timeout(self, max_lifetime_seconds: float) -> bool:
+        """挂起 watchdog 检查（B6）：挂起超过最大存活时长则触发超时终态化。
+
+        由 SessionManager 周期扫描调用（事件循环内）。终态化在新任务中异步
+        执行（任务失败态 + 广播 + 释放 checkpointer + 移除会话槽 + 注销
+        awaiter），本方法立即返回。
+
+        Args:
+            max_lifetime_seconds: 挂起态最大存活时长（秒）。
+
+        Returns:
+            True 表示本次触发了终态化（含防重标志置位）。
+        """
+        if self._suspended_since is None or self._finalized_by_watchdog:
+            return False
+        if time.monotonic() - self._suspended_since < max_lifetime_seconds:
+            return False
+        self._finalized_by_watchdog = True
+        self._suspended = False
+        self._suspended_since = None
+        task = asyncio.create_task(
+            self._finalize_suspended_timeout(),
+            name=f"suspended-watchdog-{self.thread_id}",
+        )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return True
+
+    async def _finalize_suspended_timeout(self) -> None:
+        """挂起超时终态化（B6）：子代理挂死/回调丢失导致父会话无限占槽的兜底。
+
+        与 _resume_after_subagent_wait 的竞态窗口（终态化瞬间子代理恰好全部
+        终态）：恢复路径的清理（释放 checkpointer/移除槽位/注销 awaiter）均
+        幂等，重复调用无害；_finalized_by_watchdog 防止 watchdog 重复触发。
+        """
+        thread_id = self.thread_id
+        logger.warning(
+            f"[SessionExecutor] 挂起超时终态化（子代理挂死/回调丢失兜底）: "
+            f"thread_id={thread_id}, session_type={self.session_type}"
+        )
+        try:
+            if self.session_type != "chat":
+                await self._handle_failure("研究任务挂起超时：等待的子代理长时间未返回，任务被系统终止")
+            else:
+                # chat 无 research task：广播 stream_failed 终结前端等待态即可
+                # （与 _resume_after_subagent_wait 的 chat 异常分支同构）
+                try:
+                    from Django_xm.common.event_schema import EventSource, EventType
+                    from Django_xm.common.realtime_events import publish_event
+
+                    await publish_event(
+                        EventType.STREAM_COMPLETED,
+                        {
+                            "source": EventSource.CHAT,
+                            "source_id": thread_id,
+                            "message_id": None,
+                            "data": {"success": False, "error": "会话挂起超时，已被系统终止"},
+                        },
+                        session_id=thread_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        f"[SessionExecutor] chat 挂起超时广播异常: thread_id={thread_id}"
+                    )
+        finally:
+            await self._release_checkpointer()
+            self.manager.remove_session(thread_id)
+            from Django_xm.apps.ai_engine.subagent_runtime.lifecycle import get_lifecycle_manager
+
+            get_lifecycle_manager().unregister_parent_awaiter(thread_id)
 
     async def run(self) -> None:
         """单协程完整执行流程，持续运行至会话结束（chat / research 分派）。"""
@@ -383,6 +470,7 @@ class SessionExecutor:
         - 不触发 sandbox 清理（研究未完成）。
         """
         self._suspended = True
+        self._suspended_since = time.monotonic()
         self._wait_interrupt_id = result.interrupt_id
         self._wait_subagent_thread_ids = list(result.subagent_thread_ids or [])
         # 新一轮等待开始：清空上一轮残留的子代理终态结果。
@@ -481,6 +569,7 @@ class SessionExecutor:
         interrupt_id = wait_info.get("interrupt_id", "")
         subagent_thread_ids = wait_info.get("subagent_thread_ids", []) or []
         self._suspended = True
+        self._suspended_since = time.monotonic()
         self._wait_interrupt_id = interrupt_id
         self._wait_subagent_thread_ids = list(subagent_thread_ids)
         # 与 _handle_suspend 一致：清空上一轮残留的子代理终态结果，防止
@@ -522,6 +611,7 @@ class SessionExecutor:
         if self._stop_requested:
             logger.info(f"[SessionExecutor] 挂起态收到停止请求，放弃续跑: thread_id={thread_id}")
             self._suspended = False
+            self._suspended_since = None
             await self._release_checkpointer()
             self.manager.remove_session(thread_id)
             from Django_xm.apps.ai_engine.subagent_runtime.lifecycle import get_lifecycle_manager
@@ -531,6 +621,7 @@ class SessionExecutor:
 
         try:
             self._suspended = False
+            self._suspended_since = None
             from langgraph.types import Command
 
             subagent_results = [

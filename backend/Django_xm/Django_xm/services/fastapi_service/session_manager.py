@@ -3,7 +3,8 @@
 职责：
 - 会话注册与生命周期管控（{thread_id: SessionExecutor}）
 - Redis Pub/Sub 信令订阅与路由（start / approval / stop）
-- 启动时扫描恢复未完成任务（running / awaiting_approval）
+- 启动/周期扫描恢复未完成任务（running / awaiting_approval 恢复；
+  pending 超时全新启动补偿——B5 start 信令自愈）
 - 并发限流、优雅停机
 """
 
@@ -40,6 +41,25 @@ DEFAULT_MAX_CONCURRENCY = 20
 SUBSCRIPTION_RECONNECT_INITIAL_DELAY = 1.0
 SUBSCRIPTION_RECONNECT_MAX_DELAY = 30.0
 
+# PENDING 超时补偿阈值（分钟，B5 start 信令自愈）。
+# start 信令为 Redis Pub/Sub fire-and-forget（signal_bus.publish_signal 发布异常
+# 仅记日志、订阅窗口丢失、满载丢弃、并发满被拒后无重发），丢失时任务永久 PENDING。
+# PENDING 超过该阈值即视为信令丢失，补偿性全新启动。刻意小于 check_stale_tasks
+# 的 60min——口径差异：此处动作是"补启动"而非"判失败"，start 信令飞行窗口为
+# 毫秒级（任务创建时内联发布），且 start_session 幂等（_sessions 查重）保证
+# 补偿与迟到信令不会双启动。
+PENDING_START_TIMEOUT_MINUTES = 5
+
+# 周期自愈扫描间隔（秒）：recover_unfinished 原仅服务启动/信令重连时触发，
+# 订阅保持期间丢失的 start 信令无补偿入口，需周期性扫描兜底。
+RECOVERY_SWEEP_INTERVAL_SECONDS = 60
+
+# 挂起会话最大存活时长（秒，B6 挂起 watchdog）：业务等待挂起（等待子代理
+# fan-in）保留会话槽 + checkpointer；子代理挂死/服务重启回调丢失时父会话
+# 无限占槽（并发槽耗尽风险）。挂起超过该时长 → 超时终态化（任务失败态 +
+# 广播 + 释放 checkpointer + 移除槽位 + 注销 awaiter）。
+SUSPENDED_SESSION_MAX_LIFETIME_SECONDS = 7200
+
 
 class SessionManager:
     """统一会话调度管理器（FastAPI 执行服务进程内单例，chat/research 共用）。"""
@@ -50,6 +70,8 @@ class SessionManager:
         self._redis = None
         self._pubsub = None
         self._subscription_task: asyncio.Task | None = None
+        # 周期自愈扫描任务（B5：运行期 start 信令丢失的 PENDING 补偿）
+        self._recovery_sweep_task: asyncio.Task | None = None
         # 后台任务引用集合（信令触发的恢复协程），防止被 GC 回收
         self._background_tasks: set[asyncio.Task] = set()
         # 停机标记（REL-03）：置位后订阅循环不再重连，直接退出
@@ -90,6 +112,9 @@ class SessionManager:
         )
         logger.info(f"[SessionManager] 信令订阅启动: patterns={SIGNAL_PATTERNS}")
         await self.recover_unfinished()
+        self._recovery_sweep_task = asyncio.create_task(
+            self._recovery_sweep_loop(), name="recovery-sweep"
+        )
 
     async def shutdown(self) -> None:
         """优雅停机：终止订阅 + 停止全部执行协程（checkpoint 已持久化，重启自动恢复）。"""
@@ -98,6 +123,8 @@ class SessionManager:
         self._shutting_down = True
         if self._subscription_task and not self._subscription_task.done():
             self._subscription_task.cancel()
+        if self._recovery_sweep_task and not self._recovery_sweep_task.done():
+            self._recovery_sweep_task.cancel()
         for thread_id, executor in list(self._sessions.items()):
             executor.stop()
             logger.info(f"[SessionManager] 已停止会话: thread_id={thread_id}")
@@ -468,13 +495,32 @@ class SessionManager:
     # ------------------------------------------------------------------
     # 启动恢复
     # ------------------------------------------------------------------
-    async def recover_unfinished(self) -> None:
-        """启动时扫描未完成研究任务并恢复（running / awaiting_approval）。"""
+    async def recover_unfinished(
+        self, *, pending_timeout_minutes: int = PENDING_START_TIMEOUT_MINUTES
+    ) -> None:
+        """启动/周期扫描恢复未完成任务。
+
+        - running / awaiting_approval：信令已成功启动过的会话（有 checkpoint），
+          以 resume_mode=True 从 checkpoint 恢复（原语义不变）。
+        - pending 超时补偿（B5 start 信令自愈）：start 信令为 fire-and-forget，
+          丢失（发布异常被吞/订阅窗口/满载丢弃/并发满被拒）时任务永久 PENDING。
+          超过 pending_timeout_minutes 仍为 PENDING 的任务以**全新启动**补偿：
+          从未执行的任务无 checkpoint，不能走 resume_mode（executor 的恢复路径
+          会等待初始决断批次且不发送 query）。start_session 幂等（_sessions 查重），
+          补偿与迟到信令不会双启动。
+
+        Args:
+            pending_timeout_minutes: PENDING 视为信令丢失的阈值（分钟）。
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+
         try:
             from Django_xm.apps.research.models import ResearchTask, ResearchTaskStatus
 
-            tasks = await sync_to_async(
-                lambda: list(
+            def _scan():
+                active = list(
                     ResearchTask.objects.filter(
                         status__in=[
                             ResearchTaskStatus.RUNNING,
@@ -483,15 +529,30 @@ class SessionManager:
                         is_deleted=False,
                     )
                 )
-            )()
+                pending_cutoff = timezone.now() - timedelta(minutes=pending_timeout_minutes)
+                stale_pending = list(
+                    ResearchTask.objects.filter(
+                        status=ResearchTaskStatus.PENDING,
+                        is_deleted=False,
+                        created_at__lt=pending_cutoff,
+                    )
+                )
+                return active, stale_pending
+
+            active_tasks, stale_pending = await sync_to_async(_scan)()
         except Exception:
             logger.exception("[SessionManager] 扫描未完成任务失败")
             return
 
         recovered = 0
-        for task in tasks:
-            if task.task_id in self._sessions:
+        seen: set[str] = set()
+        for task, is_resume in [
+            *((t, True) for t in active_tasks),
+            *((t, False) for t in stale_pending),
+        ]:
+            if task.task_id in self._sessions or task.task_id in seen:
                 continue
+            seen.add(task.task_id)
             payload = {
                 "thread_id": task.task_id,
                 "query": task.query,
@@ -506,9 +567,46 @@ class SessionManager:
                 "selected_mcp_servers": task.selected_mcp_servers,
                 "selected_tools": task.selected_tools,
                 "model_name": task.model,
-                "resume_mode": True,
             }
+            if is_resume:
+                payload["resume_mode"] = True
             await self.start_session(payload)
             recovered += 1
         if recovered:
             logger.info(f"[SessionManager] 已恢复 {recovered} 个未完成任务")
+
+    async def _recovery_sweep_loop(self) -> None:
+        """周期自愈扫描（B5）：运行期 start 信令丢失的 PENDING 任务补偿。
+
+        recover_unfinished 原仅服务启动/信令重连时触发；订阅保持期间丢失的
+        start 信令（发布异常被吞/满载丢弃/并发满被拒后无重发）此前无任何
+        补偿入口，任务永久 PENDING。每 RECOVERY_SWEEP_INTERVAL_SECONDS 扫描一次。
+        """
+        while True:
+            await asyncio.sleep(RECOVERY_SWEEP_INTERVAL_SECONDS)
+            try:
+                await self.recover_unfinished()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[SessionManager] 周期自愈扫描失败")
+            self._enforce_suspended_watchdog()
+
+    def _enforce_suspended_watchdog(self) -> None:
+        """挂起会话 watchdog（B6）：业务等待挂起超过最大存活时长 → 超时终态化。
+
+        挂起态（业务等待子代理 fan-in）保留会话槽 + checkpointer；子代理挂死/
+        服务重启回调丢失时父会话无限占槽（并发槽耗尽风险）。周期扫描逐会话
+        检查，超时终态化由 SessionExecutor 异步执行。
+        """
+        for executor in list(self._sessions.values()):
+            try:
+                if executor.enforce_suspended_timeout(SUSPENDED_SESSION_MAX_LIFETIME_SECONDS):
+                    logger.warning(
+                        f"[SessionManager] 挂起 watchdog 已触发终态化: thread_id={executor.thread_id}"
+                    )
+            except Exception:
+                logger.exception(
+                    f"[SessionManager] 挂起 watchdog 检查异常: "
+                    f"thread_id={getattr(executor, 'thread_id', '?')}"
+                )

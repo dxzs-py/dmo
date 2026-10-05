@@ -25,13 +25,15 @@ export const createCleanupActions = (ctx) => {
   const { pendingApprovals, pendingBindQueue, cleanupTimerBox } = ctx
 
   /**
-   * 清理过期审批（超过 30 分钟）
+   * 清理过期审批（FE-6：优先消费入队时记录的 entry.expiresAt——后端 payload
+   * 的真实超时点；缺失回退 createdAt + APPROVAL_EXPIRY_MS 兜底）
    */
   const cleanupExpired = () => {
     const now = Date.now()
     const sessionStore = useSessionStore()
     for (const [key, entry] of pendingApprovals.value.entries()) {
-      if (entry.createdAt && now - entry.createdAt > APPROVAL_EXPIRY_MS) {
+      const expiresAt = entry.expiresAt ?? (entry.createdAt + APPROVAL_EXPIRY_MS)
+      if (entry.createdAt && now > expiresAt) {
         logger.warn(`[ApprovalStore] 审批已过期，自动清理: ${key}`)
         pendingApprovals.value.delete(key)
         // 仅当 sessionId 明确有值时才更新 session store

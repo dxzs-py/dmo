@@ -54,7 +54,9 @@ class ContentFilter:
         "virus",
     ]
 
-    # Prompt Injection 检测模式
+    # Prompt Injection 检测模式（B4 补齐中文：原表仅英文。
+    # 中文条目只收对抗性表述，刻意不收"你现在是/扮演"类高频合法人设句式，
+    # 避免 safe_rag 输入检测误杀正常提问——误杀面见 INJECTION_PATTERNS 使用处）
     INJECTION_PATTERNS: ClassVar[list[str]] = [
         r"ignore\s+previous\s+instructions",
         r"ignore\s+all\s+previous",
@@ -67,6 +69,15 @@ class ContentFilter:
         r"\[SYSTEM\]",
         r"\[INST\]",
         r"<\|im_start\|>",
+        # ── 中文（对抗性表述；刻意收紧以压误杀——
+        #   不收"要执行"（"我要执行的命令"合法）、不收"设定/规则"泛尾
+        #   （"忘记之前设定的密码"合法）、"新任务"须带后续祈使）──
+        r"(忽略|无视|忘记|清除)(之前|以上|上面|前面|先前|所有|全部)的?(所有|全部)?(指令|指示|提示词?|系统提示)",
+        r"(立即|必须)(服从|遵守)(我|以下|下列|下面|新的)",
+        r"(以下是|这是)你的?新(指令|指示|规则)[，,]?\s*(请|必须|立即|马上)",
+        r"系统(提示|指令|消息)\s*[:：]",
+        r"(进入|启用|开启)(开发者模式|调试模式|DAN模式|越狱模式)",
+        r"(输出|打印|重复|透露|泄露)(一下)?你的?(系统提示|system\s*prompt|初始指令|原始指令)",
     ]
 
     def __init__(

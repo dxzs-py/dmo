@@ -759,15 +759,18 @@ const { run: runCreateIndex, loading: isCreating } = useApiTask(
       overwrite: isIndexExists
     })
 
-    ElMessage.success(`索引 "${createForm.name}" 创建成功！`)
+    // 先捕获索引名再清空表单（修复：清空后再取 createForm.name 恒为空，
+    // 导致新索引永不选中、文件列表不加载）
+    const createdName = createForm.name
+    ElMessage.success(`索引 "${createdName}" 创建成功！`)
     showCreateDialog.value = false
 
     createForm.name = ''
     createForm.description = ''
 
     await fetchIndexes()
-    selectedIndexName.value = createForm.name
-    queryForm.indexName = createForm.name
+    selectedIndexName.value = createdName
+    queryForm.indexName = createdName
     await loadFiles()
   },
   {

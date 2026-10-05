@@ -31,8 +31,9 @@ logger = logging.getLogger(__name__)
 
 # ── 安全配置 ──────────────────────────────────────────────────────
 
-# 触发 HIGH 风险等级的关键字（审批与沙箱路由共用，权威定义处）
-_HIGH_RISK_KEYWORDS = ("install", "remove", "delete", "format", "write")
+# HIGH 风险判定已单源化（B3）：权威词表见
+# common/sandbox/executor.py HIGH_RISK_COMMAND_PATTERNS（原 _HIGH_RISK_KEYWORDS
+# 5 关键字已并入），本文件经 is_high_risk_command() 引用，禁止再建副本。
 
 # 白名单命令前缀（这些命令可直接执行，无需用户确认）
 # 注意：部分命令在 Windows 上不可用，_get_whitelist_commands 会根据平台过滤
@@ -506,10 +507,12 @@ def _assess_command_risk_level(command: str) -> RiskLevel:
         return RiskLevel.SAFE  # 黑名单：工具层直接拒绝，无需审批/沙箱
     if _is_command_whitelisted(command):
         return RiskLevel.SAFE
-    command_lower = command.lower()
-    for keyword in _HIGH_RISK_KEYWORDS:
-        if keyword in command_lower:
-            return RiskLevel.HIGH
+    # B3 单源：HIGH 判定与沙箱路由共用 common/sandbox 权威词表
+    # （含原 5 宽泛关键字 + 解释器/计划任务等扩展模式）
+    from Django_xm.common.sandbox.executor import is_high_risk_command
+
+    if is_high_risk_command(command):
+        return RiskLevel.HIGH
     return RiskLevel.CONTROLLED
 
 

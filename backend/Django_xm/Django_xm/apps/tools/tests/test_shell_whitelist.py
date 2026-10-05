@@ -188,8 +188,11 @@ class ShellSandboxRoutingTests(SimpleTestCase):
 
     @override_settings(SANDBOX_CONFIG=SANDBOX_ON)
     def test_controlled_command_routes_with_risk_level(self):
-        """python -c（受控级，无 18 项子串命中）+ 任务开关开启
-        → risk_level 正确传入 should_sandbox 并路由进沙箱（S-02 审计样例修复）。"""
+        """受控级命令 + 任务开关开启
+        → risk_level 正确传入 should_sandbox 并路由进沙箱（S-02 审计样例修复）。
+
+        夹具用 python --version：B3 词表扩展后 python -c 已升 HIGH，
+        不再是受控级样例。"""
         captured = {}
 
         class _FakeExecutor:
@@ -203,7 +206,7 @@ class ShellSandboxRoutingTests(SimpleTestCase):
 
         with patch("Django_xm.common.sandbox.sandbox_executor", _FakeExecutor()):
             result = _execute_command(
-                "python -c 'print(1)'",
+                "python --version",
                 enable_sandbox=True,
                 thread_id="t-route",
             )

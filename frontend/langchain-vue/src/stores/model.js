@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { modelAPI } from '../api/model'
 import { useUserStore } from './user'
 import { logger } from '../utils/logger'

@@ -205,3 +205,60 @@ def cleanup_checkpoints(self, user_id=None, session_id=None):
         logger.exception("[Celery Chat] checkpoint 清理任务失败")
         tracker.mark_failure(error_message=str(e))
         return {"status": "error", "error": str(e)}
+
+
+@shared_task(
+    bind=True,
+    name="chat.save_document_memory",
+    max_retries=1,
+    soft_time_limit=300,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=60,
+)
+def save_document_memory(self, attachment_id: int):
+    """附件上传成功后写入文档记忆 Store（D-006 接线写侧）。
+
+    读侧 = DocumentMemoryService.build_document_context（Agent 上下文注入）。
+    LLM 摘要在 _generate_summary 内部兜底（失败降级为前 200 字截取），
+    本任务自身失败仅记日志——文档记忆是增强能力，不影响上传主流程。
+    """
+    from Django_xm.apps.attachments.models import ChatAttachment
+    from Django_xm.apps.attachments.services.document_memory_service import DocumentMemoryService
+    from Django_xm.apps.tools.langchain.file_reader import read_file_content
+
+    tracker = TrackedTask(self)
+    tracker.set_task_type("chat_cleanup")
+
+    try:
+        tracker.mark_started()
+        attachment = ChatAttachment.objects.filter(id=attachment_id, is_deleted=False).first()
+        if attachment is None:
+            logger.warning(f"[Celery Chat] 文档记忆任务：附件不存在或已删除 id={attachment_id}")
+            tracker.mark_success(result={"skipped": "attachment_not_found"})
+            return {"status": "success", "skipped": "attachment_not_found"}
+        if (attachment.mime_type or "").lower().startswith("image/"):
+            tracker.mark_success(result={"skipped": "image"})
+            return {"status": "success", "skipped": "image"}
+
+        try:
+            content = read_file_content(attachment.file.path)
+        except Exception as e:
+            logger.warning(f"[Celery Chat] 文档记忆任务：附件内容读取失败 id={attachment_id}: {e}")
+            tracker.mark_success(result={"skipped": f"read_failed: {e}"})
+            return {"status": "success", "skipped": "read_failed"}
+
+        ok = DocumentMemoryService().save_document(
+            user_id=attachment.session.user_id,
+            attachment_id=attachment.id,
+            doc_name=attachment.original_name,
+            content=content,
+            metadata={"mime_type": attachment.mime_type, "file_size": attachment.file_size},
+        )
+        result = {"attachment_id": attachment_id, "saved": ok}
+        tracker.mark_success(result=result)
+        return {"status": "success", **result}
+    except Exception as e:
+        logger.exception(f"[Celery Chat] 文档记忆写入任务失败 id={attachment_id}")
+        tracker.mark_failure(error_message=str(e))
+        return {"status": "error", "error": str(e)}

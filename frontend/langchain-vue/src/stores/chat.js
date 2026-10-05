@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useStreamChat } from '../composables/useStreamChat'
 import { useStreamFinalizer } from '../composables/useStreamFinalizer'
 import { useSessionStore } from './session'
@@ -420,6 +420,15 @@ export const useChatStore = defineStore('chat', () => {
     isLoading.value = true
     lastStreamError.value = null
 
+    // 与 sendMessage 对齐：通知 syncStore 流式开始。缺失会导致：
+    // 1) stream_completed/finalized 广播到达时本浏览器不被识别为请求浏览器，
+    //    最终化链（stream_finalized/chatFinalize/finalizeToolCalls）路径不一致；
+    // 2) realtime 未标记 SSE 活跃，SSE 流式期间 WS 断开被误报为"连接已断开"。
+    // 结束标记由 useStreamFinalizer 的 finally stopStreaming（成功路径）+
+    // 本方法 finally（失败/中止路径兜底）共同覆盖，与 sendMessage 一致。
+    const syncStore = useSyncStore()
+    syncStore.startStreaming(sid)
+
     let streamSyncTimer = null
     try {
       // 流式输出期间每 5 秒同步消息到后端（仅 PATCH）
@@ -480,6 +489,9 @@ export const useChatStore = defineStore('chat', () => {
       clearInterval(streamSyncTimer)
       sessionStore.clearToolSyncTimer(sid)
       isLoading.value = false
+      // 失败/中止路径不经过 finalizeStream（其 finally 已有 stopStreaming），
+      // 此处兜底移除流式标记，避免 streamingSessions 泄漏（幂等，Set.delete）
+      syncStore.stopStreaming(sid)
       sessionStore.touchSessionUpdatedAt(sid)
     }
   }

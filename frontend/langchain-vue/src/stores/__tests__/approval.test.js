@@ -37,7 +37,7 @@ import { APPROVAL_STATE_MAP } from '@/stores/sync/constants'
 import { logger } from '@/utils/logger'
 import { ElMessage } from 'element-plus'
 import { useApprovalStore } from '../approval/index.js'
-import { CLEANUP_INTERVAL_MS } from '../approval/constants'
+import { CLEANUP_INTERVAL_MS, APPROVAL_EXPIRY_MS, resolveApprovalExpiryMs } from '../approval/constants'
 import { resumeApprovalStream } from '@/api/approval'
 import { useSessionStore } from '@/stores/session'
 import { useResearchStore } from '@/stores/research'
@@ -424,6 +424,49 @@ describe('过期清理', () => {
 
     store.clearAll()
     expect(store.pendingApprovals.size).toBe(0)
+  })
+
+  it('FE-6：entry.expiresAt 优先于 createdAt+常量——未来过期时刻即使 createdAt 很旧也保留，过去过期时刻即使 createdAt 新鲜也清理', () => {
+    const store = useApprovalStore()
+    const sessionStore = useSessionStore()
+    const now = Date.now()
+
+    // createdAt 很旧（>5min）但 payload 过期点在虚拟时钟推进（CLEANUP_INTERVAL_MS）
+    // 之后 → 后端计时未到，保留（旧规则下 createdAt-10min 必被清理，优先级得证）
+    store.pendingApprovals.set('tc-live', {
+      source: 'chat',
+      taskId: null,
+      sessionId: 's1',
+      approvalData: { interruptId: 'tc-live', toolName: 'bash', state: 'pending' },
+      createdAt: now - 10 * 60 * 1000,
+      expiresAt: now + CLEANUP_INTERVAL_MS + 60 * 1000,
+    })
+    // createdAt 新鲜但 payload 过期点已过（本地钟偏移/积压恢复场景）→ 按后端计时清理
+    store.pendingApprovals.set('tc-dead', {
+      source: 'chat',
+      taskId: null,
+      sessionId: 's1',
+      approvalData: { interruptId: 'tc-dead', toolName: 'bash', state: 'pending' },
+      createdAt: now,
+      expiresAt: now - 1000,
+    })
+
+    vi.advanceTimersByTime(CLEANUP_INTERVAL_MS)
+
+    expect(store.pendingApprovals.has('tc-live')).toBe(true)
+    expect(store.pendingApprovals.has('tc-dead')).toBe(false)
+    expect(sessionStore.updateToolCallApprovalState).toHaveBeenCalledWith('s1', 'tc-dead', 'timeout')
+  })
+
+  it('FE-6：resolveApprovalExpiryMs——ISO 字符串解析为 epoch ms，无效/缺失回退 createdAt+APPROVAL_EXPIRY_MS', () => {
+    const now = Date.now()
+    expect(resolveApprovalExpiryMs('2026-10-05T12:00:00Z', now)).toBe(
+      Date.parse('2026-10-05T12:00:00Z'),
+    )
+    expect(resolveApprovalExpiryMs(1770000000000, now)).toBe(1770000000000)
+    expect(resolveApprovalExpiryMs(undefined, now)).toBe(now + APPROVAL_EXPIRY_MS)
+    expect(resolveApprovalExpiryMs(null, now)).toBe(now + APPROVAL_EXPIRY_MS)
+    expect(resolveApprovalExpiryMs('not-a-date', now)).toBe(now + APPROVAL_EXPIRY_MS)
   })
 })
 

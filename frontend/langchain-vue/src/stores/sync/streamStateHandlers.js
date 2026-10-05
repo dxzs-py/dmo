@@ -609,14 +609,15 @@ export const createStreamStateHandlers = (ctx) => {
     }
 
     // 非请求浏览器：后端 executor 落库先于 stream_completed 广播，可安全标记 COMPLETED 并全量同步
-    // INTERRUPTED 是终态（审批超时、用户主动中断等），不应被 stream_completed 覆盖：
+    // INTERRUPTED/ERROR 是终态，不应被 stream_completed 覆盖：
     // 审批恢复时由 handleApprovalEvent 先将 INTERRUPTED → STREAMING，
     // 再由后续 stream_completed 自然推进到 COMPLETED；若此刻仍为 INTERRUPTED，
     // 说明审批未恢复，保持终态。与 handleStreamFinalized 行为对齐。
     if (targetMsg.streamState !== StreamState.COMPLETED
         && targetMsg.streamState !== StreamState.FINALIZING
         && targetMsg.streamState !== StreamState.SYNCING
-        && targetMsg.streamState !== StreamState.INTERRUPTED) {
+        && targetMsg.streamState !== StreamState.INTERRUPTED
+        && targetMsg.streamState !== StreamState.ERROR) {
       targetMsg.streamState = StreamState.COMPLETED
       targetMsg.isStreaming = false
       // toolCalls 最终化统一收敛到 handleStreamFinalized（单一最终化路径）：

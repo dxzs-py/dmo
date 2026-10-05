@@ -99,6 +99,15 @@ class ChatAttachmentUploadView(APIView):
         lifecycle = AttachmentLifecycleService()
         lifecycle.record_file_hash(attachment)
 
+        # D-006 文档记忆写侧（best-effort 异步）：上传成功后经 Celery 生成
+        # 摘要并写入 Store，供 build_document_context 跨会话注入 Agent 上下文；
+        # 投递失败不影响上传主流程（enqueue 内部已兜底）。
+        from Django_xm.apps.attachments.services.document_memory_service import (
+            enqueue_document_memory_save,
+        )
+
+        enqueue_document_memory_save(attachment)
+
         data = serialize_attachment(attachment)
         data.update(
             {

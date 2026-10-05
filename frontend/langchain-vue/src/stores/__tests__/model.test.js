@@ -30,7 +30,7 @@ vi.mock('element-plus', () => ({
 }))
 
 vi.mock('@/utils/specialParams', () => ({
-  initSpecialParams: vi.fn((provider) => ({ ...(provider?.specialParams || {}) })),
+  initSpecialParams: vi.fn((provider) => ({ ...provider?.specialParams })),
   isThinkingEnabled: vi.fn(() => false),
   applySpecialParamChange: vi.fn((params) => params),
 }))

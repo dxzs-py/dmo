@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 # Redis 锁配置：防止相同 task_id 的文档写入任务并发执行
-# 锁 TTL 3600s 覆盖任务最大执行时长（soft_time_limit=1800s）的两倍
+# 锁 TTL 3600s 覆盖任务最大执行时长（soft_time_limit=1500s）的两倍余
 _RAG_ADD_DOCS_LOCK_TTL = 3600
 
 
@@ -116,7 +116,9 @@ def _publish_upload_terminal(task_id: str, user_id: int, success: bool) -> None:
     name="rag.upload_documents",
     max_retries=3,
     default_retry_delay=30,
-    soft_time_limit=1800,
+    # soft < 全局硬限 1800（core/config.py:81），留出 SoftTimeLimitExceeded
+    # 处理窗口（S-3：全项目唯一 soft==硬限 重叠点）
+    soft_time_limit=1500,
     autoretry_for=(ConnectionError, TimeoutError, OSError),
     retry_backoff=True,
     retry_backoff_max=60,
