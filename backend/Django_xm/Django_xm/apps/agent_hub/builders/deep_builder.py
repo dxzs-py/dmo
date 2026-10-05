@@ -13,6 +13,15 @@ from langchain_core.tools import BaseTool, StructuredTool
 from Django_xm.apps.agent_hub.builders._registry import register_builder
 from Django_xm.apps.agent_hub.config import AgentType
 from Django_xm.apps.agent_hub.exceptions import AgentCreationError
+# ── 跨 app 依赖标注（审计 arch §1.3，E8 收编）─────────────────────────────
+# agent_hub → research 为既定合法依赖方向（ARCH-03；互依现状见 .importlinter 头注环3）。
+# C1：以下 prompt 常量权威定义在 apps/research/prompts.py（单一来源模块），
+#     本 builder 在 config.system_prompt=None 时兜底使用——"通用 builder 层硬编码
+#     业务默认 prompt"的方向倒置为审计 §1.4 记录的扩展摩擦，收敛方向为后续经
+#     cross_app 门面注入，当前保留现状（强行外移会波及全部 AgentConfig 组装点）。
+# C2：SANDBOX_ALLOWED_DIRS 权威源为 research/services/_constants.py（单一来源；
+#     历史上曾在 deep_builder 与 adapter 两处定义不一致），本模块以 _SANDBOX_ALLOWED_DIRS
+#     别名私用（是公开常量的本地别名，非私有 API 访问）。
 from Django_xm.apps.research.prompts import (
     DEEP_RESEARCH_SYSTEM_PROMPT,
     DOC_ANALYSIS_PROMPT_SUFFIX,
@@ -24,9 +33,13 @@ from Django_xm.apps.research.services._constants import (
 # OfficialDeepAgentAdapter 位于 research/services/adapter.py，作为 deep agent 的统一适配器
 # （将 CompiledStateGraph 适配为 research/aresearch/astream_research_with_interrupts 接口）。
 #
-# 分层依赖说明：
-# - agent_hub.builders.deep_builder → research.services.adapter（本导入）
-# - research.services.adapter → agent_hub.builders.subagent_support（子 agent 官方支持中间件）
+# 分层依赖说明（E8 实测纠偏：反向直连边已随 E6 拆分变化）：
+# - 正向：agent_hub.builders.deep_builder → research.services.adapter（本导入；
+#   C3：builder 返回类型绑定业务 app，adapter 注入韧性降级元数据所致）
+# - 反向：research.services.adapter → research.services.patches →
+#   agent_hub.services.agent_executor（_DeepAgentExecutor 继承 AgentExecutor）；
+#   builders/__init__.py 头注所称 "adapter → builders.subagent_support" 直连
+#   已不存在（subagent_support 现仅 agent_hub 包内 base_builder 使用）
 # 这是 agent_hub ↔ research 的循环依赖，与 spec 2.4 的 chat ↔ research 循环同性质，
 # 后续应通过 cross_app 门面统一收敛。当前保持现状，不引入新的循环依赖。
 #
@@ -510,6 +523,18 @@ class DeepAgentBuilder:
         deepagents 内置 task 工具（阻塞等待）不再暴露给深度研究主 agent。
         """
         try:
+            # ⚠️ 三方库私有 API 依赖（审计 arch §1.3 C7，升级 deepagents 前必读）：
+            # `deepagents._models` 是 deepagents 内部模块（下划线前缀，未列入包根
+            # __init__.__all__），`get_model_provider` 属私有 API；同行另三个符号
+            # （GeneralPurposeSubagentProfile / HarnessProfile / register_harness_profile）
+            # 为根包公开导出。
+            # 依赖版本：deepagents 0.7.5（requirements.txt `deepagents>=0.7.5`，实测安装 0.7.5）。
+            # 升级风险：deepagents 升级可能移动/改名 _models.get_model_provider 或变更其
+            # 返回值契约——下方 except Exception 会把 ImportError/AttributeError 等一并吞为
+            # warning，「禁用 general-purpose subagent」静默失效（deepagents 内置阻塞
+            # task 工具重新对主 agent 可见，破坏"业务执行必须经子代理"的调度约束），
+            # 仅日志可见、无显式失败信号。升级后必须人工验证主 agent 工具集中不含 task 工具。
+            # 不可修改三方库源码；收敛方向：跟进 deepagents 官方公开等价 API 后替换。
             from deepagents import GeneralPurposeSubagentProfile, HarnessProfile, register_harness_profile
             from deepagents._models import get_model_provider
 
@@ -595,6 +620,10 @@ class DeepAgentBuilder:
         动态上下文会改变 prompt 基底（prompts.yaml 的 deep-research 模板）与注入内容，
         需实测验证研究质量后再决定是否默认开启。
         """
+        # C5（审计 arch §1.3）：跨 app 读取 context_manager 公开配置单例
+        # （context_manager/config.py 模块级 context_settings）的动态上下文 opt-in
+        # 开关；agent_hub → context_manager 为既定分层方向（非 .importlinter 禁止边，
+        # 禁止的是 ai_engine → agent_hub / research 等反向），开关语义与回退策略见 docstring。
         from Django_xm.apps.context_manager.config import context_settings
 
         if context_settings.deep_dynamic_context_enabled:

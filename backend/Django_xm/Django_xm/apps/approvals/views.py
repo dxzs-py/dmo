@@ -84,6 +84,10 @@ def _build_idempotent_data(interrupt_id):
     if idempotent_state == "waiting":
         extra_fields["status"] = "waiting_for_others"
         extra_fields["message"] = "本工具已审批，等待同批次其他工具审批完成后开始执行..."
+    elif idempotent_state == "timeout":
+        # N-1 组合项③：审批超时后用户确认被幂等丢弃，响应明示原因
+        # （service 层已同步记 warning 日志；不新增事件类型，前端按 state 分支展示）
+        extra_fields["message"] = "审批已超时，此次确认未生效"
 
     return {
         "interrupt_id": interrupt_id,

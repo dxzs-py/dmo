@@ -90,6 +90,9 @@ async def deep_research_stream(request, task_id):
     """深度研究 SSE 流式进度推送（异步版）。
 
     每 2 秒轮询一次任务状态（底层有 Redis 缓存，实际 DB 查询频率约 12 次/分钟）。
+    状态无变化时每 30s 下发 SSE 注释行心跳（``: ping``），防止长静默期
+    （awaiting_approval 等待决策 / running 长时间无状态迁移）触发前端
+    STREAM_IDLE_TIMEOUT=180s 空闲断连（B6/PF-09）。
     asyncio.sleep 不阻塞事件循环，彻底消除 "took too long to shut down and was killed"。
     """
     user = await sync_to_async(authenticate_sse_request)(request)
@@ -108,7 +111,12 @@ async def deep_research_stream(request, task_id):
         last_status = None
         loop = asyncio.get_running_loop()
         start_time = loop.time()
+        last_emit_time = start_time
+        # 服务端连接寿命上限（秒）：到期发 timeout 事件由前端重连续传，非空闲断连。
+        # 存续期内的长静默由 30s 心跳兜住（远小于前端 STREAM_IDLE_TIMEOUT=180s）。
         max_duration = 600
+        # 心跳间隔（秒）：前端 180s idle 的 6 倍安全余量，按字节到达重置其计时器
+        _HEARTBEAT_INTERVAL = 30
 
         # 从 DB 读取历史审批数据（刷新/新开页面补全审批历史）
         approval_history = await _load_approval_history_from_db(task_id)
@@ -168,9 +176,17 @@ async def deep_research_stream(request, task_id):
                         event_data["final_report"] = status_data.get("final_report", "")
 
                     yield f"data: {json.dumps(event_data, ensure_ascii=False, default=str)}\n\n"
+                    last_emit_time = loop.time()
 
                     if current_status in ("completed", "failed"):
                         break
+
+                # SSE 注释行心跳：前端 readSSEStream 按"字节到达"重置 idle 计时
+                # （utils/sse.js readSSEStream 的 lastEventTime），注释行不会被
+                # 解析为事件，故不污染事件流；防止长静默期 idle 断连（B6/PF-09）。
+                if loop.time() - last_emit_time >= _HEARTBEAT_INTERVAL:
+                    yield ": ping\n\n"
+                    last_emit_time = loop.time()
 
                 # 非阻塞等待：asyncio.sleep 将控制权还给事件循环
                 await asyncio.sleep(2)

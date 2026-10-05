@@ -192,6 +192,9 @@ class SearchAllView(APIView):
                     reload_vector_store=lambda: manager.load_index(full_name, embeddings),
                     required_dim=records[full_name][1],
                     query_embedding=query_embedding,
+                    # C1/KV-2：pgvector 原生返回 cosine distance，须归一为相似度
+                    # （否则阈值反向过滤 + RRF 库内排名倒序）
+                    score_semantics="distance" if manager.get_store_type(full_name) == "pgvector" else "similarity",
                 )
                 return full_name, results
             except Exception as exc:

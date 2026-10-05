@@ -29,7 +29,7 @@ from Django_xm.apps.ai_engine.services.agent_resilience import (
 )
 from Django_xm.apps.ai_engine.services.cost_tracker import TokenDetailTracker
 from Django_xm.apps.chat.models import ChatMode
-from Django_xm.apps.chat.services.slash_commands import execute_command, parse_command
+from Django_xm.apps.chat.services.slash_commands import aexecute_command, parse_command
 from Django_xm.apps.chat.services.stream import (
     DeepThinkingStreamStrategy,
     FallbackStreamService,
@@ -47,6 +47,7 @@ from .deep_chat_service import DeepChatService
 from .rag_chat_service import RAGChatService
 from .stream_helpers import (
     build_context_info,
+    sync_usage_tracker_model,
 )
 from .tool_service import ToolService
 
@@ -214,6 +215,25 @@ class ChatService:
             model_name,
         )
 
+    async def aapply_context_engineering(
+        self,
+        chat_history: list[dict[str, Any]],
+        query: str,
+        mode: str = ChatMode.AGENT,
+        model_name: str | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """apply_context_engineering 的异步调度变体（D1/P2-7）。
+
+        同步实现内部含 KG/store 检索与逐条同步 embed_query（远程 API 调用），
+        直接在事件循环上执行会阻塞 FastAPI 执行服务（同循环其他会话/WS 广播停摆）。
+        经 asyncio.to_thread 移入工作线程执行：仅改调度不改编排，
+        输入输出与同步版本完全一致。同步链路（regex/ORM/同步 store/同步 embedding）
+        无事件循环依赖，线程安全。
+        """
+        return await asyncio.to_thread(
+            self.apply_context_engineering, chat_history, query, mode, model_name
+        )
+
     def _apply_context_engineering_for_checkpointer(
         self,
         user_message: str,
@@ -228,7 +248,7 @@ class ChatService:
 
     async def process_chat_request(self, data: dict[str, Any]) -> dict[str, Any]:
         """处理非流式聊天请求（编排：前置检查 → 上下文准备 → graph 执行 → 补全与缓存写回）"""
-        early_result = self._precheck_chat_request(data)
+        early_result = await self._precheck_chat_request(data)
         if early_result is not None:
             return early_result
 
@@ -239,11 +259,15 @@ class ChatService:
 
         return self._finalize_chat_response(data, response, tools)
 
-    def _precheck_chat_request(self, data: dict[str, Any]) -> dict[str, Any] | None:
+    async def _precheck_chat_request(self, data: dict[str, Any]) -> dict[str, Any] | None:
         """前置检查：slash 命令执行、模型响应缓存命中、RAG 模式分流。
 
         命中任一路径时返回应立即返回给调用方的结果；全部未命中返回 None，
         由调用方继续正常 agent 处理流程。
+
+        async（E11/P2-7）：slash 命令段经 aexecute_command（asyncio.to_thread）
+        移出事件循环——/compact 等 handler 含同步 store/embedding 重活，
+        同步执行会阻塞 FastAPI 执行服务。
         """
         from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
         from Django_xm.apps.cache_manager.services.cache_service import ModelResponseCacheService
@@ -257,7 +281,7 @@ class ChatService:
                 "session_id": data.get("session_id"),
                 "messages": data.get("chat_history", []),
             }
-            cmd_result = execute_command(command_name, context)
+            cmd_result = await aexecute_command(command_name, context)
             return {
                 "message": cmd_result.get("content", ""),
                 "mode": data.get("mode", "agent"),
@@ -342,7 +366,7 @@ class ChatService:
             invoke_config = thread_config
         else:
             chat_history = data.get("chat_history", [])
-            chat_history, _ = self.apply_context_engineering(
+            chat_history, _ = await self.aapply_context_engineering(
                 chat_history,
                 data.get("message", ""),
                 mode=data.get("mode", "agent"),
@@ -533,7 +557,11 @@ class ChatService:
         parsed: tuple,
         token_detail_tracker,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """slash 命令分支：构建命令上下文并执行命令，产出命令结果与结束事件"""
+        """slash 命令分支：构建命令上下文并执行命令，产出命令结果与结束事件
+
+        命令执行经 aexecute_command（E11/P2-7）移出事件循环（/compact 含
+        同步 store/embedding 重活，在循环上执行会阻塞整个执行服务）。
+        """
         command_name, args = parsed
         context = {
             "args": args,
@@ -542,7 +570,7 @@ class ChatService:
             "messages": data.get("chat_history", []),
             "token_info": token_detail_tracker.get_summary(),
         }
-        cmd_result = execute_command(command_name, context)
+        cmd_result = await aexecute_command(command_name, context)
         yield {
             "type": "command",
             "data": cmd_result,
@@ -888,7 +916,7 @@ class ChatService:
         # 模型已由 AgentFactory 经 get_chat_model(enable_fallback=True) 解析（写入 config.model）；
         # 此处检测创建级降级（用户所选模型不可用已被提升为 fallback 候选）并向前端发送提示
         model_instance, provider_id, model_name, fallback_events = (
-            await self._detect_model_creation_fallback(data, agent_config.model)
+            await self._detect_model_creation_fallback(data, agent_config.model, usage_tracker)
         )
         for _fallback_event in fallback_events:
             yield _fallback_event
@@ -913,13 +941,16 @@ class ChatService:
             yield event
 
     async def _detect_model_creation_fallback(
-        self, data: dict[str, Any], model_instance
+        self, data: dict[str, Any], model_instance, usage_tracker=None
     ) -> tuple[Any, str | None, str | None, list[dict[str, Any]]]:
         """检测创建级模型降级：对比用户请求模型与 AgentFactory 实际创建的主模型。
 
         模型实例由 AgentFactory 统一经 get_chat_model(enable_fallback=True) 创建
         （用户所选模型不可用时已自动提升 fallback 候选为主模型），本方法仅检测
         该创建级降级并生成 model_fallback 事件提示前端，不创建任何模型。
+
+        检测到降级时同步 usage_tracker.model_id 为 actual（F2-1：context 事件与
+        ChatMessage.model 落库统一记实际模型，与前端 modelStore 同步值一致）。
 
         返回 (model_instance, provider_id, model_name, fallback_events)；
         fallback_events（model_fallback 事件）由主流程按序 yield。
@@ -951,6 +982,8 @@ class ChatService:
                             },
                         }
                     )
+                    # F2-1：usage/context/ChatMessage.model 统一记实际模型（先于事件 yield）
+                    sync_usage_tracker_model(usage_tracker, fallback_events[0].get("data"))
                     # 自动更新 SystemConfig
                     try:
                         from Django_xm.apps.ai_engine.models import SystemConfig
@@ -1053,7 +1086,7 @@ class ChatService:
             if self._context_service.check_injection(user_message):
                 logger.warning("检测到指令注入尝试，用户输入将被隔离")
 
-            chat_history, _ = self.apply_context_engineering(
+            chat_history, _ = await self.aapply_context_engineering(
                 chat_history,
                 user_message,
                 mode=data.get("mode", "agent"),
@@ -1090,9 +1123,42 @@ class ChatService:
                                     LgCommand(resume={intr_id: False}),
                                     config=thread_config,
                                 )
+                                # B4 配套：自动拒绝后终态化对应审批行（按
+                                # langgraph_resume_id 定位），否则该批次永远
+                                # PENDING——审批恢复扫描
+                                # （SessionManager._recover_chat_approvals）会
+                                # 反复重建已向前推进的会话。语义为 TIMEOUT
+                                # （用户未决策，会话已被新消息取代），非用户
+                                # 主动拒绝。
+                                try:
+                                    await sync_to_async(
+                                        self._finalize_superseded_approvals
+                                    )(intr_id)
+                                except Exception:
+                                    logger.warning(
+                                        f"终态化被取代审批行失败（非致命）: intr_id={intr_id}",
+                                        exc_info=True,
+                                    )
                                 logger.info(f"自动拒绝 pending interrupt: {intr_id}（用户发送了新消息）")
         except Exception as e:
             logger.warning(f"检查/清理 pending interrupt 失败（非致命）: {e}")
+
+    def _finalize_superseded_approvals(self, langgraph_resume_id: str) -> int:
+        """终态化被自动拒绝 interrupt 对应的 PENDING 审批行（B4 配套，TIMEOUT 语义）。"""
+        from Django_xm.apps.approvals.models import Approval
+        from Django_xm.apps.approvals.services.approval_service import timeout_approval
+
+        stale_ids = list(
+            Approval.objects.filter(
+                source=Approval.Source.CHAT,
+                source_id=self.thread_id,
+                extra__langgraph_resume_id=langgraph_resume_id,
+                state=Approval.State.PENDING,
+            ).values_list("interrupt_id", flat=True)
+        )
+        for interrupt_id in stale_ids:
+            timeout_approval(interrupt_id, dispatch_resume=False)
+        return len(stale_ids)
 
     def _init_stream_context(self, data: dict[str, Any]) -> StreamContext:
         """创建 StreamContext（流式可变状态封装）并注入会话定位字段。"""
@@ -1203,9 +1269,19 @@ class ChatService:
         with TokenUsageCallbackHandler() as cb:
             from Django_xm.apps.ai_engine.services.llm_fallback import FallbackDetectionCallback
 
+            # E11 附带核实（N-6 关联面）：请求未带 provider_id 时 plan.provider_id 为
+            # None，expected_provider 落空串 → FallbackDetectionCallback 检测整体关闭
+            # （on_llm_end 以 expected_provider 非空为闸）。补 bound_model 兜底，
+            # 与 fallback.stream_without_tools（fallback.py 同构段）对齐。
+            bound_model = getattr(plan.model_instance, "bound", plan.model_instance)
             fb_callback = FallbackDetectionCallback(
-                expected_provider=plan.provider_id or "",
-                expected_model=plan.model_name or "",
+                expected_provider=plan.provider_id
+                or getattr(bound_model, "_provider_id", "")
+                or "",
+                expected_model=plan.model_name
+                or getattr(bound_model, "model_name", "")
+                or getattr(bound_model, "model", "")
+                or "",
             )
             plan.config["callbacks"] = [cb, fb_callback]
             cb_holder["cb"] = cb

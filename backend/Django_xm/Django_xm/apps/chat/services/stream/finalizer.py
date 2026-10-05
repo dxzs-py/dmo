@@ -26,6 +26,7 @@ from langchain_core.messages import AIMessage
 from Django_xm.apps.ai_engine.models import SystemConfig
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
 from Django_xm.apps.chat.services.stream_helpers import (
+    sync_usage_tracker_model,
     update_usage_and_tokens,
 )
 from Django_xm.apps.chat.utils import _needs_completion, extract_suggestions
@@ -69,6 +70,9 @@ async def finalize_stream(
     if fb_callback.fallback_detected:
         fallback_info = fb_callback.get_fallback_info()
         if fallback_info:
+            # F2-1：降级后 usage/ChatMessage.model 统一记实际模型（先于事件 yield，
+            # 保证 execute_agent_stream 后续 build_context_info / 落库读到 actual）
+            sync_usage_tracker_model(usage_tracker, fallback_info)
             yield {"type": "model_fallback", "data": fallback_info}
             try:
                 SystemConfig.set_value(

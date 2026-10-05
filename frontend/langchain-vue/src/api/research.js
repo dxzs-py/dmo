@@ -7,6 +7,9 @@ export const deepResearchAPI = {
   getStatus(taskId) { return apiClient.get(`/research/status/${taskId}/`) },
   getTasks(params = {}) { return apiClient.get('/research/tasks/', { params }) },
   deleteTask(taskId, params = {}) { return apiClient.delete(`/research/tasks/${taskId}/`, { params }) },
+  // 取消研究任务（C1/P2-1）：后端仅发布停止信令并返回，终态化由执行服务异步完成
+  // （状态经既有 status_change 实时通道同步为已取消）
+  cancelTask(taskId) { return apiClient.post(`/research/tasks/${taskId}/cancel/`) },
   getFiles(taskId) { return apiClient.get(`/research/${taskId}/files/`) },
   downloadFile(taskId, filename) { return `${settings.apiBaseUrl}/research/${taskId}/file/download/${filename}` },
   getFileContent(taskId, filename) { return apiClient.get(`/research/${taskId}/file/content/${filename}/`) },

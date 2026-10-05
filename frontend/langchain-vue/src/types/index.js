@@ -36,6 +36,8 @@ export const ResearchTaskStatus = {
   RUNNING: 'running',
   COMPLETED: 'completed',
   FAILED: 'failed',
+  /** 用户取消终态（C1/P2-1）：后端 ResearchTaskStatus.CANCELLED，终态不可恢复，部分成果保留展示 */
+  CANCELLED: 'cancelled',
 }
 
 /** 学习工作流任务状态（后端 WorkflowSession.status，snake_case 协议值） */

@@ -13,6 +13,11 @@ class ResearchTaskStatus(models.TextChoices):
       与 `session_manager.py`（启动恢复扫描 `status__in=["running", "awaiting_approval"]`）
     - 前端 `types/index.js` 及 DeepResearchView / ResearchTaskDetail / ChatMessage 等组件
     因此**不可**仅凭"成员名零引用"判定为孤儿并删除。
+
+    `CANCELLED`（C1/P2-1）：研究任务用户取消终态。终态化由执行服务完成
+    （SessionExecutor 取消级联 / SessionManager 停止信令 DB 兜底），端点仅发布
+    信令不写状态；取消=终态不可恢复（区别于 chat 优雅停止保留 checkpoint），
+    已落库的部分成果（content/tool_calls/subagent_contents）保留展示。
     """
 
     PENDING = "pending", "待执行"
@@ -20,6 +25,7 @@ class ResearchTaskStatus(models.TextChoices):
     RUNNING = "running", "执行中"
     COMPLETED = "completed", "已完成"
     FAILED = "failed", "失败"
+    CANCELLED = "cancelled", "已取消"
 
 
 class ResearchDepth(models.TextChoices):

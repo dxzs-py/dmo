@@ -43,6 +43,7 @@ from Django_xm.apps.approvals.services.approval_service import (
     resume_approval,
     timeout_approval,
 )
+from Django_xm.apps.approvals.views import _build_idempotent_data
 from Django_xm.common.constants import TIMEOUT_DECISION
 
 
@@ -199,6 +200,22 @@ class ResumeApprovalStateMachineTests(TestCase):
                 self.acquire_retry_mock.assert_not_called()
                 self.pab_mock.assert_not_called()
 
+    def test_resume_on_timeout_terminal_logs_confirmation_dropped_warning(self) -> None:
+        """超时终态后到达的确认：幂等丢弃并记 warning 明示（N-1 组合项③）。"""
+        _make_approval("call_term_timeout_w", state=Approval.State.TIMEOUT)
+
+        with self.assertLogs(
+            "Django_xm.apps.approvals.services.approval_service", level="WARNING"
+        ) as logs:
+            result = resume_approval("call_term_timeout_w", approved=True)
+
+        self.assertTrue(result["idempotent"])
+        self.assertIsNone(result["resume_value"])
+        self.assertTrue(
+            any("此次确认未生效" in msg for msg in logs.output),
+            f"超时后确认被丢弃应记 warning，实际日志: {logs.output}",
+        )
+
     def test_resume_on_processing_returns_idempotent_with_state(self) -> None:
         """processing 中重复 resume：幂等返回并携带 state=processing，不进入锁竞争。"""
         approval = _make_approval("call_processing", state=Approval.State.PROCESSING)
@@ -330,6 +347,7 @@ class TimeoutApprovalTests(TestCase):
             p.start()
             self.addCleanup(p.stop)
         self.acquire_lock_mock = approval_service._acquire_lock
+        self.release_lock_mock = approval_service.release_lock
         self.pab_mock = approval_service.persist_and_broadcast
         self.publish_timeout_mock = approval_service.publish_tool_call_timeout_event
         self.route_timeout_mock = approval_gateway.gateway.route_timeout
@@ -396,6 +414,137 @@ class TimeoutApprovalTests(TestCase):
         self.assertEqual(approval.state, Approval.State.PENDING)
         self.pab_mock.assert_not_called()
         self.route_timeout_mock.assert_not_called()
+
+    def test_timeout_success_releases_batch_lock(self) -> None:
+        """超时成功路径必须释放批次锁（N-1：与 resume/complete 对称，防 300s TTL 泄漏）。"""
+        approval = _make_approval("call_t5", graph_interrupt_id="gid-t5")
+
+        timeout_approval("call_t5", dispatch_resume=True)
+
+        approval.refresh_from_db()
+        self.assertEqual(approval.state, Approval.State.TIMEOUT)
+        self.release_lock_mock.assert_called_once_with("gid-t5")
+
+    def test_timeout_dispatch_false_releases_batch_lock(self) -> None:
+        """自愈早退路径（dispatch_resume=False）同样必须释放批次锁。"""
+        approval = _make_approval("call_t6", graph_interrupt_id="gid-t6")
+
+        timeout_approval("call_t6", dispatch_resume=False)
+
+        approval.refresh_from_db()
+        self.assertEqual(approval.state, Approval.State.TIMEOUT)
+        self.release_lock_mock.assert_called_once_with("gid-t6")
+        self.route_timeout_mock.assert_not_called()
+
+
+class _FakeRedis:
+    """进程内最小 Redis 模拟：仅实现审批锁依赖的 SET NX EX / DEL 语义。
+
+    用于锁生命周期测试：不 mock _acquire_lock/release_lock 本身，
+    保留真实加锁/释放路径，验证"超时处理完成后锁确实可被再次获取"。
+    """
+
+    def __init__(self) -> None:
+        self.store: dict[str, str] = {}
+
+    def set(self, key, value, nx=False, ex=None):  # noqa: A002 - 对齐 redis-py 签名
+        if nx and key in self.store:
+            return None
+        self.store[key] = value
+        return True
+
+    def delete(self, key):
+        return 1 if self.store.pop(key, None) is not None else 0
+
+
+class TimeoutApprovalLockLifecycleTests(TestCase):
+    """timeout_approval 锁生命周期（N-1 回归保护）：真实 acquire/release 语义。
+
+    与 TimeoutApprovalTests 的差异：此处不 mock _acquire_lock / release_lock，
+    仅将 get_redis_client 替换为进程内 _FakeRedis，断言"锁获取 → 超时处理 →
+    锁可再次获取"全链路；广播/路由副作用仍 mock 隔离。
+    """
+
+    def setUp(self) -> None:
+        self.fake_redis = _FakeRedis()
+        patchers = [
+            mock.patch.object(approval_service, "get_redis_client", return_value=self.fake_redis),
+            mock.patch.object(approval_service, "persist_and_broadcast"),
+            mock.patch.object(approval_service, "publish_tool_call_timeout_event"),
+            mock.patch(
+                "Django_xm.apps.approvals.services.approval_gateway.gateway.route_timeout"
+            ),
+        ]
+        for p in patchers:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_timeout_success_releases_lock_for_subsequent_acquisition(self) -> None:
+        """超时成功处理后批次锁必须可被再次获取（修复前：锁残留 300s TTL）。
+
+        N-1 证据：同批次多审批超时时，cleanup beat / 执行器自愈 / 用户对
+        兄弟审批的确认均被残留锁阻塞至 TTL 到期。本测试在修复前失败
+        （第二次 _acquire_lock 返回 False），修复后通过。
+        """
+        approval = _make_approval("call_tl1", graph_interrupt_id="gid-tl1")
+
+        timeout_approval("call_tl1", dispatch_resume=True)
+
+        approval.refresh_from_db()
+        self.assertEqual(approval.state, Approval.State.TIMEOUT)
+        self.assertTrue(
+            approval_service._acquire_lock("gid-tl1"),
+            "超时成功路径未释放批次锁，后续获取被阻塞（N-1 锁泄漏）",
+        )
+
+    def test_timeout_dispatch_false_releases_lock_for_subsequent_acquisition(self) -> None:
+        """自愈早退路径（dispatch_resume=False）处理后锁同样可再次获取。"""
+        approval = _make_approval("call_tl2", graph_interrupt_id="gid-tl2")
+
+        timeout_approval("call_tl2", dispatch_resume=False)
+
+        approval.refresh_from_db()
+        self.assertEqual(approval.state, Approval.State.TIMEOUT)
+        self.assertTrue(
+            approval_service._acquire_lock("gid-tl2"),
+            "dispatch_resume=False 早退路径未释放批次锁（N-1 锁泄漏）",
+        )
+
+    def test_timeout_internal_error_still_releases_lock(self) -> None:
+        """处理中途异常：锁必须仍被释放（try/finally 保护，不残留至 TTL）。"""
+        approval = _make_approval("call_tl3", graph_interrupt_id="gid-tl3")
+
+        with mock.patch.object(
+            approval_service, "persist_and_broadcast", side_effect=RuntimeError("boom")
+        ):
+            timeout_approval("call_tl3", dispatch_resume=True)  # 异常被内部吞掉（既有语义）
+
+        self.assertTrue(
+            approval_service._acquire_lock("gid-tl3"),
+            "异常路径未释放批次锁",
+        )
+
+
+class TimeoutIdempotentDataTests(TestCase):
+    """超时终态的幂等响应携带明示 message（N-1 组合项③：告知前端确认未生效）。"""
+
+    def test_build_idempotent_data_for_timeout_carries_notice_message(self) -> None:
+        _make_approval("call_t_idem1", state=Approval.State.TIMEOUT)
+
+        data = _build_idempotent_data("call_t_idem1")
+
+        self.assertEqual(data["state"], "timeout")
+        self.assertIn("审批已超时", data["message"])
+        self.assertIn("此次确认未生效", data["message"])
+
+    def test_build_idempotent_data_other_states_have_no_timeout_message(self) -> None:
+        """非超时终态不携带该 message（不影响既有 waiting/其他幂等响应契约）。"""
+        _make_approval("call_t_idem2", state=Approval.State.APPROVED)
+
+        data = _build_idempotent_data("call_t_idem2")
+
+        self.assertEqual(data["state"], "approved")
+        self.assertNotIn("message", data)
 
 
 class BuildApprovalExtraTests(TestCase):

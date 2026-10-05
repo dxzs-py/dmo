@@ -483,6 +483,38 @@ AI_HELPER_MODEL_MAX_TOKENS = 256
 # spawn_sub_agent 派生链路与 deepagents inline 子代理共用；环境变量 AGENT_MAX_DEPTH 可覆盖。
 AGENT_MAX_DEPTH = int(os.environ.get("AGENT_MAX_DEPTH", "3"))
 
+# ── Agent 全局执行超时（B6/P2-13 不对齐项①）────────────────────────
+# soft=警告阈值（触发一次 timeout_warning 事件，不终止）；hard=强制终止阈值
+# （chat→FALLBACK / research→终止信号 / learning→TimeoutError）。None=不限制。
+# 取值依据：深度研究单个子代理可跑 10-30min、挂起会话 watchdog 7200s；
+# soft 覆盖正常长任务上界，hard 为其 2 倍兜底，均小于 watchdog；
+# 审批等待已由 ExecutionTimeoutManager.pause/resume 排除计时，不受影响。
+# 代码级兜底同值：ai_engine/services/agent_resilience.py DEFAULT_SOFT/HARD_TIMEOUT。
+AGENT_SOFT_TIMEOUT = 1800.0
+AGENT_HARD_TIMEOUT = 3600.0
+
+# 通用工具级缺省执行超时（B6/P2-13 不对齐项②，秒；None=不限制）。
+# 与最慢现役工具上限对齐（shell_exec MAX_TIMEOUT=300），远小于 Celery rag
+# soft_time_limit=1500s；超时返回 error ToolMessage 不中断执行流。
+# 代码级兜底：ai_engine/services/tool_timeout.py DEFAULT_TOOL_EXECUTION_TIMEOUT。
+AGENT_TOOL_EXECUTION_TIMEOUT = 300.0
+
+# 子代理并发执行上限（D3/P2-9，进程级；无"禁用"语义，<1 按 1 处理）。
+# 超限排队等待而非失败（threading.BoundedSemaphore 收敛于
+# langgraph_adapter._run_in_thread，spawn/resume 全部执行线程唯一入口）。
+# 取值依据（审计 PF-03 建议 4-8，取上界 8）：
+# - 单个执行中子代理占用 1 线程 + 1 独立事件循环 + 1 个 per-loop PG
+#   checkpointer 连接池（≥1 连接），8 槽 ≈ 8-16 PG 连接，处于 PG 默认
+#   max_connections=100 安全余量内；
+# - SessionManager 并发会话槽 DEFAULT_MAX_CONCURRENCY=20（chat 会话多数
+#   0-2 个子代理、research fan-out 每波 2-5 个），8 槽覆盖 1-2 个完整波次；
+# - 槽位生命周期 ≤ 单个子代理图执行时长（recursion_limit=200 + 工具超时
+#   300s 约束），排队延迟分钟级 ≪ 挂起 watchdog 7200s，等待父会话不被误杀；
+# - Celery 全局 hard 1800s 属独立 worker 进程域，仅作量级参照。
+# 代码级兜底同值：ai_engine/subagent_runtime/concurrency.py
+# DEFAULT_SUBAGENT_CONCURRENCY。
+AGENT_SUBAGENT_CONCURRENCY = 8
+
 # ── Shell Exec 安全配置 ──────────────────────────────────────────
 # 白名单命令：单一真相源在 Django_xm.apps.tools.langchain.shell.DEFAULT_WHITELIST_COMMANDS，
 # 此处置为 None 使用代码级默认值（含平台过滤）。

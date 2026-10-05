@@ -16,6 +16,10 @@ from typing import Any
 
 from Django_xm.apps.ai_engine.models import SubAgentStatus
 from Django_xm.apps.ai_engine.subagent_runtime.adapters.base import BaseRuntimeAdapter
+from Django_xm.apps.ai_engine.subagent_runtime.concurrency import (
+    get_subagent_concurrency_limit,
+    get_subagent_concurrency_semaphore,
+)
 from Django_xm.apps.ai_engine.subagent_runtime.runtime import MAX_SUBAGENT_ROUNDS
 from Django_xm.common.messages import content_to_str
 
@@ -96,6 +100,41 @@ class LangGraphAdapter(BaseRuntimeAdapter):
     # ── 后台执行 ────────────────────────────────────────────────────────
 
     def _run_in_thread(self, instance: Any, agent_config: Any, configurable: dict | None, resume_payload: Any) -> None:
+        """子代理执行线程唯一入口（D3/P2-9 并发槽收敛点）。
+
+        spawn 与 resume（审批恢复 / 等待恢复 / 重启恢复）全部经此启动唯一
+        执行线程：进入即获取进程级并发槽（threading.BoundedSemaphore，容量
+        settings.AGENT_SUBAGENT_CONCURRENCY，默认 8），超限排队等待而非失败，
+        终态/异常/interrupt 全路径 finally 释放。
+
+        收敛点选择依据：
+        - 覆盖面：全部子代理图执行唯一经此入口（spawn/resume 两处线程创建
+          的共同 target），单点获取/释放，无多入口漏覆盖、无重复计数；
+        - 跨事件循环安全：子代理在独立线程 + 独立事件循环执行，asyncio
+          原语绑定单一 loop，跨 loop await 会抛 "bound to a different
+          event loop"；threading 信号量的等待发生在建 loop 之前的纯线程
+          上下文，天然跨 loop；
+        - 不占工具超时：spawn 工具立即返回（runtime.spawn → adapter.spawn
+          非阻塞），排队发生在子代理自身线程内、其图尚未启动，B6
+          ToolExecutionTimeoutMiddleware（包裹父图单次工具调用，默认 300s）
+          与 Agent soft/hard 超时均不覆盖此等待；排队延迟（槽位生命周期
+          受 recursion_limit/工具超时约束，分钟级）≪ 挂起会话 watchdog
+          7200s，等待父会话不会被误终态。
+        """
+        semaphore = get_subagent_concurrency_semaphore()
+        if not semaphore.acquire(blocking=False):
+            logger.info(
+                f"[SubAgentConcurrency] 子代理并发已达上限"
+                f"（{get_subagent_concurrency_limit()}），排队等待: {instance.thread_id}"
+            )
+            semaphore.acquire()
+        try:
+            self._execute_in_thread(instance, agent_config, configurable, resume_payload)
+        finally:
+            semaphore.release()
+
+    def _execute_in_thread(self, instance: Any, agent_config: Any, configurable: dict | None, resume_payload: Any) -> None:
+        """持有并发槽执行子代理图（原 _run_in_thread 执行体，独立成方法）。"""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:

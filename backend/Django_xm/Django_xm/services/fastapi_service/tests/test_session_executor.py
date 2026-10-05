@@ -35,6 +35,10 @@ _AB_MODULE = "Django_xm.apps.approvals.services.approval_batch"
 
 
 def _make_executor(thread_id="t1", **kw):
+    # E7：SessionExecutor 经 __new__ 工厂按 session_type 分派域子类
+    # （chat → ChatSessionExecutor，其余 → ResearchSessionExecutor），
+    # 域专属方法（_run_chat/_wait_for_chat_initial_batch 等）仅存在于
+    # 对应子类，chat 域用例须以 session_type="chat" 构造。
     manager = mock.Mock()
     return SessionExecutor(
         manager,
@@ -44,6 +48,7 @@ def _make_executor(thread_id="t1", **kw):
         session_id=kw.get("session_id", "s1"),
         message_id=kw.get("message_id", "m1"),
         params=kw.get("params", {}),
+        session_type=kw.get("session_type", "research"),
     )
 
 
@@ -195,7 +200,7 @@ class TestWaitForInitialBatch(unittest.TestCase):
     """恢复模式：服务重启后等待首个已决断批次。"""
 
     def test_no_batches_returns_empty(self):
-        """任务无审批批次：返回空 dict，agent 从 checkpoint 自然继续。"""
+        """任务无审批批次：返回空 dict（调用方按 B5/F3 安全终态处理，不重入）。"""
         async def _case():
             ex = _make_executor()
             with mock.patch.object(ex, "_list_batch_ids", return_value=[]):
@@ -270,6 +275,22 @@ class TestRunCleanup(unittest.TestCase):
 
         asyncio.run(_case())
 
+    def test_failure_uses_classified_message_not_raw_exception(self):
+        """run() 异常 → _handle_failure 收到分类文案 + error_code，非裸 str(exc)（整改 A1.4）。"""
+        async def _case():
+            ex = _make_executor()
+            with self._patch_run_deps(), mock.patch.object(
+                SessionExecutor, "_handle_failure", new_callable=mock.AsyncMock
+            ) as handle, mock.patch(
+                f"{_MODULE}.execute_research_async",
+                new_callable=mock.AsyncMock,
+                side_effect=TimeoutError("POST https://api.example.com/v1 timed out"),
+            ):
+                await ex.run()
+            handle.assert_awaited_once_with("请求超时，请稍后重试", error_code="MODEL_CALL_ERROR")
+
+        asyncio.run(_case())
+
     def test_cancel_cleans_up(self):
         async def _case():
             ex = _make_executor()
@@ -298,6 +319,28 @@ class TestRunCleanup(unittest.TestCase):
 
 class TestSessionManager(unittest.TestCase):
     """会话注册表：幂等启动 / 并发限流 / 移除幂等 / 启动恢复。"""
+
+    def setUp(self):
+        # B4：recover_unfinished 现附带 chat 审批挂起扫描（真实 DB 查询）。
+        # 本类全 mock 隔离——统一 patch Approval.objects（空结果=不重建会话），
+        # 防 sync_to_async 工作线程打开真实连接泄漏到 teardown（曾致
+        # "test_langchain is being accessed by other users"）。
+        p = mock.patch("Django_xm.apps.approvals.models.Approval.objects")
+        approval_objects = p.start()
+        approval_objects.filter.return_value.order_by.return_value = []
+        self.addCleanup(p.stop)
+        # B4 勘误后 _scan 追加 ChatSession 存在性查询（孤儿审批收编），同上隔离
+        p_chat = mock.patch("Django_xm.apps.chat.models.ChatSession.objects")
+        chat_objects = p_chat.start()
+        chat_objects.filter.return_value.values_list.return_value = []
+        self.addCleanup(p_chat.stop)
+        # C1：start_session 取消竞态防护含真实 DB 查询（ResearchTask.status），
+        # 同上全 mock 隔离（防护专项测试见 test_research_cancel.py）
+        p2 = mock.patch.object(
+            SessionManager, "_is_research_task_cancelled", new_callable=mock.AsyncMock, return_value=False
+        )
+        p2.start()
+        self.addCleanup(p2.stop)
 
     def _make_manager(self, max_concurrency=5):
         return SessionManager(max_concurrency=max_concurrency)
@@ -564,173 +607,6 @@ class TestSessionManager(unittest.TestCase):
         assert ex_b.enforce_suspended_timeout.call_args.args[0] > 0
 
 
-class TestRetrySubagentInjection(unittest.TestCase):
-    """子代理重试指令注入（Task 3）：运行中会话入队 / 协程结束拒绝 / 恢复预注入。"""
-
-    def test_injects_to_running_session(self):
-        """运行中会话：on_retry_subagent 入队成功，指令可被消费。"""
-        async def _case():
-            ex = _make_executor()
-            pending = asyncio.create_task(asyncio.sleep(10))
-            ex._run_task = pending
-            try:
-                ok = ex.on_retry_subagent(
-                    {"agent_path": ["main", "web-researcher"], "tool_call_id": "c1"}
-                )
-                assert ok is True
-                drained = ex._retry_queue.get_nowait()
-                assert drained["tool_call_id"] == "c1"
-                assert ex._retry_queue.empty()
-            finally:
-                pending.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await pending
-
-        asyncio.run(_case())
-
-    def test_rejects_finished_run_task(self):
-        """执行协程已结束：拒绝注入（调用方转入恢复路径）。"""
-        async def _case():
-            ex = _make_executor()
-            done = asyncio.create_task(asyncio.sleep(0))
-            await done
-            ex._run_task = done
-            assert ex.on_retry_subagent({"tool_call_id": "c1"}) is False
-            assert ex._retry_queue.empty()
-
-        asyncio.run(_case())
-
-    def test_rejects_without_run_task(self):
-        """执行协程尚未启动：拒绝注入。"""
-        ex = _make_executor()
-        assert ex.on_retry_subagent({"tool_call_id": "c1"}) is False
-
-    def test_run_pre_injects_retry_instruction(self):
-        """恢复重试场景：params.retry_instruction 在 run() 中预注入队列并挂接 adapter。"""
-        async def _case():
-            ex = _make_executor(
-                params={
-                    "retry_instruction": {
-                        "agent_path": ["main", "web-researcher"],
-                        "tool_call_id": "c1",
-                    }
-                }
-            )
-            agent = mock.Mock()
-            with mock.patch(f"{_MODULE}._update_task_status", new_callable=mock.AsyncMock), mock.patch.object(
-                SessionExecutor, "_publish_status_change", new_callable=mock.AsyncMock
-            ), mock.patch.object(
-                ex, "_build_agent", new_callable=mock.AsyncMock, return_value=agent
-            ), mock.patch.object(ex, "_release_checkpointer", new_callable=mock.AsyncMock), mock.patch.object(
-                ex, "_handle_result", new_callable=mock.AsyncMock
-            ), mock.patch(
-                f"{_MODULE}.execute_research_async", new_callable=mock.AsyncMock, return_value=_result()
-            ):
-                await ex.run()
-            assert agent._retry_instruction_queue is ex._retry_queue
-            drained = ex._retry_queue.get_nowait()
-            assert drained["tool_call_id"] == "c1"
-
-        asyncio.run(_case())
-
-
-class TestSessionManagerRetryRecovery(unittest.TestCase):
-    """重试信令路由：运行中注入 / 无会话恢复 / 已完成任务拒绝。"""
-
-    def _make_manager(self, max_concurrency=5):
-        return SessionManager(max_concurrency=max_concurrency)
-
-    def _make_task(self, status="failed"):
-        return mock.Mock(
-            task_id="t1",
-            query="q",
-            created_by_id=1,
-            session_id=None,
-            enable_web_search=True,
-            enable_doc_analysis=False,
-            knowledge_base_ids=[],
-            use_mcp=False,
-            selected_mcp_servers=[],
-            selected_tools=[],
-            model="gpt-4o",
-            status=status,
-        )
-
-    def test_routes_to_running_executor(self):
-        """运行中会话：重试信令直接路由到执行器注入。"""
-        async def _case():
-            manager = self._make_manager()
-            ex = mock.Mock()
-            ex.on_retry_subagent.return_value = True
-            manager._sessions["t1"] = ex
-            await manager.on_retry_subagent_signal("t1", {"tool_call_id": "c1"})
-            ex.on_retry_subagent.assert_called_once_with({"tool_call_id": "c1"})
-
-        asyncio.run(_case())
-
-    def test_recovers_session_with_retry_instruction(self):
-        """会话不在内存（已结束/服务重启）：从 checkpoint 恢复并预置重试指令。"""
-        async def _case():
-            manager = self._make_manager()
-            task = self._make_task(status="failed")
-            with mock.patch(
-                "Django_xm.services.fastapi_service.session_manager.SessionExecutor"
-            ) as ex_cls, mock.patch(
-                "Django_xm.apps.research.models.ResearchTask.objects.filter"
-            ) as filt:
-                filt.return_value.first.return_value = task
-                await manager.on_retry_subagent_signal("t1", {"tool_call_id": "c1"})
-            assert ex_cls.call_count == 1
-            kwargs = ex_cls.call_args.kwargs
-            assert kwargs["thread_id"] == "t1"
-            assert kwargs["params"]["resume_mode"] is True
-            assert kwargs["params"]["retry_instruction"] == {"tool_call_id": "c1"}
-
-        asyncio.run(_case())
-
-    def test_skips_recovery_for_completed_task(self):
-        """任务已完成：无法重试，不启动恢复会话。"""
-        async def _case():
-            manager = self._make_manager()
-            task = self._make_task(status="completed")
-            with mock.patch(
-                "Django_xm.services.fastapi_service.session_manager.SessionExecutor"
-            ) as ex_cls, mock.patch(
-                "Django_xm.apps.research.models.ResearchTask.objects.filter"
-            ) as filt:
-                filt.return_value.first.return_value = task
-                await manager.on_retry_subagent_signal("t1", {"tool_call_id": "c1"})
-            ex_cls.assert_not_called()
-
-        asyncio.run(_case())
-
-    def test_recovers_after_stale_slot_released(self):
-        """旧会话槽位未释放（协程结束清理竞态）：等待释放后仍完成恢复。"""
-        async def _case():
-            manager = self._make_manager()
-            stale = mock.Mock()
-            stale.on_retry_subagent.return_value = False  # 模拟协程已结束，无法注入
-            manager._sessions["t1"] = stale
-            task = self._make_task(status="failed")
-
-            async def _release():
-                await asyncio.sleep(0.02)
-                manager.remove_session("t1")
-
-            release_task = asyncio.create_task(_release())
-            with mock.patch(
-                "Django_xm.services.fastapi_service.session_manager.SessionExecutor"
-            ) as ex_cls, mock.patch(
-                "Django_xm.apps.research.models.ResearchTask.objects.filter"
-            ) as filt:
-                filt.return_value.first.return_value = task
-                await manager.on_retry_subagent_signal("t1", {"tool_call_id": "c1"})
-            await release_task
-            assert ex_cls.call_count == 1
-
-        asyncio.run(_case())
-
-
 class TestResearchResumeBaseline(unittest.TestCase):
     """服务重启恢复基线：从 ResearchTask 重建子代理状态并注入新建 adapter。
 
@@ -852,6 +728,420 @@ class TestResearchResumeBaseline(unittest.TestCase):
                 },
             ):
                 await ex._inject_research_resume_baseline()  # 不应抛异常
+
+        asyncio.run(_case())
+
+
+class TestResumeModeNoBatchFailSafe(unittest.TestCase):
+    """B5/P2-12：research 恢复无批次 → 安全终态（禁止空 HumanMessage 重入）。"""
+
+    def test_resume_without_batches_fails_safe(self):
+        """恢复模式且无审批批次：_handle_failure 安全终态，绝不重入执行。"""
+        async def _case():
+            ex = _make_executor(params={"resume_mode": True})
+            with TestRunCleanup._patch_run_deps(self), mock.patch.object(
+                SessionExecutor,
+                "_wait_for_initial_batch",
+                new_callable=mock.AsyncMock,
+                return_value={},
+            ), mock.patch.object(
+                SessionExecutor, "_handle_failure", new_callable=mock.AsyncMock
+            ) as handle, mock.patch(
+                f"{_MODULE}.execute_research_async", new_callable=mock.AsyncMock
+            ) as execute:
+                await ex.run()
+            handle.assert_awaited_once_with(
+                "研究任务在服务重启后无法安全恢复（中断点不在审批等待状态），"
+                "任务已终止，请重新发起研究"
+            )
+            execute.assert_not_awaited()
+
+        asyncio.run(_case())
+
+    def test_resume_with_decisions_still_reenters(self):
+        """恢复模式有已决断批次：正常重入执行（守卫不误伤既有恢复路径）。"""
+        async def _case():
+            ex = _make_executor(params={"resume_mode": True})
+            full = {"r1": {"t1": True}}
+            with TestRunCleanup._patch_run_deps(self), mock.patch.object(
+                SessionExecutor,
+                "_wait_for_initial_batch",
+                new_callable=mock.AsyncMock,
+                return_value=full,
+            ), mock.patch.object(
+                SessionExecutor, "_inject_research_resume_baseline", new_callable=mock.AsyncMock
+            ), mock.patch.object(
+                SessionExecutor, "_handle_result", new_callable=mock.AsyncMock
+            ), mock.patch(
+                f"{_MODULE}.execute_research_async",
+                new_callable=mock.AsyncMock,
+                return_value=_result(),
+            ) as execute:
+                await ex.run()
+            execute.assert_awaited_once()
+
+        asyncio.run(_case())
+
+
+class TestRunChatResumeMode(unittest.TestCase):
+    """B4/P2-11：chat 审批挂起跨服务重启恢复（_run_chat 恢复分支）。"""
+
+    def test_resume_with_decisions_reenters(self):
+        """等待批次决断 → Command(resume) 注入 params → 基线注入 → 重入执行链。"""
+        async def _case():
+            ex = _make_executor(params={"resume_mode": True}, session_type="chat")
+            full = {"r1": {"t1": True}}
+            with mock.patch.object(
+                ex,
+                "_wait_for_chat_initial_batch",
+                new_callable=mock.AsyncMock,
+                return_value=full,
+            ), mock.patch.object(
+                ex, "_inject_chat_resume_baseline", new_callable=mock.AsyncMock
+            ) as inject, mock.patch(
+                "Django_xm.services.fastapi_service.chat_executor_core.run_chat_session",
+                new_callable=mock.AsyncMock,
+            ) as run:
+                await ex._run_chat()
+            assert ex.params["resume_command"].resume == full
+            inject.assert_awaited_once()
+            run.assert_awaited_once_with(ex, ex.params)
+
+        asyncio.run(_case())
+
+    def test_resume_without_batch_aborts_with_failure_broadcast(self):
+        """无批次（扫描后行间消失）：广播失败终态，不重入执行链。"""
+        async def _case():
+            ex = _make_executor(params={"resume_mode": True}, message_id="m9", session_type="chat")
+            with mock.patch.object(
+                ex,
+                "_wait_for_chat_initial_batch",
+                new_callable=mock.AsyncMock,
+                return_value={},
+            ), mock.patch(
+                "Django_xm.common.realtime_events.publish_event", new_callable=mock.AsyncMock
+            ) as pub, mock.patch(
+                "Django_xm.services.fastapi_service.chat_executor_core.run_chat_session",
+                new_callable=mock.AsyncMock,
+            ) as run:
+                await ex._run_chat()
+            pub.assert_awaited_once()
+            payload = pub.await_args.args[1]
+            assert payload["source_id"] == "t1"
+            assert payload["message_id"] == "m9"
+            assert payload["data"]["success"] is False
+            assert "恢复失败" in payload["data"]["error"]
+            run.assert_not_awaited()
+
+        asyncio.run(_case())
+
+    def test_resume_stopped_during_wait_broadcasts_stopped_not_failure(self):
+        """E10：恢复等待窗口用户停止 → 广播 stopped 终态（非失败终态）+ 遗留批次收尾，不重入执行链。"""
+        async def _case():
+            ex = _make_executor(params={"resume_mode": True}, message_id="m9", session_type="chat")
+            with mock.patch.object(
+                ex,
+                "_wait_for_chat_initial_batch",
+                new_callable=mock.AsyncMock,
+                return_value=None,
+            ), mock.patch(
+                "Django_xm.common.realtime_events.publish_event", new_callable=mock.AsyncMock
+            ) as pub, mock.patch(
+                f"{_MODULE}.abandon_session_pending_approvals"
+            ) as abandon, mock.patch(
+                "Django_xm.services.fastapi_service.chat_executor_core.run_chat_session",
+                new_callable=mock.AsyncMock,
+            ) as run:
+                await ex._run_chat()
+            pub.assert_awaited_once()
+            payload = pub.await_args.args[1]
+            assert payload["source_id"] == "t1"
+            assert payload["message_id"] == "m9"
+            # 用户主动停止=优雅停止语义（对齐 _finalize_chat_session 停止分支），非失败
+            assert payload["data"]["success"] is True
+            assert payload["data"]["stopped"] is True
+            assert payload["data"]["incomplete"] is False
+            # 遗留 PENDING 批次收尾（TIMEOUT 语义），防 _recover_chat_approvals 复活已停止会话
+            abandon.assert_called_once_with("chat", "t1")
+            run.assert_not_awaited()
+
+        asyncio.run(_case())
+
+    def test_normal_mode_skips_resume_branch(self):
+        """非恢复模式（回归守卫）：不等待批次、不注入 resume_command。"""
+        async def _case():
+            ex = _make_executor(params={}, session_type="chat")
+            with mock.patch(
+                "Django_xm.services.fastapi_service.chat_executor_core.run_chat_session",
+                new_callable=mock.AsyncMock,
+            ) as run:
+                await ex._run_chat()
+            run.assert_awaited_once_with(ex, ex.params)
+            assert "resume_command" not in ex.params
+
+        asyncio.run(_case())
+
+
+class TestChatInitialBatchWait(unittest.TestCase):
+    """B4：_wait_for_chat_initial_batch（chat 版恢复等待，与 research 版同构）。"""
+
+    def test_no_batches_returns_empty(self):
+        async def _case():
+            ex = _make_executor(session_type="chat")
+            with mock.patch.object(ex, "_list_chat_batch_ids", return_value=[]):
+                decisions = await ex._wait_for_chat_initial_batch()
+            assert decisions == {}
+
+        asyncio.run(_case())
+
+    def test_resolved_batch_returns_decisions_and_finalizes(self):
+        async def _case():
+            ex = _make_executor(session_type="chat")
+            full = {"r1": {"t1": True}}
+            fin = mock.Mock()
+            with mock.patch.object(ex, "_list_chat_batch_ids", return_value=["g1"]), mock.patch(
+                f"{_MODULE}.collect_batch_decisions", return_value=(full, True)
+            ), mock.patch(f"{_MODULE}.self_heal_expired_approvals"), mock.patch(
+                f"{_MODULE}.finalize_batch_approvals", fin
+            ):
+                decisions = await ex._wait_for_chat_initial_batch()
+            assert decisions == full
+            fin.assert_called_once_with(full, "chat", "t1")
+
+        asyncio.run(_case())
+
+    def test_list_chat_batch_ids_dedup_newest_first_and_filters(self):
+        """批次 newest-first 去重 + 过滤空批次 ID（DB 查询形状验证）。"""
+        rows = ["g1", "g2", "g1", "", "g2"]
+        qs = mock.Mock()
+        qs.filter.return_value.exclude.return_value.order_by.return_value.values_list.return_value = rows
+        with mock.patch("Django_xm.apps.approvals.models.Approval.objects", qs):
+            ids = SessionExecutor._list_chat_batch_ids("s1")
+        # order_by(-created_at) 最新在前：去重保序后 g1 在前；空 ID 过滤
+        assert ids == ["g1", "g2"]
+
+    def test_stop_before_poll_returns_none_without_db_scan(self):
+        """E10：停止标志先置位 → 首轮循环顶部检查点退出（不做 DB 扫描/决断收集）。"""
+        async def _case():
+            ex = _make_executor(params={"resume_mode": True}, session_type="chat")
+            ex._stop_requested = True
+            with mock.patch.object(ex, "_list_chat_batch_ids") as list_ids, mock.patch(
+                f"{_MODULE}.collect_batch_decisions"
+            ) as collect:
+                result = await ex._wait_for_chat_initial_batch()
+            assert result is None
+            list_ids.assert_not_called()
+            collect.assert_not_called()
+
+        asyncio.run(_case())
+
+    def test_stop_before_event_wait_returns_none(self):
+        """E10：Event 等待前检查点——DB 扫描/自愈期间到达的停止请求立即退出（不进第二轮）。"""
+        async def _case():
+            ex = _make_executor(params={"resume_mode": True}, session_type="chat")
+            calls = {"collect": 0}
+
+            def _fake_collect(source, session_id, gid):
+                calls["collect"] += 1
+                return {}, False
+
+            def _fake_heal(source, session_id, gid):
+                ex._stop_requested = True  # 首轮自愈阶段用户停止
+
+            with mock.patch.object(
+                ex, "_list_chat_batch_ids", return_value=["g1"]
+            ) as list_ids, mock.patch(
+                f"{_MODULE}.collect_batch_decisions", side_effect=_fake_collect
+            ), mock.patch(
+                f"{_MODULE}.self_heal_expired_approvals", side_effect=_fake_heal
+            ), mock.patch(
+                f"{_MODULE}.finalize_batch_approvals"
+            ) as fin:
+                result = await ex._wait_for_chat_initial_batch()
+            assert result is None
+            # 等待前退出：仅首轮扫描（若只有循环顶部检查点，会先等满轮询间隔再进第二轮）
+            assert list_ids.call_count == 1
+            assert calls["collect"] == 1
+            fin.assert_not_called()  # 未决断批次不得被 finalize
+
+        asyncio.run(_case())
+
+    def test_stop_during_event_wait_wakes_and_returns_none(self):
+        """E10：Event 等待期间收到停止请求 → stop() 批量 set 唤醒 → 下轮循环顶部检查退出。"""
+        async def _case():
+            ex = _make_executor(params={"resume_mode": True}, session_type="chat")
+            loop = asyncio.get_running_loop()
+
+            def _stop_later():
+                # 进入 Event 等待后触发真实 stop() 唤醒路径（批量 set 已注册
+                # Event + 置停止标志；finalize_cancel=False：仅验证等待循环的
+                # 停止收敛，不触碰终态化级联）
+                ex.stop(finalize_cancel=False)
+
+            # 首轮扫描（~ms 级）完成后、轮询间隔（5s）内触发
+            loop.call_later(0.2, _stop_later)
+            with mock.patch.object(ex, "_list_chat_batch_ids", return_value=["g1"]), mock.patch(
+                f"{_MODULE}.collect_batch_decisions", return_value=({}, False)
+            ), mock.patch(f"{_MODULE}.self_heal_expired_approvals"):
+                result = await ex._wait_for_chat_initial_batch()
+            assert result is None
+            assert ex.check_stop_requested() is True
+
+        asyncio.run(_case())
+
+    def test_unresolved_batch_polls_until_resolved_without_stop(self):
+        """E10 回归守卫：未停止时轮询行为不变（未决断 → Event 等待超时 → 下轮取到决断）。"""
+        async def _case():
+            ex = _make_executor(params={"resume_mode": True}, session_type="chat")
+            full = {"r1": {"t1": True}}
+            outcomes = [({}, False), (full, True)]
+            with mock.patch.object(ex, "_list_chat_batch_ids", return_value=["g1"]), mock.patch(
+                f"{_MODULE}.collect_batch_decisions", side_effect=lambda *a: outcomes.pop(0)
+            ), mock.patch(f"{_MODULE}.self_heal_expired_approvals"), mock.patch(
+                f"{_MODULE}._BATCH_POLL_INTERVAL", 0.01
+            ), mock.patch(
+                f"{_MODULE}.finalize_batch_approvals"
+            ) as fin:
+                decisions = await ex._wait_for_chat_initial_batch()
+            assert decisions == full
+            fin.assert_called_once_with(full, "chat", "t1")
+
+        asyncio.run(_case())
+
+
+class TestRecoverChatApprovals(unittest.TestCase):
+    """B4：SessionManager._recover_chat_approvals 扫描与重建。"""
+
+    def test_rebuilds_session_from_approval_extra(self):
+        """审批行 → resume_mode payload（session_type=chat + extra 配置展开）。"""
+        async def _case():
+            mgr = SessionManager(max_concurrency=5)
+            rows = [
+                SimpleNamespace(
+                    source_id="sess-1",
+                    user_id=7,
+                    extra={
+                        "graph_interrupt_id": "g1",
+                        "message_id": "42",
+                        "tool_config": {"use_web_search": True},
+                        "model_config": {"model_name": "deepseek-chat"},
+                    },
+                ),
+            ]
+            qs = mock.Mock()
+            qs.filter.return_value.order_by.return_value = rows
+            with mock.patch(
+                "Django_xm.apps.approvals.models.Approval.objects", qs
+            ), mock.patch(
+                "Django_xm.apps.chat.models.ChatSession.objects"
+            ) as chat_objs, mock.patch.object(
+                mgr, "start_session", new_callable=mock.AsyncMock
+            ) as start:
+                chat_objs.filter.return_value.values_list.return_value = ["sess-1"]
+                await mgr._recover_chat_approvals()
+            start.assert_awaited_once()
+            payload = start.await_args.args[0]
+            assert payload["session_type"] == "chat"
+            assert payload["resume_mode"] is True
+            assert payload["thread_id"] == "sess-1"
+            assert payload["session_id"] == "sess-1"
+            assert payload["message_id"] == "42"
+            assert payload["user_id"] == 7
+            assert payload["use_web_search"] is True
+            assert payload["model_name"] == "deepseek-chat"
+            # B4 勘误：恢复 payload 必须满足 chat_service 硬索引契约
+            assert payload["mode"] == "agent"
+            assert payload["message"] == ""
+
+        asyncio.run(_case())
+
+    def test_skips_subagent_rows_empty_batch_and_in_memory_sessions(self):
+        """子代理行/无批次行/内存存活会话均跳过。"""
+        async def _case():
+            mgr = SessionManager(max_concurrency=5)
+            mgr._sessions["sess-live"] = object()
+            rows = [
+                SimpleNamespace(
+                    source_id="sess-sub",
+                    user_id=1,
+                    extra={"subagent_thread_id": "sub-1", "graph_interrupt_id": "g0", "message_id": "1"},
+                ),
+                SimpleNamespace(source_id="sess-live", user_id=1, extra={"graph_interrupt_id": "g1", "message_id": "2"}),
+                SimpleNamespace(source_id="sess-empty", user_id=1, extra={"message_id": "3"}),
+            ]
+            qs = mock.Mock()
+            qs.filter.return_value.order_by.return_value = rows
+            with mock.patch(
+                "Django_xm.apps.approvals.models.Approval.objects", qs
+            ), mock.patch(
+                "Django_xm.apps.chat.models.ChatSession.objects"
+            ) as chat_objs, mock.patch.object(
+                mgr, "start_session", new_callable=mock.AsyncMock
+            ) as start:
+                # sess-live 存活于 DB（否则会被孤儿收编路径移除，绕过内存查重分支）
+                chat_objs.filter.return_value.values_list.return_value = ["sess-live"]
+                await mgr._recover_chat_approvals()
+            start.assert_not_awaited()
+
+        asyncio.run(_case())
+
+    def test_start_session_failure_does_not_block_other_sessions(self):
+        """单个会话重建失败不阻断其余会话恢复。"""
+        async def _case():
+            mgr = SessionManager(max_concurrency=5)
+            rows = [
+                SimpleNamespace(source_id="s-bad", user_id=1, extra={"graph_interrupt_id": "g1", "message_id": "1"}),
+                SimpleNamespace(source_id="s-ok", user_id=1, extra={"graph_interrupt_id": "g2", "message_id": "2"}),
+            ]
+            qs = mock.Mock()
+            qs.filter.return_value.order_by.return_value = rows
+
+            async def _start(payload):
+                if payload["thread_id"] == "s-bad":
+                    raise RuntimeError("boom")
+
+            with mock.patch(
+                "Django_xm.apps.approvals.models.Approval.objects", qs
+            ), mock.patch(
+                "Django_xm.apps.chat.models.ChatSession.objects"
+            ) as chat_objs, mock.patch.object(
+                mgr, "start_session", side_effect=_start
+            ):
+                chat_objs.filter.return_value.values_list.return_value = ["s-bad", "s-ok"]
+                await mgr._recover_chat_approvals()  # 不抛异常
+
+        asyncio.run(_case())
+
+    def test_orphan_session_approvals_abandoned_not_rebuilt(self):
+        """B4 勘误：会话已删除/不存在的孤儿审批 → 扫描期收编（TIMEOUT），不重建执行器。"""
+        async def _case():
+            mgr = SessionManager(max_concurrency=5)
+            rows = [
+                SimpleNamespace(
+                    source_id="sess-ghost",
+                    user_id=1,
+                    extra={"graph_interrupt_id": "g1", "message_id": "1"},
+                ),
+            ]
+            qs = mock.Mock()
+            qs.filter.return_value.order_by.return_value = rows
+            with mock.patch(
+                "Django_xm.apps.approvals.models.Approval.objects", qs
+            ), mock.patch(
+                "Django_xm.apps.chat.models.ChatSession.objects"
+            ) as chat_objs, mock.patch(
+                "Django_xm.apps.approvals.services.approval_batch.abandon_session_pending_approvals"
+            ) as abandon, mock.patch.object(
+                mgr, "start_session", new_callable=mock.AsyncMock
+            ) as start:
+                chat_objs.filter.return_value.values_list.return_value = []  # 会话不存在
+                await mgr._recover_chat_approvals()
+            start.assert_not_awaited()
+            abandon.assert_called_once()
+            from Django_xm.apps.approvals.models import Approval
+
+            assert abandon.call_args.args[0] == Approval.Source.CHAT
+            assert abandon.call_args.args[1] == "sess-ghost"
 
         asyncio.run(_case())
 

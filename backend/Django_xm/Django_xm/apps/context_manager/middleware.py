@@ -82,6 +82,9 @@ class ContextManagerMiddleware(AgentMiddleware):
         )
         self._termination_judge = ContextTerminationJudge(
             model_name=self._model_name,
+            # B1/N-2：注入 hard-stop 交接身份兜底（运行期优先取图 config 的
+            # thread_id，见 termination_judge._resolve_handoff_thread_id）
+            thread_id=thread_id,
         )
         self._user_id = user_id
         self._thread_id = thread_id

@@ -388,9 +388,11 @@ class AgentExecutor:
                 yield fb_event
         except Exception as fallback_err:
             logger.exception(f"无工具回退模式也失败: {type(fallback_err).__name__}")
+            # A1.4：固定可行动文案（异常类名/原文仅进上方日志），F1-1 修复后
+            # 该 error 事件经 WS 广播桥直达用户
             yield {
                 "type": "error",
-                "content": f"模型服务暂时不可用，请稍后重试（{type(fallback_err).__name__}）",
+                "content": "模型服务暂时不可用，请稍后重试或切换模型",
             }
 
     # ========================================================================

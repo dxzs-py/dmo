@@ -85,7 +85,7 @@ class EventType(StrEnum):
     STREAM_CONTENT_UPDATE = "stream_content_update"  # 内容更新（节流后的 chunk）
     # 子代理图层正文/思考更新（按顶层 subagent_thread_id 定向路由，spec D10/MODIFIED）
     STREAM_SUBAGENT_CONTENT = "stream_subagent_content"
-    STREAM_EVENT = "stream_event"  # 流式通用事件（approval/interrupted/model_fallback/research_task_id）
+    STREAM_EVENT = "stream_event"  # 流式通用事件（approval/deep_research/research_task_id/model_fallback/error/retry/timeout_warning，桥经 event_subtype 注入原始子类型）
 
     # === 预算事件（WebSocket 推送，COST-01）===
     # 会话级 Token 硬预算耗尽：执行循环终止本轮生成前发布。

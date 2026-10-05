@@ -8,6 +8,10 @@ import {
   formatToolResult,
   formatToolSummaryLine,
 } from '../../utils/toolAdapters'
+import { useApprovalStore } from '../../stores/approval'
+import { resolveApprovalExpiryMs } from '../../stores/approval/constants'
+import { getInterruptId } from '../../utils/messageOperations'
+import { useApprovalCountdown } from '../../composables/useApprovalCountdown'
 
 const props = defineProps({
   toolName: {
@@ -247,6 +251,39 @@ const isWaitingForSiblingsRejected = computed(() => {
   return isWaitingForSiblings.value && approvalData.value?.approved === false
 })
 
+// ============================================================
+// F3/UX-01：审批剩余时间倒计时（纯展示，无超时副作用）
+// ============================================================
+// 数据源优先级：
+//   1. approval store 条目（key=getInterruptId）的 expiresAt——入队时经
+//      resolveApprovalExpiryMs 解析的后端真实超时点（epoch ms，缺失时已含
+//      createdAt+常量回退，见 stores/approval/constants.js）
+//   2. 回退：toolCall.approval.expiresAt（后端 payload ISO 串）经同一解析器解析
+// 展示条件：审批面板活跃（pending/processing）且非"等待同批"（本工具已决断）；
+// 已超时/终态（approved/rejected/timeout）随面板消失或 isExpired 隐藏。
+// 倒计时仅视觉呈现，到期不触发任何恢复动作（既有超时恢复链路不动）。
+const approvalStore = useApprovalStore()
+const mountedAtMs = Date.now()
+
+const approvalEntry = computed(() => {
+  const interruptId = getInterruptId(approvalData.value)
+  return interruptId ? approvalStore.pendingApprovals.get(interruptId) || null : null
+})
+
+const approvalExpiryMs = computed(() => {
+  if (approvalEntry.value?.expiresAt) return approvalEntry.value.expiresAt
+  return resolveApprovalExpiryMs(approvalData.value?.expiresAt, mountedAtMs)
+})
+
+const isCountdownActive = computed(() => isWaiting.value && !isWaitingForSiblings.value)
+
+const { remainingText, isExpiringSoon, isExpired } = useApprovalCountdown(
+  approvalExpiryMs,
+  isCountdownActive
+)
+
+const showCountdown = computed(() => isCountdownActive.value && !isExpired.value)
+
 // riskLevel 是唯一权威风险等级字段（safe/controlled/high）
 // 双数据源（根因修复）：
 //   1. toolCall.riskLevel（工具事件路径）：后端 publish_tool_call payload 携带 risk_level，
@@ -418,7 +455,18 @@ const summaryLine = computed(() =>
         <div v-if="isWaiting || isWaitingForSiblings" class="approval-panel" :class="{ 'approval-panel--high-risk': isHighRisk }">
           <div class="approval-panel__header">
             <span class="approval-panel__title">审批确认</span>
-            <el-tag size="small" :type="riskLevelTagType" effect="dark">{{ riskLevelLabel }}</el-tag>
+            <div class="approval-panel__header-right">
+              <!-- F3/UX-01：剩余时间倒计时（<60s 红色预警；超时/终态隐藏） -->
+              <span
+                v-if="showCountdown"
+                class="approval-panel__countdown"
+                :class="{ 'approval-panel__countdown--warning': isExpiringSoon }"
+              >
+                <el-icon><Clock /></el-icon>
+                剩余 {{ remainingText }}
+              </span>
+              <el-tag size="small" :type="riskLevelTagType" effect="dark">{{ riskLevelLabel }}</el-tag>
+            </div>
           </div>
           <div v-if="isWaitingForSiblings" class="approval-panel__waiting-hint">
             <el-icon><Clock /></el-icon>
@@ -702,6 +750,31 @@ const summaryLine = computed(() =>
   font-size: 13px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+
+.approval-panel__header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* F3/UX-01：剩余时间倒计时（默认次要色，<60s 红色预警） */
+.approval-panel__countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--el-text-color-secondary);
+}
+
+.approval-panel__countdown .el-icon {
+  font-size: 13px;
+}
+
+.approval-panel__countdown--warning {
+  color: var(--el-color-danger);
+  font-weight: 600;
 }
 
 .approval-panel__desc {

@@ -7,7 +7,6 @@
 - ``start``: 创建/续研会话（Django → 执行服务）
 - ``approval``: 审批决策 确认/拒绝/超时（Django → 执行服务）
 - ``stop``: 终止会话（Django → 执行服务）
-- ``retry-subagent``: 单独重启失败子代理（Django → 执行服务）
 
 ``session_type``（信令 payload 字段）区分会话类型：
 - ``chat``: 聊天 agent 会话（thread_id = chat session_id）
@@ -29,7 +28,6 @@ SIGNAL_PREFIX = "agent"
 SIGNAL_START = "start"
 SIGNAL_APPROVAL = "approval"
 SIGNAL_STOP = "stop"
-SIGNAL_RETRY_SUBAGENT = "retry-subagent"
 
 SESSION_TYPE_CHAT = "chat"
 SESSION_TYPE_RESEARCH = "research"
@@ -63,49 +61,3 @@ def publish_signal(kind: str, thread_id: str, payload: dict) -> None:
         logger.info(f"[SignalBus] 已发布信令: {channel}")
     except Exception:
         logger.exception(f"[SignalBus] 发布信令失败: {channel}")
-
-
-def publish_retry_subagent_signal(
-    thread_id: str,
-    *,
-    agent_path: list[str],
-    tool_call_id: str,
-    agent_name: str = "",
-    original_args: dict | None = None,
-    user_id: int | None = None,
-    chat_session_id: str | None = None,
-) -> None:
-    """
-    # *参数的解释：
-    - 前面的参数：**既可以位置传参，也可以关键字传参**
-    - 后面的所有参数：**强制只能用关键字传参，不能按位置传**
-
-    发布单独重启失败子代理信令（Django → 执行服务）。
-
-    执行服务收到后：会话运行中直接注入重试指令；会话已结束/服务重启恢复态
-    从 checkpoint 恢复会话后注入。主 agent 收到指令后以原始入参重新调用
-    目标子代理，新执行事件归属同一 agentPath 继续展示。
-
-    Args:
-        thread_id: 深度研究任务 ID（= 会话线程 ID）
-        agent_path: 目标子代理完整调用链路（如 ["main", "web-researcher"]）
-        tool_call_id: 失败子代理工具调用 ID
-        agent_name: 目标子代理名称（agent_path 末位元素）
-        original_args: 子代理原始委派入参（主 agent 重新委派时沿用）
-        user_id: 任务归属用户 ID
-        chat_session_id: 关联 chat 会话 ID（聊天深度研究场景）
-    """
-    publish_signal(
-        SIGNAL_RETRY_SUBAGENT,
-        thread_id,
-        {
-            "thread_id": thread_id,
-            "session_type": SESSION_TYPE_RESEARCH,
-            "agent_path": agent_path,
-            "tool_call_id": tool_call_id,
-            "agent_name": agent_name,
-            "original_args": original_args or {},
-            "user_id": user_id,
-            "chat_session_id": chat_session_id,
-        },
-    )

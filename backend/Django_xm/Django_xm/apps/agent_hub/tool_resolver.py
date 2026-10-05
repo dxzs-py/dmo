@@ -4,6 +4,8 @@ import logging
 
 from langchain_core.tools import BaseTool
 
+from Django_xm.apps.agent_hub.config import resolve_agent_type_str
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,10 +19,10 @@ async def resolve_tools(config) -> list[BaseTool]:
     try:
         from Django_xm.apps.ai_engine.capabilities import registry
 
-        capabilities = config.capabilities or registry.get_default_capabilities(_get_agent_type_str(config))
+        capabilities = config.capabilities or registry.get_default_capabilities(resolve_agent_type_str(config))
         if "tool_injection" in capabilities:
             built_tools = await registry.build_tools_for_agent_async(
-                _get_agent_type_str(config),
+                resolve_agent_type_str(config),
                 capabilities,
                 tool_config=config.tool_config,
                 user_id=config.user_id,
@@ -44,13 +46,3 @@ async def resolve_tools(config) -> list[BaseTool]:
             raise
 
     return tools
-
-
-def _get_agent_type_str(config) -> str:
-    type_map = {
-        "base": "base",
-        "rag": "base",
-        "safe_rag": "base",
-        "deep_research": "deep_research",
-    }
-    return type_map.get(config.agent_type.value, "base")

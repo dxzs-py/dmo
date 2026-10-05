@@ -9,6 +9,11 @@ import AiToolbar from '../ai-elements/AiToolbar.vue'
 import { getToolStatusText, getToolStatusTagType } from '../../utils/toolStatusText'
 import { copyToClipboard } from '../../utils/dom'
 
+const emit = defineEmits({
+  // 产物移除：消息数据属主为 session store，本组件只上报意图，不直接变异 props
+  'remove-artifact': (index) => typeof index === 'number' && Number.isInteger(index) && index >= 0,
+})
+
 const props = defineProps({
   message: {
     type: Object,
@@ -196,7 +201,7 @@ watch(() => props.message, () => {
                   >
                     复制
                   </button>
-                  <button class="artifact-close" @click="artifacts.splice(idx, 1)">✕</button>
+                  <button class="artifact-close" title="移除产物" @click="emit('remove-artifact', idx)">✕</button>
                 </div>
               </div>
               <div class="artifact-content">

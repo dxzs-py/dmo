@@ -63,12 +63,17 @@ class ContextTerminationJudge:
         info_gain_window: int | None = None,
         token_budget_limit: int | None = None,
         model_name: str = "",
+        thread_id: str = "",
     ) -> None:
         self._goal_complete_window = goal_complete_window or context_settings.termination_goal_complete_window
         self._info_gain_threshold = info_gain_threshold or context_settings.termination_info_gain_threshold
         self._info_gain_window = info_gain_window or context_settings.termination_info_gain_window
         self._token_budget_limit = token_budget_limit or context_settings.token_budget_limit
         self._model_name = model_name
+        # B1/N-2：hard-stop 交接身份兜底（由 ContextManagerMiddleware 注入
+        # AgentConfig.session_id；运行期优先用图 config 的 thread_id，见
+        # _resolve_handoff_thread_id）
+        self._thread_id = str(thread_id or "")
 
         # 循环检测阈值（从 config 读取，可配置）
         self._warn_threshold: int = context_settings.loop_same_call_warn_threshold
@@ -149,6 +154,35 @@ class ContextTerminationJudge:
                 },
             )
         return None
+
+    def _resolve_handoff_thread_id(self, state: dict[str, Any]) -> str:
+        """hard-stop 交接身份解析（B1/N-2：与 guard.check 侧同源，禁止共享桶）。
+
+        取值优先级：
+        1. langgraph 运行期 config.configurable.thread_id——当前图执行身份，
+           父/子图各自独立（子代理 spawn 的 AgentConfig.session_id 继承父
+           会话，subagent_tools/spawn.py:136，构造注入在子代理图中会与父图
+           同桶，故运行期取值必须优先）；
+        2. 构造期注入（ContextManagerMiddleware._thread_id == chat 会话 ID，
+           与 guard 侧 configurable.thread_id 同源，agent_service.py:40-42）；
+        3. state 显式键（历史兼容）；
+        4. "default"（图外直调兜底）。
+        """
+        try:
+            from langgraph.config import get_config
+
+            runtime_config = get_config() or {}
+            runtime_thread_id = ((runtime_config.get("configurable") or {}) or {}).get("thread_id")
+            if runtime_thread_id:
+                return str(runtime_thread_id)
+        except Exception:
+            pass
+        thread_id = (
+            self._thread_id
+            or state.get("thread_id")
+            or (state.get("configurable") or {}).get("thread_id")
+        )
+        return str(thread_id) if thread_id else "default"
 
     def _check_loop_detected(self, state: dict[str, Any]) -> TerminationVerdict | None:
         messages = state.get("messages", [])
@@ -253,8 +287,8 @@ class ContextTerminationJudge:
                 get_tool_usage_guard,
             )
 
-            thread_id = state.get("thread_id") or state.get("configurable", {}).get("thread_id", "default")
-            if get_tool_usage_guard().is_in_hard_stop_state(str(thread_id)):
+            thread_id = self._resolve_handoff_thread_id(state)
+            if get_tool_usage_guard().is_in_hard_stop_state(thread_id):
                 write_file_calls = [tc for tc in self._recent_tool_calls if tc["name"] == "fs_write_file"]
                 if len(write_file_calls) >= 3:
                     reason = (

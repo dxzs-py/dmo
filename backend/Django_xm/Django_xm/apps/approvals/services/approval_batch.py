@@ -362,6 +362,45 @@ def self_heal_expired_approvals(source: str, source_id: str, graph_interrupt_id:
     return len(expired_ids)
 
 
+def abandon_session_pending_approvals(source: str, source_id: str) -> int:
+    """会话终态收尾：该会话全部遗留 PENDING 审批终态化为 TIMEOUT（不触发恢复信令）。
+
+    B4 配套（P2-11）：会话执行已终态（成功/停止/失败）后，遗留 PENDING 审批
+    无法再被本运行消费 → 终态化，防止审批恢复扫描
+    （SessionManager._recover_chat_approvals）反复重建已死会话。语义为
+    TIMEOUT（用户未决策），非用户主动拒绝；dispatch_resume=False 与
+    self_heal_expired_approvals 同构（无执行器可唤醒）。
+
+    与批次级自愈的区别：不限定 graph_interrupt_id，收编该会话所有批次
+    （含历史遗留的陈旧批次——恢复轮 newest-first 只消费 checkpoint 对应的
+    最新批次，旧批次由本函数兜底收尾）。
+
+    Args:
+        source: 审批来源（``Approval.Source.CHAT`` / ``Approval.Source.DEEP_RESEARCH``）。
+        source_id: 会话/任务 ID（chat=session_id, deep_research=thread_id）。
+
+    Returns:
+        int: 终态化数量
+    """
+    from Django_xm.apps.approvals.services.approval_service import timeout_approval
+
+    stale_ids = list(
+        Approval.objects.filter(
+            source=source,
+            source_id=source_id,
+            state=Approval.State.PENDING,
+        ).values_list("interrupt_id", flat=True)
+    )
+    for interrupt_id in stale_ids:
+        timeout_approval(interrupt_id, dispatch_resume=False)
+    if stale_ids:
+        logger.info(
+            f"[ApprovalBatch] 会话终态收尾终态化 {len(stale_ids)} 条遗留审批: "
+            f"source={source}, source_id={source_id}"
+        )
+    return len(stale_ids)
+
+
 async def await_wait_for_batch_decision(
     executor,
     *,

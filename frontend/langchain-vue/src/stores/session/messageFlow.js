@@ -342,6 +342,27 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
 
   // ==================== 消息删除 ====================
 
+  /**
+   * 删除指定消息中的一个 artifact（右侧详情面板的产物移除）。
+   * artifacts 为纯前端 UI 状态（无后端同步链路），仅修改 store 内消息对象，
+   * 保证单向数据流：组件层只 emit 事件，由消息属主（store）执行删除。
+   * @param {string} sessionId - 会话 ID
+   * @param {string} messageId - 消息 ID
+   * @param {number} index - artifact 下标
+   * @returns {boolean} 是否发生删除
+   */
+  const removeMessageArtifact = (sessionId, messageId, index) => {
+    if (!sessionId || !messageId || !Number.isInteger(index)) return false
+    const located = locateInSessions(sessions.value, sessionId, messageId)
+    if (!located) return false
+    const { message } = located
+    if (!Array.isArray(message.artifacts) || index < 0 || index >= message.artifacts.length) {
+      return false
+    }
+    message.artifacts.splice(index, 1)
+    return true
+  }
+
   const removeMessagesByIds = (sessionId, ids) => {
     if (!sessionId || !Array.isArray(ids) || ids.length === 0) return
     const session = sessions.value.find(s => s.id === sessionId)
@@ -368,6 +389,7 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
     clearCurrentSessionMessages,
     removeMessagePairFromSession,
     updateMessageFieldByBackendId,
+    removeMessageArtifact,
     removeMessagesByIds,
     clearToolSyncTimer,
     clearSyncSignature,

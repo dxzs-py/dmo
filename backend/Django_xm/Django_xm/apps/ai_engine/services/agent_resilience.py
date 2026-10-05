@@ -24,6 +24,20 @@ logger = logging.getLogger(__name__)
 # 配置
 # ============================================================================
 
+# Agent 全局执行超时默认值（B6/P2-13：settings 未配置时的代码级兜底，None→不限
+# 制会让失控执行无界占用执行服务资源）。取值依据（与现网最长相干任务对齐）：
+# - 深度研究单个子代理可运行 10-30min，B6 挂起会话 watchdog 7200s（2h）；
+# - soft=1800s（30min）：覆盖单个长任务的正常上界，超限仅注入 timeout_warning
+#   警告事件（不终止），给上层监控/前端提示；
+# - hard=3600s（60min）：soft 的 2 倍，超限强制终止执行（chat→FALLBACK /
+#   research→_HardTimeoutSignaled / learning→TimeoutError）；
+# - 层叠关系：hard(3600) < watchdog(7200) < Celery 全局 hard(1800s 不同域)，
+#   审批等待已由 pause()/resume() 排除在计时外，不会误杀挂起中的任务。
+# 生产可经 Django settings 覆盖：AGENT_SOFT_TIMEOUT / AGENT_HARD_TIMEOUT
+# （显式设 None 表示不限制，保留禁用语义）。
+DEFAULT_SOFT_TIMEOUT: float = 1800.0
+DEFAULT_HARD_TIMEOUT: float = 3600.0
+
 
 @dataclass
 class ResilienceConfig:
@@ -41,9 +55,10 @@ class ResilienceConfig:
     # 重复工具调用检测：相同 tool_name + 相同 parameters 在窗口内超过阈值时注入提示
     duplicate_tool_call_threshold: int = 3  # 触发阈值（窗口内相同调用次数）
     duplicate_tool_call_window: int = 300  # 检测窗口（秒，默认 5 分钟）
-    # 执行超时
-    soft_timeout: float | None = None  # 警告阈值（秒），None 表示不限制
-    hard_timeout: float | None = None  # 强制终止阈值（秒），None 表示不限制
+    # 执行超时：soft=警告阈值（触发一次 timeout_warning），hard=强制终止阈值
+    # 默认值见 DEFAULT_SOFT_TIMEOUT / DEFAULT_HARD_TIMEOUT 注释（B6/P2-13）
+    soft_timeout: float | None = DEFAULT_SOFT_TIMEOUT
+    hard_timeout: float | None = DEFAULT_HARD_TIMEOUT
 
 
 def get_resilience_config(**overrides) -> ResilienceConfig:
@@ -62,8 +77,8 @@ def get_resilience_config(**overrides) -> ResilienceConfig:
             "retry_backoff_factor": getattr(settings, "AGENT_RETRY_BACKOFF_FACTOR", 2.0),
             "duplicate_tool_call_threshold": getattr(settings, "AGENT_DUPLICATE_TOOL_CALL_THRESHOLD", 3),
             "duplicate_tool_call_window": getattr(settings, "AGENT_DUPLICATE_TOOL_CALL_WINDOW", 300),
-            "soft_timeout": getattr(settings, "AGENT_SOFT_TIMEOUT", None),
-            "hard_timeout": getattr(settings, "AGENT_HARD_TIMEOUT", None),
+            "soft_timeout": getattr(settings, "AGENT_SOFT_TIMEOUT", DEFAULT_SOFT_TIMEOUT),
+            "hard_timeout": getattr(settings, "AGENT_HARD_TIMEOUT", DEFAULT_HARD_TIMEOUT),
         }
     except Exception:
         defaults = {}

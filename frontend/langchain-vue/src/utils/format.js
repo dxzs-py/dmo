@@ -73,6 +73,24 @@ export function formatGB(bytes) {
 }
 
 /**
+ * Token 计数缩写格式化（UI 常态展示用，克制不占空间）
+ * 口径：<1000 原样；<100 万缩写为 k（1 位小数，四舍五入）；≥100 万缩写为 M（1 位小数）
+ * @param {number|string|null} count - token 数量，非数值按 0 处理
+ * @returns {string} 形如 '990' / '1.2k' / '12.3k' / '1.2M'
+ */
+export function formatTokenCount(count) {
+  const n = Number(count) || 0
+  if (n <= 0) return '0'
+  if (n < 1000) return String(n)
+  if (n < 1000000) {
+    const k = Math.round((n / 1000) * 10) / 10
+    return `${k}k`
+  }
+  const m = Math.round((n / 1000000) * 10) / 10
+  return `${m}M`
+}
+
+/**
  * 按文件类型后缀返回图标字符
  * @param {string} type - 文件类型/后缀名
  * @returns {string} emoji 图标，未知类型返回 '📎'

@@ -33,6 +33,7 @@ def broadcast_stream_completed(
     success: bool,
     final_report: str = "",
     error: str = "",
+    error_code: str = "",
     message_id: str | None = None,
     user_id: int | None = None,
     content: str = "",
@@ -60,6 +61,7 @@ def broadcast_stream_completed(
         success: 是否成功
         final_report: 最终报告内容（成功时，可能为空字符串）
         error: 错误信息（失败时）
+        error_code: 分类错误码（失败时与 error 同透，空字符串不透传）
         message_id: 关联的 ChatMessage ID（可选，用于前端精确定位消息）
     """
     payload = {
@@ -72,6 +74,10 @@ def broadcast_stream_completed(
     }
     if error:
         payload["error"] = error
+    # 分类错误码（整改 A1.4）：失败时与 error 文案同透，对齐 chat 链失败终态
+    # payload 结构（error + error_code），供前端按错误码做差异化处理
+    if error_code:
+        payload["error_code"] = error_code
     if message_id:
         payload["message_id"] = message_id
     # 主 agent 累计正文（过程信息权威源，对齐 ChatMessage.content）：
@@ -156,7 +162,13 @@ def broadcast_stream_reasoning(
 
 
 def _publish_stream_reasoning(session_id, task_id, message_id, content):
-    """实际发布 stream_reasoning 事件（不节流）。"""
+    """实际发布 stream_reasoning 事件（不节流）。
+
+    persist_history=False（E9/P2-8 对齐 chat 链 D2）：中间态推理快照仅实时
+    广播不入回放历史 List——payload 为累积全量（前端覆盖语义），晚订阅浏览器
+    经下一条实时快照收敛；重连回放的推理终态恢复权威源为 ChatMessage.reasoning
+    （完成时 writeback_to_chat_message 落库 + message_updated 广播，正常入历史）。
+    """
     payload = {
         "source": EventSource.DEEP_RESEARCH,
         "source_id": session_id,
@@ -172,6 +184,7 @@ def _publish_stream_reasoning(session_id, task_id, message_id, content):
             payload,
             session_id=session_id,
             task_id=task_id,
+            persist_history=False,
         )
     except PayloadValidationError:
         logger.debug(
@@ -227,7 +240,14 @@ def broadcast_stream_content(
 
 
 def _publish_stream_content(session_id, task_id, message_id, content):
-    """实际发布 stream_content_update 事件（不节流）。"""
+    """实际发布 stream_content_update 事件（不节流）。
+
+    persist_history=False（E9/P2-8 对齐 chat 链 D2）：正文快照仅实时广播不入
+    回放历史 List——每频道历史席位（LTRIM 500 条）留给 tool_call/approval/
+    status_change 等关键事件。payload 为累积全量（前端覆盖语义），晚订阅浏览器
+    经下一条实时快照收敛；重连回放的正文终态恢复权威源为 stream_completed
+    （payload 携带最终全量 content）与 message_updated（落库快照），均正常入历史。
+    """
     payload = {
         "source": EventSource.DEEP_RESEARCH,
         "source_id": session_id or task_id,
@@ -243,6 +263,7 @@ def _publish_stream_content(session_id, task_id, message_id, content):
             payload,
             session_id=session_id or None,
             task_id=task_id,
+            persist_history=False,
         )
     except PayloadValidationError:
         logger.debug(

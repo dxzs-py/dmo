@@ -527,6 +527,9 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[
         k=top_k,
         reload_vector_store=lambda: manager.load_index(user_index_name, embeddings),
         required_dim=required_dim,
+        # C1/KV-2：pgvector 原生返回 cosine distance，归一为相似度语义后再返回
+        # （score 字段此前是距离，前端"相关度"展示语义反转；归一后越大越相关）
+        score_semantics="distance" if manager.get_store_type(user_index_name) == "pgvector" else "similarity",
     )
 
     search_results = []

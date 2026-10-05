@@ -1,6 +1,6 @@
 import { logger } from '@/utils/logger'
 import { StreamState } from '@/types'
-import { ElNotification } from 'element-plus'
+import { ElMessage, ElNotification } from 'element-plus'
 import { findMessageById, resolveStreamTargetMessage } from '@/utils/messageOperations'
 import { getSession, getCurrentVersion } from './helpers'
 import { finalizeToolCallsForResearchResult } from './messageIntegrity'
@@ -239,6 +239,21 @@ export const createStreamStateHandlers = (ctx) => {
           })
           .catch(() => {})
       }
+    } else if (eventType === 'error') {
+      // A1.5（审计 F1-1）：流内 error 事件（后端 stream_broadcast 白名单已放行，
+      // data 规范化为 {code, message}，对齐 WS error 帧规范）。标记消息 ERROR
+      // 终态并落错误文案——弹窗提示由 stream_completed 失败终态统一负责（防双提示），
+      // 此处保证 error 事件到达而终态广播缺失（连接中断等）时用户仍能看到失败。
+      const errorMsg = data?.message || data?.content || '执行失败，请稍后重试'
+      message.streamState = StreamState.ERROR
+      message.isStreaming = false
+      if (!(message.content || '').trim()) {
+        message.content = `执行失败：${errorMsg}`
+      }
+      logger.warn(
+        `[Sync] 流内错误事件: session=${sessionId}, message=${message.id}, ` +
+        `code=${data?.code || 'unknown'}, message=${errorMsg}`
+      )
     }
     if (seq) message._lastStreamEventSeq = seq
     logger.debug(`[Sync] stream_event 通用事件: eventType=${eventType}, seq=${seq}`)
@@ -539,6 +554,30 @@ export const createStreamStateHandlers = (ctx) => {
       }
     }
     // === 深度研究结果处理结束 ===
+
+    // A1.5（审计 F1-1）：chat 执行失败终态（后端 chat_executor_core 异常分支 /
+    // session_executor 恢复失败分支广播 success=false + error + errorCode，
+    // 与 research 链失败语义对齐）。任何浏览器统一处理：失败语义优先于本地
+    // 收尾流程（本地可能已误置 SYNCING/STREAMING），标记 ERROR 终态 + 弹提示。
+    // 深度研究回写失败（payload.taskId + finalized=true）已在上方分支处理并 return。
+    const completionData = payload.data || {}
+    if (completionData.success === false && completionData.error) {
+      const failTarget = resolveStreamTargetMessage(session, payload.messageId)
+      if (failTarget) {
+        if (!(failTarget.content || '').trim()) {
+          failTarget.content = `执行失败：${completionData.error}`
+        }
+        failTarget.isStreaming = false
+        failTarget.streamState = StreamState.ERROR
+      }
+      ElMessage.error(completionData.error)
+      logger.warn(
+        `[Sync] 流式失败终态: session=${sessionId}, ` +
+        `message=${payload.messageId || '(兜底)'}, ` +
+        `code=${completionData.errorCode || 'unknown'}, error=${completionData.error}`
+      )
+      return
+    }
 
     const messageId = payload.messageId
     // 定位收敛（spec 组 5）：精确按 messageId，兜底末条 assistant（原内联展开等价迁移）

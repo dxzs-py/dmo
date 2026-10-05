@@ -4,6 +4,7 @@ import { FolderOpened, Hide, View, Cpu, Search, MagicStick } from '@element-plus
 import ModelSelector from '../common/ModelSelector.vue'
 import { useSessionStore } from '../../stores/session'
 import { useModelStore } from '../../stores/model'
+import { formatTokenCount } from '../../utils/format'
 import { ElMessage } from 'element-plus'
 
 const props = defineProps({
@@ -106,6 +107,31 @@ const connectionLabel = computed(() => {
   return map[props.connectionStatus] || ''
 })
 
+// 会话累计 Token（F1 会话级可见性）：由前端既有消息数据聚合，零后端改动。
+// 每条 assistant 消息的 tokenCount（后端每轮终态写入的本轮用量）求和即会话累计；
+// 流式刚结束、全量同步未完成的当前轮以 context.usedTokens 兜底（同为"本轮"口径，
+// tokenCount 优先防双计）。无消息或全为 0 时隐藏。
+const sessionTokensTotal = computed(() => {
+  const sessionId = sessionStore.currentSessionId
+  if (!sessionId) return 0
+  const session = sessionStore.sessions.find(s => s.id === sessionId)
+  const messages = session?.messages
+  if (!Array.isArray(messages)) return 0
+  let total = 0
+  for (const msg of messages) {
+    const count = Number(msg?.tokenCount)
+    if (Number.isFinite(count) && count > 0) {
+      total += count
+      continue
+    }
+    const contextUsed = Number(msg?.context?.usedTokens)
+    if (Number.isFinite(contextUsed) && contextUsed > 0) {
+      total += contextUsed
+    }
+  }
+  return total
+})
+
 function handleModeChange(mode) {
   emit('update:currentMode', mode)
   const cfg = getModeConfig(mode)
@@ -132,6 +158,14 @@ function handleModeChange(mode) {
       >
         <span class="connection-dot"></span>
         <span class="connection-text">{{ connectionLabel }}</span>
+      </div>
+      <!-- 会话累计 Token 徽标（F1）：常态弱化展示，hover 显示精确值 -->
+      <div
+        v-if="sessionTokensTotal > 0"
+        class="token-usage-chip"
+        :title="`当前会话累计消耗 ${sessionTokensTotal} tokens`"
+      >
+        <span>会话累计 {{ formatTokenCount(sessionTokensTotal) }} tokens</span>
       </div>
     </div>
     <div class="header-right">
@@ -409,6 +443,18 @@ function handleModeChange(mode) {
   animation: pulse-dot 2s ease-in-out infinite;
 }
 
+.token-usage-chip {
+  display: flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: var(--el-fill-color-lighter);
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+  user-select: none;
+}
+
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(1.3); }
@@ -510,6 +556,10 @@ function handleModeChange(mode) {
   }
 
   .connection-text {
+    display: none;
+  }
+
+  .token-usage-chip {
     display: none;
   }
 

@@ -20,6 +20,7 @@ export const RESEARCH_TASK_STATUS_TEXT = {
   [ResearchTaskStatus.RUNNING]: '执行中',
   [ResearchTaskStatus.COMPLETED]: '已完成',
   [ResearchTaskStatus.FAILED]: '失败',
+  [ResearchTaskStatus.CANCELLED]: '已取消',
 }
 
 /** 深度研究任务状态 → Element Plus tag type */
@@ -29,6 +30,7 @@ export const RESEARCH_TASK_STATUS_TAG_TYPE = {
   [ResearchTaskStatus.RUNNING]: 'warning',
   [ResearchTaskStatus.COMPLETED]: 'success',
   [ResearchTaskStatus.FAILED]: 'danger',
+  [ResearchTaskStatus.CANCELLED]: 'info',
 }
 
 /** 学习工作流阶段 → 中文文案 */

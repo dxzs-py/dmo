@@ -11,12 +11,19 @@ from typing import Any, ClassVar
 from django.core.cache import cache as redis_cache
 from django.utils import timezone
 
-from ..models import ResearchTask
+from ..models import ResearchTask, ResearchTaskStatus
 
 logger = logging.getLogger(__name__)
 
 _REDIS_CACHE_TTL = 5
 _REDIS_CACHE_KEY_PREFIX = "research:task_status"
+
+# 可取消状态集（C1/P2-1）：仅活跃态可取消；终态（completed/failed/cancelled）拒绝。
+CANCELLABLE_STATUSES = (
+    ResearchTaskStatus.PENDING,
+    ResearchTaskStatus.RUNNING,
+    ResearchTaskStatus.AWAITING_APPROVAL,
+)
 
 
 class TaskManager:
@@ -173,6 +180,42 @@ class TaskManager:
 
         return task_data
 
+    def cancel_task_if_active(
+        self, task_id: str, error_message: str = "用户已取消该研究任务"
+    ) -> bool:
+        """条件终态化：仅当任务仍处于可取消状态时原子写入 CANCELLED（C1/P2-1）。
+
+        取消终态化的唯一 DB 写入口（执行器级联与信令兜底共用），条件 UPDATE 在
+        DB 层消除双写竞争：
+        - 与完成/失败终态竞争（用户在任务完成瞬间点取消）→ 已终态则 0 行命中，
+          返回 False，调用方跳过取消级联，不覆盖既有终态；
+        - 迟到的执行器状态写回（取消后 start 信令竞态复活）由
+          SessionManager.start_session 的取消防护拦截，不经过本方法。
+
+        Returns:
+            True 表示本次写入 CANCELLED 成功（调用方继续级联清理与广播）；
+            False 表示任务已终态/不存在/软删除（无需任何动作）。
+        """
+        updated = ResearchTask.objects.filter(
+            task_id=task_id,
+            status__in=CANCELLABLE_STATUSES,
+            is_deleted=False,
+        ).update(
+            status=ResearchTaskStatus.CANCELLED,
+            error_message=str(error_message)[:5000],
+            updated_at=timezone.now(),
+        )
+        if not updated:
+            return False
+
+        task = ResearchTask.objects.filter(task_id=task_id).only("created_by_id").first()
+        if task is not None:
+            self._invalidate_redis_cache(task_id, task.created_by_id)
+        if task_id in self._cache:
+            self._cache[task_id].update({"status": ResearchTaskStatus.CANCELLED})
+        logger.info(f"研究任务已取消终态化: {task_id}")
+        return True
+
     def delete_task(self, task_id: str, user_id: int | None = None) -> bool:
         """
         软删除研究任务
@@ -222,3 +265,8 @@ def get_task_status(task_id: str, user_id: int | None = None) -> dict[str, Any] 
 
 def update_task_status(task_id: str, status: dict[str, Any], user_id: int | None = None) -> None:
     get_task_manager().update_task_status(task_id, status, user_id=user_id)
+
+
+def cancel_task_if_active(task_id: str, error_message: str = "用户已取消该研究任务") -> bool:
+    """条件终态化取消活跃任务（C1/P2-1，语义见 TaskManager.cancel_task_if_active）。"""
+    return get_task_manager().cancel_task_if_active(task_id, error_message)

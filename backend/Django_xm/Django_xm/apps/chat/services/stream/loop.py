@@ -100,12 +100,33 @@ def _summarize_kb_result(tool_name: str, result: Any) -> Any:
     return result
 
 
+def _resolve_guard_thread_id(config: dict | None, session_id: str | None) -> str:
+    """解析 ToolUsageGuard 身份键（B1/审计 F4+N-2：原硬编码 "default" 跨会话共享）。
+
+    取值优先级：config.configurable.thread_id（langgraph 会话身份）→
+    session_id（chat 会话 ID）→ "default"（无会话上下文兜底）。
+
+    同源契约：chat 链 build_thread_config（agent_service.py:40-42）保证
+    configurable.thread_id == session_id == AgentConfig.session_id ==
+    ContextManagerMiddleware._thread_id，guard.check 侧与 termination_judge
+    的 hard-stop 交接（termination_judge._resolve_handoff_thread_id）因此
+    落在同一身份桶，且不同会话互不串味。
+    """
+    thread_id = ((config or {}).get("configurable") or {}).get("thread_id") or session_id
+    return str(thread_id) if thread_id else "default"
+
+
 def _evaluate_tool_usage_guard(
     tool_name: str,
     tool_id: str,
     parameters: dict | None,
+    thread_id: str,
 ) -> tuple[list[dict], bool]:
     """ToolUsageGuard 检查（唯一实现，从 stream_chunk_processors 迁移）。
+
+    thread_id：guard 身份键（B1/F4——dedup/循环窗口/hard-stop 计数按会话
+    隔离，调用方经 _resolve_guard_thread_id 传入真实会话身份，禁止硬编码
+    共享桶）。
 
     返回 ``(events, skip_publish)``：
     - events: 需产出的事件列表（tool_usage_dedup / tool_usage_blocked / 软警告）
@@ -123,7 +144,7 @@ def _evaluate_tool_usage_guard(
             decision = get_tool_usage_guard().check(
                 tool_name=tool_name,
                 args=parameters,
-                thread_id="default",  # 流式上下文不直接拿 thread_id，使用 default
+                thread_id=thread_id,
             )
         else:
             decision = ToolUsageDecision(
@@ -202,6 +223,9 @@ async def run_stream_loop(
         duplicate_detector: 重复工具调用检测器（None 表示不检测）。
     """
     session_id = data.get("session_id", "")
+    # B1/F4：guard 身份桶按会话隔离（原 thread_id="default" 使全部会话共享
+    # 去重/循环窗口，会话 A 的重试会计入会话 B 的循环判定）
+    guard_thread_id = _resolve_guard_thread_id(config, session_id)
     message_id = str(data.get("_assistant_message_id") or data.get("message_id", ""))
     # 统一工具条目容器（主/子代理共享，data["_tool_entries"] 由
     # chat_service._init_subagent_stream_state 创建）；发布编排聚合落库此容器。
@@ -321,7 +345,9 @@ async def run_stream_loop(
                 # 调用计数（诊断）
                 _count_tool_call(tool_name, ctx.tool_call_count)
                 # ToolUsageGuard：命中 dedup/block 时产出事件并跳过发布
-                guard_events, skip_publish = _evaluate_tool_usage_guard(tool_name, tool_call_id, parameters)
+                guard_events, skip_publish = _evaluate_tool_usage_guard(
+                    tool_name, tool_call_id, parameters, guard_thread_id
+                )
                 for guard_event in guard_events:
                     replacement = strategy.handle_special_event(guard_event, ctx)
                     if replacement is None:

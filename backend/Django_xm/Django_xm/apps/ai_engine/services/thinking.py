@@ -46,9 +46,13 @@ def extract_thinking_content(chunk) -> str | None:
 def is_thinking_enabled(special_params: dict[str, Any], provider_id: str = "") -> bool:
     """通用判断深度思考是否启用，兼容 DeepSeek/Ollama/Anthropic 等多 Provider。
 
-    - DeepSeek: thinking={"type": "enabled"} 或 reasoning_effort 存在
+    - DeepSeek: thinking={"type": "enabled"}
     - Ollama: thinking=True 或 reasoning=True
     - Anthropic: thinking={"type": "enabled", "budget_tokens": N}
+
+    注意：reasoning_effort 单独存在不代表 thinking 已启用（E1d）——与
+    _apply_special_params 的剥离逻辑保持同一语义（reasoning_effort 无 thinking
+    时会被移除，见 llm_factory.py），否则 DeepSeek 结构化输出会误走 JsonMode。
     """
     if not special_params:
         return False
@@ -61,8 +65,5 @@ def is_thinking_enabled(special_params: dict[str, Any], provider_id: str = "") -
         # Ollama 格式: True
         if isinstance(thinking_val, bool) and thinking_val:
             return True
-    # DeepSeek 特有：reasoning_effort 存在时 thinking 自动启用
-    if "reasoning_effort" in special_params:
-        return True
     # Ollama 特有：reasoning 参数
     return bool(special_params.get("reasoning"))

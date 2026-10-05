@@ -48,7 +48,11 @@ export function useDeepResearchPolling({
   let elapsedTimer = null
   let pollCount = 0
 
-  const isTerminalStatus = (s) => s === ResearchTaskStatus.COMPLETED || s === ResearchTaskStatus.FAILED
+  // 任务终态判定（C1/P2-1）：cancelled 为用户取消终态，同样终止轮询与用时计时
+  const isTerminalStatus = (s) =>
+    s === ResearchTaskStatus.COMPLETED
+    || s === ResearchTaskStatus.FAILED
+    || s === ResearchTaskStatus.CANCELLED
 
   /**
    * 单轮域逻辑：次数上限 / 状态拉取写入 / 终态处理 / 节奏微调。

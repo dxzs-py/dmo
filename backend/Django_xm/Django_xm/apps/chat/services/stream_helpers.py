@@ -40,6 +40,7 @@ __all__ = [
     "extract_thinking_content",
     "merge_existing_approval_fields",
     "process_stream_chunk",
+    "sync_usage_tracker_model",
     "update_usage_and_tokens",
 ]
 
@@ -68,6 +69,26 @@ def build_context_info(usage_tracker, token_detail_tracker, stream_start_time=No
     if stream_start_time is not None:
         context_info["response_time"] = round(time.time() - stream_start_time, 2)
     return context_info
+
+
+def sync_usage_tracker_model(usage_tracker, fallback_info: Any) -> None:
+    """模型降级后将 usage_tracker.model_id 同步为实际执行模型（审计 F2-1）
+
+    chat 链对齐 research 链语义（token_counter._current_model 记实际模型）：
+    model_fallback 事件产生时前端已把模型选择器同步为 actual，而 context 事件
+    （build_context_info）与 ChatMessage.model 落库（_update_last_message_tokens）
+    均读取 usage_tracker.model_id——三个 model_fallback 产生点必须先调用本函数，
+    保证 DB 记录与用户所见一致。
+
+    Args:
+        usage_tracker: UsageTracker 实例（context_info / ChatMessage.model 数据源）
+        fallback_info: model_fallback 事件 data（含 actual_model），None/空安全
+    """
+    if not fallback_info:
+        return
+    actual_model = str(fallback_info.get("actual_model") or "").strip()
+    if actual_model:
+        usage_tracker.model_id = actual_model
 
 
 def update_usage_and_tokens(cb, usage_tracker, token_detail_tracker=None):

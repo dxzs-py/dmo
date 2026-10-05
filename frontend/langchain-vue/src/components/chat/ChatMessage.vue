@@ -14,7 +14,7 @@ import AiControls from '../ai-elements/AiControls.vue'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { logger } from '../../utils/logger'
-import { formatFileSize, getFileIcon } from '../../utils/format'
+import { formatFileSize, getFileIcon, formatTokenCount } from '../../utils/format'
 import { isApprovalDisabled } from '../../utils/approvalGate'
 import { buildSubagentsFromMessage } from '../../utils/subagentAggregation'
 import { filterMainToolCalls } from '../../utils/inlineContent'
@@ -182,6 +182,23 @@ const hasMetadata = computed(() => {
 })
 
 const sourceCount = computed(() => props.message.sources?.length || 0)
+
+// 本轮 Token 用量（F1 消息级可见性）。数据源实测：
+// - 权威：message.tokenCount（后端每轮终态写入 ChatMessage.token_count=本轮用量，
+//   经会话接口序列化 + toCamelCase 映射，sessionTransformers transformBackendMessageToFrontend）
+// - 兜底：message.context.usedTokens（流式结束 stream_context 事件的本轮用量，
+//   全量同步前即可用）；两者同为"本轮"口径，tokenCount 优先防双计
+// 无数据（user 消息 / 旧数据 / 流式中尚未结束）时为 0，footer 不显示
+const messageTokenTotal = computed(() => {
+  if (props.message.role !== 'assistant') return 0
+  const count = Number(props.message.tokenCount)
+  if (Number.isFinite(count) && count > 0) return count
+  const contextUsed = Number(props.message.context?.usedTokens)
+  if (Number.isFinite(contextUsed) && contextUsed > 0) return contextUsed
+  return 0
+})
+
+const showTokenUsage = computed(() => messageTokenTotal.value > 0)
 
 const formattedTime = computed(() => {
   if (!props.message.timestamp) return ''
@@ -464,6 +481,15 @@ function handleBranchChange(versionIndex) {
         </div>
       </div>
 
+      <!-- 本轮 Token 用量徽标（F1）：常态弱化展示，hover 显示精确值 -->
+      <div
+        v-if="showTokenUsage"
+        class="message-token-usage"
+        :title="`本轮消耗 ${messageTokenTotal} tokens`"
+      >
+        <span>本轮 {{ formatTokenCount(messageTokenTotal) }} tokens</span>
+      </div>
+
       <div v-if="message.images && message.images.length > 0" class="message-images">
         <AiImage
           v-for="(img, imgIdx) in message.images"
@@ -579,10 +605,10 @@ function handleBranchChange(versionIndex) {
             <span class="debug-label">模型:</span>
             <span class="debug-value">{{ message.model }}</span>
           </div>
-          <div v-if="message.tokenUsage" class="debug-field">
+          <div v-if="messageTokenTotal > 0 || message.tokenDetail" class="debug-field">
             <span class="debug-label">Token 用量:</span>
             <span class="debug-value">
-              输入 {{ message.tokenUsage.promptTokens || 0 }} / 输出 {{ message.tokenUsage.completionTokens || 0 }} / 总计 {{ message.tokenUsage.totalTokens || 0 }}
+              输入 {{ message.tokenDetail?.llm?.input || 0 }} / 输出 {{ message.tokenDetail?.llm?.output || 0 }} / 总计 {{ messageTokenTotal || 0 }}
             </span>
           </div>
           <div v-if="message.context" class="debug-field">
@@ -898,6 +924,19 @@ function handleBranchChange(versionIndex) {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
+}
+
+.message-token-usage {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--el-fill-color-lighter, rgba(0, 0, 0, 0.04));
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.5;
+  user-select: none;
 }
 
 .source-badge {

@@ -104,12 +104,20 @@ class TokenDetailTracker:
             self._current_record.input_tokens += usage_meta["input_tokens"]
         if "output_tokens" in usage_meta:
             self._current_record.output_tokens += usage_meta["output_tokens"]
-        if "reasoning_tokens" in usage_meta:
-            self._current_record.reasoning_tokens += usage_meta["reasoning_tokens"]
-        if "cached_tokens" in usage_meta:
-            self._current_record.cached_input_tokens += usage_meta["cached_tokens"]
-        if "cache_creation_input_tokens" in usage_meta:
-            self._current_record.cache_creation_tokens += usage_meta["cache_creation_input_tokens"]
+
+        # C-D3：标准 usage_metadata 的明细位于 input/output_token_details 子字典
+        # （OpenAI o 系 reasoning → output_token_details.reasoning；缓存命中/创建 →
+        # input_token_details.cache_read/cache_creation）。此前读取顶层
+        # reasoning_tokens/cached_tokens/cache_creation_input_tokens——标准结构中
+        # 不存在这些键，分层明细恒 0。
+        input_details = usage_meta.get("input_token_details") or {}
+        output_details = usage_meta.get("output_token_details") or {}
+        reasoning = output_details.get("reasoning") or input_details.get("reasoning") or 0
+        cached = input_details.get("cache_read") or 0
+        cache_creation = input_details.get("cache_creation") or 0
+        self._current_record.reasoning_tokens += reasoning
+        self._current_record.cached_input_tokens += cached
+        self._current_record.cache_creation_tokens += cache_creation
 
         if model and self._current_record.model != model:
             self._current_record.model = model

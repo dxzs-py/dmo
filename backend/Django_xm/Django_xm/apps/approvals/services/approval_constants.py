@@ -23,5 +23,9 @@ APPROVAL_PENDING_PREFIX = "approval:pending:"
 # Redis key 前缀（按 interrupt_id 索引 processed 最终状态）
 APPROVAL_PROCESSED_PREFIX = "approval:processed:"
 
-# TTL：30 分钟，与前端 APPROVAL_EXPIRY_MS 一致
+# TTL：30 分钟（B6/PF-08 注释修正：此为 Redis key 存活期，非审批判定超时。
+# 审批判定超时为 300s，见 approval_service.APPROVAL_TIMEOUT_SECONDS（与前端
+# APPROVAL_EXPIRY_MS=5min 对齐）；两者语义不同，勿混同。当前 Redis 侧
+# persist_* 写入暂无读侧消费者（审计 B-013 在档），30min 存活期为未来
+# 读侧（如审批历史补偿查询）预留的兜底窗口。
 APPROVAL_TTL = 1800

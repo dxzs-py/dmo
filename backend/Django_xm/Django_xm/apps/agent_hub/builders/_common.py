@@ -1,3 +1,12 @@
+"""Builder 公共设施（build 超时包装 / 通用 agent kwargs / 动态 prompt 共享链路）。
+
+跨 app 依赖标注（审计 arch §1.3 C6，E8 收编）：本模块同时依赖
+- ai_engine（``config.settings`` 模块级导入；``prompts.system_prompts`` 函数内延迟导入）
+- context_manager（``services.manager.create_context_manager`` 函数内延迟导入）
+均为对方公开 API，且 agent_hub → ai_engine / context_manager 为既定分层方向
+（.importlinter 禁止的是反向：ai_engine → agent_hub、ai_engine → research 等）。
+"""
+
 from __future__ import annotations
 
 import asyncio

@@ -43,42 +43,62 @@ _DOC_ID_NAMESPACE = uuid.UUID("a3e5b8c1-2d4f-4e6b-9c8d-7a1b2c3d4e5f")
 
 
 class _TTLCache:
-    """带 TTL 的 LRU 缓存"""
+    """带 TTL 的 LRU 缓存
 
-    def __init__(self, maxsize=32, ttl=1800):
+    Args:
+        maxsize: 最大条目数（LRU 逐出）
+        ttl: 过期秒数
+        on_evict: 逐出回调 ``(key, value) -> None``——过期/LRU 逐出/remove 时
+            在锁外调用（C3/KV-3：PGVector engine 连接池释放；dispose 耗时，
+            不得在持锁状态执行）。**clear() 不触发回调**——快照由调用方经
+            ``IndexManager.clear_cache()`` 负责释放，避免双重 dispose。
+    """
+
+    def __init__(self, maxsize=32, ttl=1800, on_evict=None):
         self._cache: OrderedDict = OrderedDict()
         self._timestamps: dict[str, float] = {}
         self._maxsize = maxsize
         self._ttl = ttl
         self._lock = threading.Lock()
+        self._on_evict = on_evict
 
     def get(self, key: str):
+        evicted = []
         with self._lock:
             if key in self._cache:
                 if time.time() - self._timestamps[key] > self._ttl:
-                    self._cache.pop(key)
-                    self._timestamps.pop(key)
-                    return None
-                self._cache.move_to_end(key)
-                return self._cache[key]
+                    evicted.append((key, self._cache.pop(key)))
+                    self._timestamps.pop(key, None)
+                else:
+                    self._cache.move_to_end(key)
+                    return self._cache[key]
+        self._run_evict(evicted)
         return None
 
     def set(self, key: str, value):
+        evicted = []
         with self._lock:
             self._cache[key] = value
             self._timestamps[key] = time.time()
             self._cache.move_to_end(key)
             while len(self._cache) > self._maxsize:
                 oldest = next(iter(self._cache))
-                self._cache.pop(oldest)
-                self._timestamps.pop(oldest)
+                evicted.append((oldest, self._cache.pop(oldest)))
+                self._timestamps.pop(oldest, None)
+        self._run_evict(evicted)
 
     def remove(self, key: str):
+        evicted = []
         with self._lock:
-            self._cache.pop(key, None)
+            value = self._cache.pop(key, None)
             self._timestamps.pop(key, None)
+            if value is not None:
+                evicted.append((key, value))
+        self._run_evict(evicted)
 
     def clear(self):
+        """清空全部条目。**不触发 on_evict**——快照释放由调用方负责
+        （见 IndexManager.clear_cache 契约）。"""
         with self._lock:
             self._cache.clear()
             self._timestamps.clear()
@@ -88,6 +108,16 @@ class _TTLCache:
         with self._lock:
             now = time.time()
             return [v for k, v in self._cache.items() if now - self._timestamps[k] <= self._ttl]
+
+    def _run_evict(self, evicted: list) -> None:
+        """锁外执行逐出回调（回调可能是耗时 IO，如 dispose 连接池）。"""
+        if not evicted or self._on_evict is None:
+            return
+        for key, value in evicted:
+            try:
+                self._on_evict(key, value)
+            except Exception:
+                logger.exception(f"TTL 缓存逐出回调异常: key={key}")
 
 
 # ==================== Backend 工厂辅助 ====================
@@ -122,16 +152,29 @@ def _create_backend(store_type: str) -> VectorStoreBackend:
 # ==================== IndexManager (Facade) ====================
 
 
+def _on_store_evict(key: str, value) -> None:
+    """缓存逐出回调（C3/KV-3）：释放被逐出 VectorStore 的 engine 连接池。
+
+    此前 TTL 过期/LRU 逐出直接丢弃 value，PGVector 的 SQLAlchemy engine
+    连接池不释放 → 每次缓存轮换泄漏一池连接（上限约 480 连接/进程）。
+    """
+    from Django_xm.apps.knowledge.vector_store import dispose_vector_stores
+
+    disposed = dispose_vector_stores([value])
+    if disposed:
+        logger.debug(f"已释放被逐出 VectorStore 的 engine 连接池: key={key}")
+
+
 class IndexManager:
     """索引管理器 - Facade 模式
 
     委托给：
     - VectorStoreBackend: 向量存储 CRUD（通过 VectorStoreRegistry 获取）
     - IndexMetadata: 元数据数据库管理
-    - _TTLCache: 带 TTL 的 LRU 缓存
+    - _TTLCache: 带 TTL 的 LRU 缓存（逐出时自动释放 engine 连接池）
     """
 
-    _cache = _TTLCache(maxsize=32, ttl=1800)
+    _cache = _TTLCache(maxsize=32, ttl=1800, on_evict=_on_store_evict)
 
     def __init__(self, base_path: str | None = None):
         self.base_path = Path(base_path or settings.vector_store_path)

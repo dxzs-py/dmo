@@ -178,14 +178,9 @@ class PGVectorBackend(VectorStoreBackend):
                 from Django_xm.apps.knowledge.services.index_service import IndexManager
 
                 # 通过公开 API 取快照并清空（不再直接操作 IndexManager._cache 私有属性）
-                for cached_vs in IndexManager.clear_cache():
-                    # ⚠️ `_engine` 是 LangChain PGVector 的内部属性，无公开释放接口；
-                    # 库升级后可能改名。届时需改为官方 API 或重建 client。
-                    if hasattr(cached_vs, "_engine") and cached_vs._engine:
-                        try:
-                            cached_vs._engine.dispose()
-                        except Exception:  # noqa: S110  # cleanup, 单个 engine 释放失败不影响其他
-                            pass
+                from Django_xm.apps.knowledge.vector_store import dispose_vector_stores
+
+                dispose_vector_stores(IndexManager.clear_cache())
                 # 统一重置 PGVector 缓存（clear metadata + 重置 _classes + 按新维度重建）
                 # 修复旧代码"只 clear metadata 不清 _classes"导致维度调整后仍返回旧类的缓存不一致
                 from Django_xm.apps.knowledge.vector_store.pgvector_runtime import (

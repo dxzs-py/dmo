@@ -34,6 +34,7 @@ _MODULE = "Django_xm.services.fastapi_service.session_executor"
 
 def _make_executor(thread_id="t1", **kw):
     manager = mock.Mock()
+    # E7：session_type 分派域子类（chat → ChatSessionExecutor）
     return SessionExecutor(
         manager,
         thread_id=thread_id,
@@ -42,6 +43,7 @@ def _make_executor(thread_id="t1", **kw):
         session_id=kw.get("session_id", "s1"),
         message_id=kw.get("message_id", "m1"),
         params=kw.get("params", {}),
+        session_type=kw.get("session_type", "research"),
     )
 
 
@@ -146,7 +148,7 @@ class TestHandleSuspend(unittest.TestCase):
     def test_chat_wait_suspend_clears_stale_results(self):
         """chat 模式业务等待挂起同样清空残留（与 research 版 _handle_suspend 同构）。"""
         async def _case():
-            ex = _make_executor()
+            ex = _make_executor(session_type="chat")
             ex._pending_subagent_results = {"sub1": {"status": "completed", "result": "old"}}
             runtime = mock.Mock()
             runtime.get_instance = mock.AsyncMock(return_value=SimpleNamespace(status="running"))

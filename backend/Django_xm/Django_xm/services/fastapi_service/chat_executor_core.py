@@ -89,6 +89,10 @@ async def run_chat_session(executor, params: dict) -> None:
     # 避免 content 从空重建导致历史段被覆盖 / position 注入为 0）。
     _resume_content = params.get("resume_content") or ""
     content_state: dict = {"content": _resume_content, "last_broadcast": 0.0}
+    # reasoning 节流状态容器（D2/P2-8）：时间窗合流器由 publish_stream_event
+    # 惰性创建挂在本 dict 的 "throttle" 键下；与 content_state 同生命周期
+    # （单次执行协程一份，业务等待恢复轮新建协程时重置窗口）。
+    reasoning_state: dict = {}
     # 引用透传给 chat_service 子代理回调：子代理工具/正文事件聚合时实时落库
     # （挂起落库发生在子代理执行前，若仅靠挂起/结束落库，子代理正文与图层字段
     # 中途丢失，恢复轮从 DB 读不到基线 → 刷新后子代理卡归集失败/正文错位）。
@@ -108,6 +112,7 @@ async def run_chat_session(executor, params: dict) -> None:
                 message_id=int(message_id) if message_id else None,
                 content_state=content_state,
                 subagent_contents=data.get("_subagent_contents") or None,
+                reasoning_state=reasoning_state,
             )
         except Exception as e:
             logger.warning(f"[ChatExec] 广播事件失败: {e}")
@@ -127,6 +132,10 @@ async def run_chat_session(executor, params: dict) -> None:
     stopped = False
     is_regenerate = bool(params.get("regenerate"))
     wait_suspend = None
+    # 失败终态信息（A1.3）：异常分支置位，finally 分支化广播。
+    # None = 成功/停止路径（data 与历史结构一致）；dict = 失败路径，
+    # 携带 {code, message}（分类错误码 + 用户可行动中文文案）。
+    execution_error: dict | None = None
     try:
         wait_suspend = await chat_service.run_agent_session(
             data,
@@ -147,8 +156,14 @@ async def run_chat_session(executor, params: dict) -> None:
         # 优雅停止（Task 9）：保留已输出内容 + checkpoint，标记 stopped/incomplete 广播
         logger.info(f"[ChatExec] chat 会话被用户停止: session={session_id}")
         stopped = True
-    except Exception:
+    except Exception as exc:
+        # A1.3（审计 F1-1）：失败必须对用户可见。分类映射为错误码 + 可行动文案
+        # （原始异常仅进日志，不透出 str(exc)），finally 广播 success=False 终态。
         logger.exception(f"[ChatExec] chat 会话执行异常: session={session_id}")
+        from Django_xm.apps.ai_engine.services.exceptions import build_user_facing_error
+
+        error_code, user_message = build_user_facing_error(exc)
+        execution_error = {"code": error_code, "message": user_message}
         # spec D6：重新生成启动即失败（无任何输出内容）→ 回滚归档空版本并广播
         # MESSAGE_REGENERATE_REVERTED（前端 handleMessageRegenerateReverted 镜像恢复）。
         # 仅失败路径回滚：用户停止（CancelledError，走 incomplete 广播）与已有
@@ -164,17 +179,50 @@ async def run_chat_session(executor, params: dict) -> None:
                     exc_info=True,
                 )
     finally:
+        # D2/P2-8：reasoning 时间窗尾部强制冲刷（最终态红线）。窗口内未广播的
+        # 推理快照在流收尾（成功/停止/失败/挂起）必须送达；flush 幂等，空
+        # pending 为 no-op。try/except 不阻断收尾主流程。
+        try:
+            _throttle = reasoning_state.get("throttle")
+            if _throttle is not None:
+                await _throttle.flush()
+        except Exception:
+            logger.debug(
+                f"[ChatExec] reasoning 节流窗口冲刷失败（不阻断收尾）: session={session_id}",
+                exc_info=True,
+            )
         # 挂起态不 finalize（会话未结束）：不落库终态、不广播 stream_completed、
         # 不释放 checkpointer（graph 恢复时从 checkpoint 续跑）
         if wait_suspend is None and not executor._suspended:
             # 落库 content + tool_calls 终态，并广播 stream_completed（前端最终化）
             # 重生成中断（regenerate 模式）广播 incomplete（禁止固化为主版本），
-            # 普通发送停止广播 stopped（允许固化）——与前端 _streamKind 语义对齐
+            # 普通发送停止广播 stopped（允许固化）——与前端 _streamKind 语义对齐；
+            # 失败路径（execution_error 非空）广播 success=False + error/error_code
+            # （A1.3：不再恒 success=True 假成功）
             await _finalize_chat_session(
                 chat_service, data, content_state, session_id, message_id,
                 stopped=stopped,
                 incomplete=(stopped and is_regenerate),
+                error_info=execution_error,
             )
+            # B4 配套：会话执行已终态（成功/停止/失败），遗留 PENDING 审批批次
+            # 无法再被本运行消费 → 终态化（TIMEOUT 语义，不触发恢复信令），
+            # 防止审批恢复扫描（SessionManager._recover_chat_approvals）反复
+            # 重建已死会话。挂起路径不收尾：会话仍存活，批次仍待决策/待消费。
+            try:
+                from Django_xm.apps.approvals.models import Approval
+                from Django_xm.apps.approvals.services.approval_batch import (
+                    abandon_session_pending_approvals,
+                )
+
+                await sync_to_async(abandon_session_pending_approvals)(
+                    Approval.Source.CHAT, session_id
+                )
+            except Exception:
+                logger.warning(
+                    f"[ChatExec] 终态收尾审批批次失败（不阻断）: session={session_id}",
+                    exc_info=True,
+                )
             try:
                 from Django_xm.apps.ai_engine.services.checkpointer_factory import release_async_checkpointer
 
@@ -191,6 +239,7 @@ async def _finalize_chat_session(
     message_id,
     stopped: bool = False,
     incomplete: bool = False,
+    error_info: dict | None = None,
 ) -> None:
     """执行结束后落库 content/tool_calls 并广播 stream_completed。
 
@@ -202,6 +251,10 @@ async def _finalize_chat_session(
             前端据此保留已输出内容并标记 stopped 状态（普通发送停止允许固化）。
         incomplete: 是否重生成中断（Task 9）。重生成模式下用户停止产出的
             半成品版本标记 incomplete，禁止固化为本轮主消息。
+        error_info: 失败终态信息（A1.3）。None = 成功/停止路径（data 与历史
+            结构一致：{success: True, stopped, incomplete}）；非 None 时广播
+            success=False + error（用户可行动文案）+ error_code（分类错误码），
+            与 research 链 _handle_failure 的失败语义对齐（审计 F1-1/F1-3）。
     """
     if not session_id or not message_id:
         return
@@ -222,10 +275,20 @@ async def _finalize_chat_session(
         logger.warning(f"[ChatExec] 落库失败: session={session_id}", exc_info=True)
 
     # 广播 stream_completed（触发/非触发浏览器统一最终化）；
-    # 用户停止时携带 stopped/incomplete 标记（Task 9），前端据此标记对应状态
+    # 用户停止时携带 stopped/incomplete 标记（Task 9），前端据此标记对应状态；
+    # 失败时携带 success=False + error/error_code（A1.3），前端标记 ERROR 终态
     try:
         from Django_xm.common.event_schema import EventSource, EventType
         from Django_xm.common.realtime_events import publish_event
+
+        completion_data: dict = {
+            "success": error_info is None,
+            "stopped": stopped,
+            "incomplete": incomplete,
+        }
+        if error_info:
+            completion_data["error"] = error_info.get("message", "")
+            completion_data["error_code"] = error_info.get("code", "")
 
         await publish_event(
             EventType.STREAM_COMPLETED,
@@ -233,7 +296,7 @@ async def _finalize_chat_session(
                 "source": EventSource.CHAT,
                 "source_id": session_id,
                 "message_id": str(message_id) if message_id else None,
-                "data": {"success": True, "stopped": stopped, "incomplete": incomplete},
+                "data": completion_data,
             },
             session_id=session_id,
         )

@@ -4,6 +4,7 @@
 支持在聊天中通过 /command 执行特殊操作
 """
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -301,6 +302,24 @@ def execute_command(
     command_name: str,
     context: dict[str, Any],
 ) -> dict[str, Any]:
+    """同步纯分发器：查注册表 → 前置校验 → 执行 handler。
+
+    注意（E11/P2-7）：handler 含阻塞路径，本函数**不得在事件循环上直接调用**，
+    异步调用方一律走 :func:`aexecute_command`。阻塞路径逐命令评估：
+
+    - ``/compact``（重）：``build_structured_context`` 内 ``_ensure_store``（store
+      懒加载连接）+ ``store.search``（store IO）+ 跨会话逐条相关性评分的同步
+      ``embed_query``（远程 API，``query=""`` 不跳过——``get_injection_context``
+      两个分支仅以 ``user_id`` 为闸）；超预算压缩路径 ``prune_by_relevance`` 每
+      条消息再 2 次同步 ``embed_query``（最多 2N 次串行远程调用）。
+    - ``/model``（轻中）：``get_model_string``（SystemConfig DB 读）+ 带参分支
+      ``get_model_registry``（首次 DB 读，模块级缓存后续纯内存）。
+    - ``/help`` ``/status`` ``/clear`` ``/export`` ``/version``（轻）：纯 CPU /
+      常量，无 IO。
+
+    统一经 ``aexecute_command`` 调度后轻命令随重命令一并移出循环，
+    避免逐命令维护"是否需要调度"的判定面。
+    """
     command = COMMANDS.get(command_name)
     if not command:
         available = ", ".join(f"`/{name}`" for name in sorted(COMMANDS.keys()))
@@ -317,8 +336,31 @@ def execute_command(
         result = command.handler(context)
         return result
     except Exception as e:
+        # A1.4（审计 F1-4）：固定可行动文案，异常原文仅进日志（此前 f"{e!s}"
+        # 裸透出；F1-1 修复后 error 事件会直达用户，需一并收敛）
         logger.exception(f"执行命令 /{command_name} 失败")
-        return {"type": "error", "content": f"❌ 命令执行失败: {e!s}"}
+        return {"type": "error", "content": "❌ 命令执行失败，请稍后重试"}
+
+
+async def aexecute_command(
+    command_name: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """execute_command 的异步调度变体（E11/P2-7，同 D1 aapply_context_engineering 模式）。
+
+    斜杠命令链（/compact → build_structured_context 含同步 store 检索与
+    同步 embed_query 远程调用）此前在 FastAPI 执行服务事件循环上同步执行，
+    命中时同循环其他会话执行/WS 广播全部停摆。经 asyncio.to_thread 移入
+    工作线程执行：仅改调度不改编排，输入输出与同步版本完全一致。
+
+    线程安全依据：execute_command 为纯分发（COMMANDS 只读注册表、context 为
+    调用方本地 dict）；各 handler 均为同步代码——regex/纯 CPU、同步 ORM
+    （Django 连接线程局部，to_thread 默认线程池线程复用随之复用）、同步
+    store/同步 embedding，无 asyncio API、无事件循环绑定对象、无请求作用域外
+    共享可变状态（registry_service._registry_cache 单次 dict 赋值 GIL 原子，
+    竞态最坏重复一次 DB 读，无害）。
+    """
+    return await asyncio.to_thread(execute_command, command_name, context)
 
 
 def get_all_commands() -> list[dict[str, Any]]:

@@ -69,11 +69,16 @@ class UsageTracker:
         if "output_tokens" in usage_meta:
             self.add_output_tokens(usage_meta["output_tokens"])
 
-        if "reasoning_tokens" in usage_meta:
-            self.add_reasoning_tokens(usage_meta["reasoning_tokens"])
-
-        if "cached_tokens" in usage_meta:
-            self.add_cached_tokens(usage_meta["cached_tokens"])
+        # C-D3：标准 usage_metadata 的明细位于 input/output_token_details 子字典
+        # （此前读取顶层 reasoning_tokens/cached_tokens——标准结构中不存在，恒 0）。
+        input_details = usage_meta.get("input_token_details") or {}
+        output_details = usage_meta.get("output_token_details") or {}
+        reasoning = output_details.get("reasoning") or input_details.get("reasoning") or 0
+        cached = input_details.get("cache_read") or 0
+        if reasoning:
+            self.add_reasoning_tokens(reasoning)
+        if cached:
+            self.add_cached_tokens(cached)
 
     def get_total_tokens(self) -> int:
         """获取总 token 数"""

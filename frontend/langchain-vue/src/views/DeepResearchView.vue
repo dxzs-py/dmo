@@ -114,13 +114,14 @@
         :task="task"
         :main-content="taskContent"
         :progress-message="progressMessage"
-        :progress-percentage="progressPercentage"
+        :elapsed-seconds="elapsedSeconds"
         :tool-calls="taskToolCalls"
         :subagent-contents="taskSubagentContents"
         :doc-analysis-file="docAnalysisFile"
         :doc-analysis-content="docAnalysisContent"
         :doc-analysis-loading="docAnalysisLoading"
         :reasoning="reasoning"
+        :cancel-loading="cancelTaskLoading"
         @back="showTaskDetail = false"
         @view-task="viewTask"
         @open-continue-dialog="openContinueDialog"
@@ -128,6 +129,7 @@
         @load-doc-analysis="loadDocAnalysis"
         @approve="handleApprove"
         @reject="handleReject"
+        @cancel="handleCancelTask"
       />
 
       <el-card v-else class="task-list-card">
@@ -210,6 +212,7 @@ import { useSessionStore } from '../stores/session'
 import { useApprovalStore } from '../stores/approval'
 import { useResearchStore } from '../stores/research'
 import { formatFileSize, getQueryParam } from '../utils/format'
+import { confirmAction } from '../utils/dialog'
 import { logger } from '../utils/logger'
 import { getInterruptId } from '../utils/messageOperations'
 import { useApiTask } from '@/composables/useApiTask'
@@ -349,20 +352,6 @@ const {
     checkDocAnalysisFile()
     autoLoadDocAnalysis()
   },
-})
-
-const progressPercentage = computed(() => {
-  if (!task.value) return 0
-  if (task.value.status === ResearchTaskStatus.COMPLETED) return 100
-  if (task.value.status === ResearchTaskStatus.FAILED) return 0
-  if (task.value.status === ResearchTaskStatus.AWAITING_APPROVAL) return 50
-  if (task.value.status === ResearchTaskStatus.PENDING) return 10
-  if (task.value.status === ResearchTaskStatus.RUNNING) {
-    const maxSeconds = 600
-    const pct = Math.min(90, 10 + (elapsedSeconds.value / maxSeconds) * 80)
-    return Math.round(pct)
-  }
-  return 0
 })
 
 const researchForm = reactive({
@@ -575,7 +564,11 @@ const handleSSEEvent = (sseData) => {
         researchStore.setTaskStatus(currentTaskId.value, updateData)
         progressMessage.value = sseData.message || ''
       }
-      if (sseData.status === ResearchTaskStatus.COMPLETED || sseData.status === ResearchTaskStatus.FAILED) {
+      if (
+        sseData.status === ResearchTaskStatus.COMPLETED
+        || sseData.status === ResearchTaskStatus.FAILED
+        || sseData.status === ResearchTaskStatus.CANCELLED
+      ) {
         closeSSE()
         stopElapsedTimer()
         // 主动获取完整任务数据，确保 final_report、files 等字段不丢失
@@ -703,6 +696,44 @@ const deleteTask = () => {
   currentTaskId.value = null
   showTaskDetail.value = false
   checkDocAnalysisFile()
+}
+
+// 取消研究任务（C1/P2-1）：确认后发布取消请求，后端执行服务异步终态化。
+// 状态不在此处乐观写入——由既有 status_change 实时通道同步为已取消
+// （所有浏览器一致）；详情页保持打开，已产出的部分成果照常展示。
+const {
+  run: runCancelTask,
+  loading: cancelTaskLoading,
+} = useApiTask(
+  async (taskId) => {
+    await deepResearchAPI.cancelTask(taskId)
+    return taskId
+  },
+  {
+    showErrorToast: false,
+    onSuccess: () => {
+      ElMessage.success('取消请求已发送，任务即将终止')
+    },
+    onError: (error) => {
+      logger.error('取消研究任务失败:', error)
+      const detail = error.response?.data?.data || error.response?.data?.message
+      ElMessage.error(detail || '取消研究任务失败，请稍后重试')
+    },
+  }
+)
+
+const handleCancelTask = async (taskData) => {
+  const taskId = taskData?.taskId
+  if (!taskId) return
+  try {
+    await confirmAction(`确定要取消研究任务"${taskId}"吗？已产出的部分成果将保留，任务不可恢复继续执行。`, {
+      confirmButtonText: '取消任务',
+      type: 'warning',
+    })
+  } catch {
+    return // 用户点"返回"关闭确认框
+  }
+  await runCancelTask(taskId)
 }
 
 // 打开续研对话框（表单初始化由 ContinueResearchDialog 在 visible 切换时自行完成）

@@ -324,8 +324,8 @@ class ToolUsageGuard:
     按 thread_id 隔离状态：
     - _file_cache: (thread, path) -> (content_hash, timestamp)         [fs_write_file 专用]
     - _resource_cache: (thread, tool, resource_key) -> (payload_hash, ts)  [通用]
-    - _resource_recent: (thread, tool, resource_key) -> Deque[(ts, payload_hash)]  [通用 loop]
-    - _path_recent_contents: (thread, path) -> Deque[(ts, content)]    [fs_write_file diff]
+    - _resource_recent: (thread, tool, resource_key) -> Deque[(ts, payload_hash)]  [通用 loop，尝试历史：含 DEDUP/BLOCK 被拦调用，支撑 BLOCK 升级链]
+    - _path_recent_contents: (thread, path) -> Deque[(ts, content)]    [fs_write_file diff，只记真实执行的写入（E1b）]
     - _consecutive_blocked: thread -> int
 
     速率窗口（_rate_windows）已随 ARCH-12 限流收敛移除，频率限制由
@@ -427,13 +427,20 @@ class ToolUsageGuard:
             if fs_loop is not None:
                 return fs_loop
 
-        # 5. 通过：记录调用
+        # 5. 通过：记录调用（窗口/缓存统一在此写入；E1b 起被拦调用不入窗）
+        fs_path = None
+        fs_content = None
+        if tool_name == "fs_write_file":
+            fs_path = args.get("relative_path") or args.get("path")
+            fs_content = args.get("content")
         self._record_call(
             thread_id,
             tool_name,
             now,
             resource_key=resource_key,
             payload=payload,
+            path=fs_path,
+            content=fs_content,
         )
         return ToolUsageDecision(status=ToolUsageStatus.ALLOW)
 
@@ -504,6 +511,16 @@ class ToolUsageGuard:
     ) -> ToolUsageDecision | None:
         """通用资源循环检测：同 resource_key 累计调用 ≥ same_resource_max
         且最近 3 次 payload_hash 全部相同 → BLOCK（"无进展"循环）
+
+        窗口语义（E1b 裁决）：_resource_recent 记录**尝试历史**（所有到达
+        guard 的调用，含 DEDUP/BLOCK 被拦调用）——"连续 N 次尝试同 payload"
+        本身就是无进展证据，且 BLOCK 后原样重试必须继续 BLOCK 并推动
+        _consecutive_blocked 升级（termination_judge 的 hard-stop 契约，
+        消费方 termination_judge.py:257）。若被拦调用不入窗，同 payload
+        重试永远只命中 DEDUP，凑不齐 same_resource_max，hard-stop 机制失效。
+        合法重试（payload 变化）不命中本判定，ALLOW 后经 _record_call
+        复位 _consecutive_blocked——误杀根因在 fs diff 阈值失真（见
+        _text_diff_ratio 的 E1b 修正），不在此处。
         """
         key = (thread_id, tool_name, resource_key)
         payload_hash = self._content_hash(payload or "")
@@ -571,6 +588,10 @@ class ToolUsageGuard:
 
         在通用 fingerprint dedup 之外，fs_write_file 仍做更严格的
         "内容增量 < 5% 视为打磨循环" 检测。
+
+        只读判定（E1b）：本次写入以 pending 形式参与 diff，不在此处入窗——
+        窗口（_path_recent_contents）只记录真正执行的写入（ALLOW 后由
+        _record_call 统一写入），被拦写入不再污染 diff 证据。
         """
         path = args.get("relative_path") or args.get("path")
         content = args.get("content")
@@ -579,22 +600,25 @@ class ToolUsageGuard:
 
         key = (thread_id, path)
         with self._lock:
-            recent = self._path_recent_contents.setdefault(key, deque())
-            recent.append((now, content))
+            recent = self._path_recent_contents.get(key)
+            if recent is None:
+                return None
             cutoff = now - self.dedup_window_seconds
             while recent and recent[0][0] < cutoff:
                 recent.popleft()
-            call_count = len(recent)
+            call_count = len(recent) + 1  # + pending 本次
 
         if call_count < self.same_path_max:
             return None
 
-        recent_contents = [c for _, c in list(recent)[-3:]]
-        if len(recent_contents) < 2:
+        # 相邻 diff：窗口末 2 次 + pending 本次（1~2 个相邻对）
+        prev_contents = [c for _, c in list(recent)[-2:]]
+        if len(prev_contents) < 1:
             return None
+        contents = prev_contents + [content]
         diffs = []
-        for i in range(1, len(recent_contents)):
-            d = self._text_diff_ratio(recent_contents[i - 1], recent_contents[i])
+        for i in range(1, len(contents)):
+            d = self._text_diff_ratio(contents[i - 1], contents[i])
             diffs.append(d)
         if not diffs:
             return None
@@ -652,7 +676,12 @@ class ToolUsageGuard:
         path: str | None = None,  # 兼容旧调用
         content: str | None = None,  # 兼容旧调用
     ) -> None:
-        """记录一次成功调用（写入通用资源缓存 + 文件缓存）
+        """记录一次真正执行的调用（ALLOW 路径统一入口）
+
+        写入：consecutive_blocked 复位 + fs 循环窗口（_path_recent_contents，
+        E1b 起只记真实执行的写入）+ 通用资源缓存 + fs 专用文件缓存。
+        general 尝试窗口（_resource_recent）由 _check_general_resource_loop
+        维护（含被拦调用，见其 docstring 的 E1b 裁决）。
 
         ARCH-12：不再写入速率窗口（频率限制由 RateLimitMiddleware 承担）。
 
@@ -663,7 +692,20 @@ class ToolUsageGuard:
             # 连续成功时重置 consecutive_blocked 计数
             self._consecutive_blocked[thread_id] = 0
 
-        # 新版：通用资源缓存（所有工具，包括 fs_write_file）
+            # fs 循环窗口：只记真实执行的写入（E1b）——BLOCK/DEDUP 的写入
+            # 不留 diff 证据；general 窗口（_resource_recent）由
+            # _check_general_resource_loop 按尝试历史维护，不在此重复写入。
+            if tool_name == "fs_write_file":
+                p = path or resource_key
+                c = content or payload
+                if p is not None and c is not None:
+                    fs_window = self._path_recent_contents.setdefault((thread_id, p), deque())
+                    fs_window.append((now, c))
+                    cutoff = now - self.dedup_window_seconds
+                    while fs_window and fs_window[0][0] < cutoff:
+                        fs_window.popleft()
+
+        # 通用资源缓存（所有工具，包括 fs_write_file）
         # fs_write_file 同时写入两份：_resource_cache（让通用 dedup 工作）+ _file_cache（让 diff_ratio 工作）
         if resource_key:
             cache_key = (thread_id, tool_name, resource_key)
@@ -682,10 +724,14 @@ class ToolUsageGuard:
 
     @staticmethod
     def _text_diff_ratio(a: str, b: str) -> float:
-        """简单字符级 diff 比例：返回 (a-b 增量) / max(len(a), len(b))
+        """字符级 diff 变化比例：非匹配字符数（双侧和）/ max(len(a), len(b))
 
-        0 表示完全相同，1 表示完全不同。
-        使用 difflib 快速估算，避免 O(n²) 长字符串比较。
+        0 表示完全相同；纯追加/删除场景上界为 1；等长完全替换（双侧计法）
+        上界为 2。使用 difflib 快速估算，避免 O(n²) 长字符串比较。
+
+        分母语义（E1b 修正）：原实现除以 2*base，使实际拦截阈值膨胀约一倍
+        （标称 5% 实际 ~10%），fs 追加场景的合法小步写入被误判打磨循环；
+        现按 docstring 标称取 max(len(a), len(b))。
         """
         if not a and not b:
             return 0.0
@@ -706,7 +752,7 @@ class ToolUsageGuard:
             if tag != "equal":
                 diff_chars += (i2 - i1) + (j2 - j1)
         base = max(len(a), len(b))
-        return diff_chars / (2 * base) if base else 0.0
+        return diff_chars / base if base else 0.0
 
 
 # ============== 全局单例 ==============

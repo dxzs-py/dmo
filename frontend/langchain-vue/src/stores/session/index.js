@@ -90,6 +90,7 @@ export const useSessionStore = defineStore('session', () => {
     clearCurrentSessionMessages: messageFlow.clearCurrentSessionMessages,
     removeMessagePairFromSession: messageFlow.removeMessagePairFromSession,
     updateMessageFieldByBackendId: messageFlow.updateMessageFieldByBackendId,
+    removeMessageArtifact: messageFlow.removeMessageArtifact,
     removeMessagesByIds: messageFlow.removeMessagesByIds,
     clearToolSyncTimer: messageFlow.clearToolSyncTimer,
 

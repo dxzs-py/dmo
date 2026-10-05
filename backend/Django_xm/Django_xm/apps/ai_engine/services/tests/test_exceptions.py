@@ -66,5 +66,66 @@ class LCAgentExceptionContractTests(unittest.TestCase):
         )
 
 
+class BuildUserFacingErrorTests(unittest.TestCase):
+    """build_user_facing_error 异常→(error_code, 用户文案) 映射（整改 A1.4）。
+
+    消费方：chat_executor_core 失败终态广播 + session_executor research 失败
+    处理。锁定映射源唯一（classify_exception 体系），文案必须中文可行动、
+    不含异常原文。
+    """
+
+    def test_timeout_maps_to_model_call_error_with_actionable_message(self):
+        from Django_xm.apps.ai_engine.services.exceptions import build_user_facing_error
+
+        error_code, user_message = build_user_facing_error(TimeoutError("request timed out"))
+        self.assertEqual(error_code, "MODEL_CALL_ERROR")
+        self.assertEqual(user_message, "请求超时，请稍后重试")
+
+    def test_connection_error_maps_to_actionable_message(self):
+        from Django_xm.apps.ai_engine.services.exceptions import build_user_facing_error
+
+        error_code, user_message = build_user_facing_error(ConnectionError("connection reset"))
+        self.assertEqual(error_code, "MODEL_CALL_ERROR")
+        self.assertEqual(user_message, "网络连接失败，请检查网络后重试")
+
+    def test_openai_402_maps_to_payment_message(self):
+        """openai 402（余额不足）→ 余额文案（审计错误映射表 #3 场景）。"""
+        import httpx
+        from openai import APIStatusError
+
+        from Django_xm.apps.ai_engine.services.exceptions import build_user_facing_error
+
+        request = httpx.Request("POST", "https://api.test/v1/chat/completions")
+        response = httpx.Response(402, request=request)
+        exc = APIStatusError("insufficient_quota", response=response, body=None)
+        error_code, user_message = build_user_facing_error(exc)
+        self.assertEqual(error_code, "MODEL_CALL_ERROR")
+        self.assertIn("余额", user_message)
+        self.assertIn("切换模型", user_message)
+
+    def test_generic_exception_maps_to_unexpected_error(self):
+        from Django_xm.apps.ai_engine.services.exceptions import build_user_facing_error
+
+        error_code, user_message = build_user_facing_error(
+            RuntimeError("主模型不可用且无可用 fallback 模型")
+        )
+        self.assertEqual(error_code, "UNEXPECTED_ERROR")
+        self.assertEqual(user_message, "服务暂时不可用，请稍后重试")
+        self.assertNotIn("fallback", user_message)
+
+    def test_lc_agent_exception_passes_through(self):
+        """LCAgentException 体系原样透传自身 error_code/user_message。"""
+        from Django_xm.apps.ai_engine.services.exceptions import (
+            GuardrailsValidationError,
+            build_user_facing_error,
+        )
+
+        error_code, user_message = build_user_facing_error(
+            GuardrailsValidationError("长度超限", validation_type="input")
+        )
+        self.assertEqual(error_code, "GUARDRAILS_VALIDATION_ERROR")
+        self.assertEqual(user_message, "内容验证未通过，请调整后重试")
+
+
 if __name__ == "__main__":
     unittest.main()

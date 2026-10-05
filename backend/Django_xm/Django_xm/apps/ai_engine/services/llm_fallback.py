@@ -191,10 +191,12 @@ class LazyFallbackChatModel(BaseChatModel):
         self._fallback_detected: bool = False
         self._actual_provider: str | None = None
         self._actual_model: str | None = None
-        # Fallback 模型缓存（同一对话内复用）
-        self._active_fallback_model: BaseChatModel | None = None
-        self._fallback_provider_id: str | None = None
-        self._fallback_model_name: str | None = None
+        # 候选模型实例禁止缓存（2026-10-05 勘误）：async 模型客户端的连接池
+        # 绑定"首次使用时的事件循环"，而本包装会被多个事件循环使用（chat 主链
+        # uvicorn 常驻 loop + 每子代理独立线程独立 loop）——缓存实例跨 loop
+        # 复用必报 "Event loop is closed"（实测：DeepSeek 402 降级 ollama 时
+        # 命中旧实例缓存，降级失效）。每次降级尝试经 _build_fallback_model
+        # 新建（use_cache=False 绕过 factory 实例缓存）。
         # Circuit Breaker 状态
         self._circuit_state: str = "closed"  # closed / open / half_open
         self._circuit_opened_at: float = 0.0
@@ -293,6 +295,14 @@ class LazyFallbackChatModel(BaseChatModel):
             logger.info("Circuit Breaker: -> CLOSED，主模型恢复")
         self._circuit_state = "closed"
         self._consecutive_failures = 0
+        # E1c：主模型恢复正常后同步复位降级标记。长期存活实例（get_helper_model 的
+        # 模块级单例 _helper_model_cache 包装本类）此前首次降级后 fallback_detected
+        # 永久为 True，get_fallback_info() 会持续报告过期的降级状态。
+        if self._fallback_detected:
+            logger.info("LazyFallback: 主模型已恢复，复位 fallback_detected")
+            self._fallback_detected = False
+            self._actual_provider = None
+            self._actual_model = None
 
     def _on_primary_failure(self, error: Exception):
         """主模型调用失败"""
@@ -309,23 +319,17 @@ class LazyFallbackChatModel(BaseChatModel):
             self._circuit_opened_at = time.monotonic()
             logger.info("Circuit Breaker: HALF_OPEN -> OPEN，主模型仍不可用")
 
-    def _get_or_create_fallback(self, provider_id: str, model_name: str) -> BaseChatModel | None:
-        """获取或创建 fallback 模型（带缓存，同一对话内复用）"""
-        if (
-            self._active_fallback_model is not None
-            and self._fallback_provider_id == provider_id
-            and self._fallback_model_name == model_name
-        ):
-            return self._active_fallback_model
-        fb_model = self._resolve_fallback_model(provider_id, model_name)
-        if fb_model is not None:
-            self._active_fallback_model = fb_model
-            self._fallback_provider_id = provider_id
-            self._fallback_model_name = model_name
-        return fb_model
+    def _build_fallback_model(self, provider_id: str, model_name: str) -> BaseChatModel | None:
+        """按需**新建** fallback 模型实例（经注入的 factory，use_cache=False）。
 
-    def _resolve_fallback_model(self, provider_id: str, model_name: str) -> BaseChatModel | None:
-        """按需创建 fallback 模型实例（通过注入的 factory）"""
+        候选实例禁止缓存（2026-10-05 跨 loop 复用勘误）：本包装的实例会被
+        多个事件循环使用（chat 主链 uvicorn 常驻 loop + 每子代理独立线程
+        独立 loop），async 模型客户端连接池绑定"首次使用时的循环"，缓存
+        实例跨 loop 复用必报 "Event loop is closed"。故每次降级尝试都新建
+        （对象构建成本微秒-毫秒级 ≪ LLM 网络调用），客户端在当前循环首次
+        创建；use_cache=False 同步绕过 llm_factory 的实例缓存（该缓存同样
+        会返回曾在他 loop 使用过的实例）。
+        """
         try:
             model = self.factory(
                 provider_id=provider_id,
@@ -334,6 +338,7 @@ class LazyFallbackChatModel(BaseChatModel):
                 max_tokens=self.max_tokens,
                 streaming=self.streaming if self.streaming is not None else settings.openai_streaming,
                 max_retries=0,
+                use_cache=False,
             )
             logger.info(f"懒加载 Fallback 模型已创建: {provider_id}/{model_name}")
             return model
@@ -343,11 +348,19 @@ class LazyFallbackChatModel(BaseChatModel):
 
     def _generate(self, messages: list[BaseMessage], stop: list[str] | None = None, **kwargs: Any) -> ChatResult:
         # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
+        # D1/AI-2：逐候选 try——此前 OPEN 态无 try，首选候选失败即全链失效
         if not self._should_try_primary():
             for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
+                fb_model = self._build_fallback_model(pid, mname)
+                if fb_model is None:
+                    continue
+                try:
+                    self._mark_fallback(pid, mname)
                     return fb_model._generate(messages, stop=stop, **kwargs)
+                except Exception as fb_error:
+                    self._fallback_detected = False
+                    logger.warning(f"Circuit OPEN: Fallback 模型 {pid}/{mname} 也失败: {fb_error}")
+                    continue
             raise RuntimeError("主模型不可用且无可用 fallback 模型")
 
         try:
@@ -360,7 +373,7 @@ class LazyFallbackChatModel(BaseChatModel):
             self._on_primary_failure(primary_error)
             logger.warning(f"主模型生成失败，尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
+                fb_model = self._build_fallback_model(pid, mname)
                 if fb_model is not None:
                     try:
                         self._mark_fallback(pid, mname)
@@ -373,11 +386,19 @@ class LazyFallbackChatModel(BaseChatModel):
 
     async def _agenerate(self, messages: list[BaseMessage], stop: list[str] | None = None, **kwargs: Any) -> ChatResult:
         # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
+        # D1/AI-2：逐候选 try（同 _generate）
         if not self._should_try_primary():
             for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
+                fb_model = self._build_fallback_model(pid, mname)
+                if fb_model is None:
+                    continue
+                try:
+                    self._mark_fallback(pid, mname)
                     return await fb_model._agenerate(messages, stop=stop, **kwargs)
+                except Exception as fb_error:
+                    self._fallback_detected = False
+                    logger.warning(f"Circuit OPEN: Fallback 模型 {pid}/{mname} 也失败: {fb_error}")
+                    continue
             raise RuntimeError("主模型不可用且无可用 fallback 模型")
 
         try:
@@ -390,7 +411,7 @@ class LazyFallbackChatModel(BaseChatModel):
             self._on_primary_failure(primary_error)
             logger.warning(f"主模型异步生成失败，尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
+                fb_model = self._build_fallback_model(pid, mname)
                 if fb_model is not None:
                     try:
                         self._mark_fallback(pid, mname)
@@ -405,12 +426,27 @@ class LazyFallbackChatModel(BaseChatModel):
         self, messages: list[BaseMessage], stop: list[str] | None = None, **kwargs: Any
     ) -> Iterator[ChatGenerationChunk]:
         # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
+        # D1/AI-2：逐候选 try（同 _generate）；D2/AI-3：候选已向用户输出 chunk
+        # 后再失败不得切下一候选重放（内容重复），直接终止
         if not self._should_try_primary():
             for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    yield from fb_model._stream(messages, stop=stop, **kwargs)
+                fb_model = self._build_fallback_model(pid, mname)
+                if fb_model is None:
+                    continue
+                try:
+                    chunks = 0
+                    self._mark_fallback(pid, mname)
+                    for chunk in fb_model._stream(messages, stop=stop, **kwargs):
+                        chunks += 1
+                        yield chunk
+                    logger.info(f"Circuit OPEN: Fallback 流式返回 {chunks} 个 chunk: {pid}/{mname}")
                     return
+                except Exception as fb_error:
+                    self._fallback_detected = False
+                    logger.warning(f"Circuit OPEN: Fallback 模型 {pid}/{mname} 也失败: {fb_error}")
+                    if chunks:
+                        raise  # 已输出 chunk，重放下一候选会内容重复
+                    continue
             raise RuntimeError("主模型不可用且无可用 fallback 模型")
 
         try:
@@ -425,13 +461,17 @@ class LazyFallbackChatModel(BaseChatModel):
             if self._is_input_error(primary_error):
                 raise
             self._on_primary_failure(primary_error)
-            logger.warning(f"主模型流式失败，尝试 fallback: {primary_error}")
+            # D2/AI-3：primary 已向用户输出 chunk 后失败，切 fallback 重放
+            # 全量会造成内容重复 → 直接终止（上层错误链路收尾）
+            if chunks:
+                raise
+            logger.warning(f"主模型流式失败（尚未输出），尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
+                fb_model = self._build_fallback_model(pid, mname)
                 if fb_model is not None:
                     try:
-                        self._mark_fallback(pid, mname)
                         chunks = 0
+                        self._mark_fallback(pid, mname)
                         for chunk in fb_model._stream(messages, stop=stop, **kwargs):
                             chunks += 1
                             yield chunk
@@ -440,6 +480,8 @@ class LazyFallbackChatModel(BaseChatModel):
                     except Exception as fb_error:
                         self._fallback_detected = False
                         logger.warning(f"Fallback 模型 {pid}/{mname} 流式也失败: {fb_error}")
+                        if chunks:
+                            raise  # 已输出 chunk，重放下一候选会内容重复
                         continue
             raise
 
@@ -447,13 +489,26 @@ class LazyFallbackChatModel(BaseChatModel):
         self, messages: list[BaseMessage], stop: list[str] | None = None, **kwargs: Any
     ) -> AsyncIterator[ChatGenerationChunk]:
         # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
+        # D1/AI-2：逐候选 try；D2/AI-3：已输出 chunk 后失败不得切候选重放
         if not self._should_try_primary():
             for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
+                fb_model = self._build_fallback_model(pid, mname)
+                if fb_model is None:
+                    continue
+                try:
+                    chunks = 0
+                    self._mark_fallback(pid, mname)
                     async for chunk in fb_model._astream(messages, stop=stop, **kwargs):
+                        chunks += 1
                         yield chunk
+                    logger.info(f"Circuit OPEN: Fallback 异步流式返回 {chunks} 个 chunk: {pid}/{mname}")
                     return
+                except Exception as fb_error:
+                    self._fallback_detected = False
+                    logger.warning(f"Circuit OPEN: Fallback 模型 {pid}/{mname} 也失败: {fb_error}")
+                    if chunks:
+                        raise
+                    continue
             raise RuntimeError("主模型不可用且无可用 fallback 模型")
 
         try:
@@ -468,13 +523,16 @@ class LazyFallbackChatModel(BaseChatModel):
             if self._is_input_error(primary_error):
                 raise
             self._on_primary_failure(primary_error)
-            logger.warning(f"主模型异步流式失败，尝试 fallback: {primary_error}")
+            # D2/AI-3：primary 已输出 chunk 后失败，重放会重复 → 终止
+            if chunks:
+                raise
+            logger.warning(f"主模型异步流式失败（尚未输出），尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
+                fb_model = self._build_fallback_model(pid, mname)
                 if fb_model is not None:
                     try:
-                        self._mark_fallback(pid, mname)
                         chunks = 0
+                        self._mark_fallback(pid, mname)
                         async for chunk in fb_model._astream(messages, stop=stop, **kwargs):
                             chunks += 1
                             yield chunk
@@ -483,16 +541,26 @@ class LazyFallbackChatModel(BaseChatModel):
                     except Exception as fb_error:
                         self._fallback_detected = False
                         logger.warning(f"Fallback 模型 {pid}/{mname} 异步流式也失败: {fb_error}")
+                        if chunks:
+                            raise
                         continue
             raise
 
     def invoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
         # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
+        # D1/AI-2：逐候选 try（同 _generate）
         if not self._should_try_primary():
             for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
+                fb_model = self._build_fallback_model(pid, mname)
+                if fb_model is None:
+                    continue
+                try:
+                    self._mark_fallback(pid, mname)
                     return fb_model.invoke(input, config=config, **kwargs)
+                except Exception as fb_error:
+                    self._fallback_detected = False
+                    logger.warning(f"Circuit OPEN: Fallback 模型 {pid}/{mname} 也失败: {fb_error}")
+                    continue
             raise RuntimeError("主模型不可用且无可用 fallback 模型")
 
         try:
@@ -505,7 +573,7 @@ class LazyFallbackChatModel(BaseChatModel):
             self._on_primary_failure(primary_error)
             logger.warning(f"主模型 invoke 失败，尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
+                fb_model = self._build_fallback_model(pid, mname)
                 if fb_model is not None:
                     try:
                         self._mark_fallback(pid, mname)
@@ -518,11 +586,19 @@ class LazyFallbackChatModel(BaseChatModel):
 
     async def ainvoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
         # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
+        # D1/AI-2：逐候选 try（同 _generate）
         if not self._should_try_primary():
             for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
+                fb_model = self._build_fallback_model(pid, mname)
+                if fb_model is None:
+                    continue
+                try:
+                    self._mark_fallback(pid, mname)
                     return await fb_model.ainvoke(input, config=config, **kwargs)
+                except Exception as fb_error:
+                    self._fallback_detected = False
+                    logger.warning(f"Circuit OPEN: Fallback 模型 {pid}/{mname} 也失败: {fb_error}")
+                    continue
             raise RuntimeError("主模型不可用且无可用 fallback 模型")
 
         try:
@@ -535,7 +611,7 @@ class LazyFallbackChatModel(BaseChatModel):
             self._on_primary_failure(primary_error)
             logger.warning(f"主模型 ainvoke 失败，尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
+                fb_model = self._build_fallback_model(pid, mname)
                 if fb_model is not None:
                     try:
                         self._mark_fallback(pid, mname)
@@ -548,66 +624,111 @@ class LazyFallbackChatModel(BaseChatModel):
 
     def stream(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Iterator[Any]:
         # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
+        # D1/AI-2：逐候选 try（同 _generate）
         if not self._should_try_primary():
             for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    yield from fb_model.stream(input, config=config, **kwargs)
-                    return
-            raise RuntimeError("主模型不可用且无可用 fallback 模型")
-
-        try:
-            yield from self.primary.stream(input, config=config, **kwargs)
-            self._on_primary_success()
-        except Exception as primary_error:
-            if self._is_input_error(primary_error):
-                raise
-            self._on_primary_failure(primary_error)
-            logger.warning(f"主模型 stream 失败，尝试 fallback: {primary_error}")
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    try:
-                        self._mark_fallback(pid, mname)
-                        yield from fb_model.stream(input, config=config, **kwargs)
-                        return
-                    except Exception as fb_error:
-                        self._fallback_detected = False
-                        logger.warning(f"Fallback 模型 {pid}/{mname} stream 也失败: {fb_error}")
-                        continue
-            raise
-
-    async def astream(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> AsyncIterator[Any]:
-        # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
-        if not self._should_try_primary():
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    async for chunk in fb_model.astream(input, config=config, **kwargs):
+                fb_model = self._build_fallback_model(pid, mname)
+                if fb_model is None:
+                    continue
+                candidate_yielded = 0
+                try:
+                    self._mark_fallback(pid, mname)
+                    for chunk in fb_model.stream(input, config=config, **kwargs):
+                        candidate_yielded += 1
                         yield chunk
                     return
+                except Exception as fb_error:
+                    self._fallback_detected = False
+                    logger.warning(f"Circuit OPEN: Fallback 模型 {pid}/{mname} 也失败: {fb_error}")
+                    if candidate_yielded:
+                        raise  # 已输出 chunk，重放下一候选会内容重复
+                    continue
             raise RuntimeError("主模型不可用且无可用 fallback 模型")
 
+        yielded = 0
         try:
-            async for chunk in self.primary.astream(input, config=config, **kwargs):
+            for chunk in self.primary.stream(input, config=config, **kwargs):
+                yielded += 1
                 yield chunk
             self._on_primary_success()
         except Exception as primary_error:
             if self._is_input_error(primary_error):
                 raise
             self._on_primary_failure(primary_error)
-            logger.warning(f"主模型 astream 失败，尝试 fallback: {primary_error}")
+            # D2/AI-3：primary 已输出 chunk 后失败，重放会重复 → 终止
+            if yielded:
+                raise
+            logger.warning(f"主模型 stream 失败（尚未输出），尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
+                fb_model = self._build_fallback_model(pid, mname)
                 if fb_model is not None:
+                    candidate_yielded = 0
+                    try:
+                        self._mark_fallback(pid, mname)
+                        for chunk in fb_model.stream(input, config=config, **kwargs):
+                            candidate_yielded += 1
+                            yield chunk
+                        return
+                    except Exception as fb_error:
+                        self._fallback_detected = False
+                        logger.warning(f"Fallback 模型 {pid}/{mname} stream 也失败: {fb_error}")
+                        if candidate_yielded:
+                            raise  # 已输出 chunk，重放下一候选会内容重复
+                        continue
+            raise
+
+    async def astream(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> AsyncIterator[Any]:
+        # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
+        # D1/AI-2：逐候选 try；D2/AI-3：已输出 chunk 后失败不得切候选重放
+        if not self._should_try_primary():
+            for pid, mname in self.fallback_candidates:
+                fb_model = self._build_fallback_model(pid, mname)
+                if fb_model is None:
+                    continue
+                candidate_yielded = 0
+                try:
+                    self._mark_fallback(pid, mname)
+                    async for chunk in fb_model.astream(input, config=config, **kwargs):
+                        candidate_yielded += 1
+                        yield chunk
+                    return
+                except Exception as fb_error:
+                    self._fallback_detected = False
+                    logger.warning(f"Circuit OPEN: Fallback 模型 {pid}/{mname} 也失败: {fb_error}")
+                    if candidate_yielded:
+                        raise  # 已输出 chunk，重放下一候选会内容重复
+                    continue
+            raise RuntimeError("主模型不可用且无可用 fallback 模型")
+
+        yielded = 0
+        try:
+            async for chunk in self.primary.astream(input, config=config, **kwargs):
+                yielded += 1
+                yield chunk
+            self._on_primary_success()
+        except Exception as primary_error:
+            if self._is_input_error(primary_error):
+                raise
+            self._on_primary_failure(primary_error)
+            # D2/AI-3：primary 已输出 chunk 后失败，重放会重复 → 终止
+            if yielded:
+                raise
+            logger.warning(f"主模型 astream 失败（尚未输出），尝试 fallback: {primary_error}")
+            for pid, mname in self.fallback_candidates:
+                fb_model = self._build_fallback_model(pid, mname)
+                if fb_model is not None:
+                    candidate_yielded = 0
                     try:
                         self._mark_fallback(pid, mname)
                         async for chunk in fb_model.astream(input, config=config, **kwargs):
+                            candidate_yielded += 1
                             yield chunk
                         return
                     except Exception as fb_error:
                         self._fallback_detected = False
                         logger.warning(f"Fallback 模型 {pid}/{mname} astream 也失败: {fb_error}")
+                        if candidate_yielded:
+                            raise  # 已输出 chunk，重放下一候选会内容重复
                         continue
             raise
 
@@ -702,6 +823,7 @@ class StructuredModelWithFallback:
                 streaming=False,
                 max_retries=0,
                 special_params=fb_special_params,
+                use_cache=False,  # 同 LazyFallbackChatModel：候选实例禁止跨 loop 缓存复用
             )
             fb_structured = fb_model.with_structured_output(self._schema)
             logger.info(f"懒加载 Fallback 结构化模型已创建: {provider_id}/{model_name}")

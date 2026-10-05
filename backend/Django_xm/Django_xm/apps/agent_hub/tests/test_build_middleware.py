@@ -21,6 +21,7 @@ from unittest import mock
 from Django_xm.apps.agent_hub.approval.middleware import ApprovalMiddleware
 from Django_xm.apps.agent_hub.config import AgentConfig, AgentType
 from Django_xm.apps.agent_hub.middleware import build_middleware
+from Django_xm.apps.ai_engine.services.tool_timeout import ToolExecutionTimeoutMiddleware
 from Django_xm.apps.context_manager.middleware import ContextManagerMiddleware
 
 
@@ -44,7 +45,7 @@ class BuildMiddlewareFallbackTests(unittest.TestCase):
     """收敛点保底注入：空栈注入 / 幂等跳过 / 失败降级。"""
 
     def test_ensure_context_injects_when_missing(self):
-        """空栈（capability 分支产出为空）时保底注入 Approval + Context，追加在栈末。"""
+        """空栈（capability 分支产出为空）时保底注入 Approval + Context + ToolTimeout，追加在栈末。"""
         config = _make_config(model_name="gpt-4o", user_id=1, session_id="thread-1")
 
         stack = build_middleware(config)
@@ -52,10 +53,12 @@ class BuildMiddlewareFallbackTests(unittest.TestCase):
         self.assertIsInstance(stack, list)
         self.assertEqual(_count_type(stack, ContextManagerMiddleware), 1)
         self.assertEqual(_count_type(stack, ApprovalMiddleware), 1)
+        self.assertEqual(_count_type(stack, ToolExecutionTimeoutMiddleware), 1)
         # 保底追加位置在栈末（与 base/deep 现有手动 ensure 的追加位置等效）：
-        # 先 approval 后 context
-        self.assertIsInstance(stack[-2], ApprovalMiddleware)
-        self.assertIsInstance(stack[-1], ContextManagerMiddleware)
+        # 先 approval 后 context，末位为工具超时（B6/P2-13 新增收敛点保底段）
+        self.assertIsInstance(stack[-3], ApprovalMiddleware)
+        self.assertIsInstance(stack[-2], ContextManagerMiddleware)
+        self.assertIsInstance(stack[-1], ToolExecutionTimeoutMiddleware)
 
     def test_ensure_idempotent_when_present(self):
         """栈中预置同类型实例后调用不重复注入（各计数 == 1），在役路径零行为变化。"""

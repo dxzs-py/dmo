@@ -16,8 +16,10 @@ Guardrails 中间件 - 基于 LangChain AgentMiddleware 实现
 """
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
+import asyncio
 import logging
 import threading
 import time
@@ -56,6 +58,27 @@ _LOOP_JUDGE_PROMPT = """你是一个循环检测器。分析以下 AI Agent 最�
 
 请判断：这个 Agent 是陷入了循环（loop），还是在正常推进任务（progress）？
 只回复一个词：loop 或 progress"""
+
+
+@dataclass(frozen=True)
+class _LoopCheckOutcome:
+    """循环检测锁内廉价阶段的判定结果（E1a）。
+
+    - reason 非 None：已得出循环原因（L1 精确重复 / L2/L3 模式异常 / L4
+      预算耗尽 / 无需检查），调用方直接以此结束，无需 judge。
+    - needs_judge：L2/L3 疑似且预算允许，需在锁外执行辅助模型 judge。
+      helper_model 与 summary/counts 为锁内快照——judge 不再读共享状态，
+      避免锁外读取竞态；judge_started_at 供冷却时间戳使用（与原实现
+      "judge 前取 now"一致）。
+    """
+
+    reason: str | None = None
+    needs_judge: bool = False
+    helper_model: Any = None
+    summary: str = ""
+    total_tool_calls: int = 0
+    total_model_calls: int = 0
+    judge_started_at: float = 0.0
 
 
 class RateLimitMiddleware(AgentMiddleware):
@@ -247,50 +270,105 @@ class RateLimitMiddleware(AgentMiddleware):
         recent = self._recent_tool_calls[-self.progress_window :]
         return not any(tc["name"] in self.PROGRESS_TOOLS for tc in recent)
 
-    def _check_tool_loop(self, tool_name: str, tool_args: Any) -> str | None:
-        """检测工具调用循环，返回循环原因或 None"""
-        # L1: 精确重复检测
-        dup_reason = self._check_exact_duplicate(tool_name, tool_args)
-        if dup_reason:
-            return dup_reason
+    def _evaluate_tool_loop(self, tool_name: str, tool_args: Any) -> _LoopCheckOutcome:
+        """锁内廉价判定阶段（E1a：原 _check_tool_loop 的非 judge 部分）。
 
-        if self._tool_call_count < self.min_calls_before_check:
-            return None
+        锁内只做内存计数与模式判定（L1 精确重复 / L2 模式 / L3 停滞 / L4
+        预算检查）；辅助模型的同步 invoke 属秒级网络调用，一律移至锁外
+        （_resolve_loop_reason / _aresolve_loop_reason），避免长持锁阻塞
+        其他工具调用的计数与判定。hard 模式的 RuntimeError 在锁内抛出，
+        with 保证释放。
+        """
+        with self._lock:
+            self._tool_call_count += 1
+            # L1: 精确重复检测
+            dup_reason = self._check_exact_duplicate(tool_name, tool_args)
+            if dup_reason:
+                return _LoopCheckOutcome(reason=dup_reason)
 
-        pattern_suspect = self._check_consecutive_same_tool(tool_name) or self._check_diversity_drop()
-        progress_suspect = self._check_progress_stall(tool_name)
+            if self._tool_call_count < self.min_calls_before_check:
+                return _LoopCheckOutcome()
 
-        if not pattern_suspect and not progress_suspect:
-            return None
+            pattern_suspect = self._check_consecutive_same_tool(tool_name) or self._check_diversity_drop()
+            progress_suspect = self._check_progress_stall(tool_name)
 
-        now = time.time()
-        if now < self._llm_judge_skip_until:
-            return None
+            if not pattern_suspect and not progress_suspect:
+                return _LoopCheckOutcome()
 
-        helper_model = self._get_helper_model()
-        if helper_model is not None:
+            now = time.time()
+            if now < self._llm_judge_skip_until:
+                return _LoopCheckOutcome()
+
+            helper_model = self._get_helper_model()
+            if helper_model is None:
+                reason = f"模式异常检测(L2/L3): 连续同工具={pattern_suspect}, 进展停滞={progress_suspect}"
+                if not self.graceful_degradation:
+                    raise RuntimeError(f"{reason}，已终止执行。")
+                return _LoopCheckOutcome(reason=reason)
+
             if self._llm_judge_count >= self.llm_judge_max_calls:
                 reason = "辅助模型判断次数耗尽(L4)，疑似循环模式持续存在"
                 if not self.graceful_degradation:
                     raise RuntimeError(f"{reason}，已终止执行。")
-                return reason
-            is_loop = self._llm_judge_loop(helper_model)
+                return _LoopCheckOutcome(reason=reason)
+
+            # 本轮需要 judge：锁内预扣预算（原实现为 judge 后 +1 且无论结果
+            # 都 +1，预扣语义等价，并防止锁外并发窗口超发名额）。
             self._llm_judge_count += 1
-            if is_loop:
-                reason = "辅助模型判断(L4)确认Agent陷入循环"
-                if not self.graceful_degradation:
-                    raise RuntimeError(f"{reason}，已终止执行。")
-                return reason
-            self._llm_judge_skip_until = now + 10.0
-            logger.info(
-                f"辅助模型判断(L4): Agent 正常推进，继续执行 (判断 {self._llm_judge_count}/{self.llm_judge_max_calls})"
+            return _LoopCheckOutcome(
+                needs_judge=True,
+                helper_model=helper_model,
+                summary=self._build_call_summary(),
+                total_tool_calls=self._tool_call_count,
+                total_model_calls=self._model_call_count,
+                judge_started_at=now,
             )
-        else:
-            reason = f"模式异常检测(L2/L3): 连续同工具={pattern_suspect}, 进展停滞={progress_suspect}"
+
+    def _finalize_judge(self, outcome: _LoopCheckOutcome, is_loop: bool) -> str | None:
+        """L4 judge 完成后的状态落地（judge 在锁外执行，此处短暂加锁更新）。"""
+        if is_loop:
+            reason = "辅助模型判断(L4)确认Agent陷入循环"
             if not self.graceful_degradation:
                 raise RuntimeError(f"{reason}，已终止执行。")
             return reason
+        with self._lock:
+            self._llm_judge_skip_until = outcome.judge_started_at + 10.0
+            judge_count = self._llm_judge_count
+        logger.info(
+            f"辅助模型判断(L4): Agent 正常推进，继续执行 (判断 {judge_count}/{self.llm_judge_max_calls})"
+        )
         return None
+
+    def _resolve_loop_reason(self, tool_name: str, tool_args: Any) -> str | None:
+        """同步路径总控：锁内廉价判定 → 锁外执行 L4 judge。"""
+        outcome = self._evaluate_tool_loop(tool_name, tool_args)
+        if outcome.needs_judge:
+            is_loop = self._llm_judge_loop(
+                outcome.helper_model,
+                summary=outcome.summary,
+                total_tool_calls=outcome.total_tool_calls,
+                total_model_calls=outcome.total_model_calls,
+            )
+            return self._finalize_judge(outcome, is_loop)
+        return outcome.reason
+
+    async def _aresolve_loop_reason(self, tool_name: str, tool_args: Any) -> str | None:
+        """异步路径总控：锁内廉价判定 → asyncio.to_thread 执行 L4 judge。
+
+        judge 的 model.invoke 是同步秒级网络调用，必须移出事件循环线程，
+        否则阻塞该 loop 上所有协程（E1a 修复点）。
+        """
+        outcome = self._evaluate_tool_loop(tool_name, tool_args)
+        if outcome.needs_judge:
+            is_loop = await asyncio.to_thread(
+                self._llm_judge_loop,
+                outcome.helper_model,
+                summary=outcome.summary,
+                total_tool_calls=outcome.total_tool_calls,
+                total_model_calls=outcome.total_model_calls,
+            )
+            return self._finalize_judge(outcome, is_loop)
+        return outcome.reason
 
     def _get_helper_model(self):
         try:
@@ -301,19 +379,35 @@ class RateLimitMiddleware(AgentMiddleware):
             logger.warning(f"获取辅助模型失败: {e}")
             return None
 
-    def _llm_judge_loop(self, model) -> bool:
+    def _llm_judge_loop(
+        self,
+        model,
+        summary: str | None = None,
+        total_tool_calls: int | None = None,
+        total_model_calls: int | None = None,
+    ) -> bool:
+        """辅助模型 L4 判断（fail-open：任何异常返回 False 继续执行）。
+
+        summary/counts 由调用方传锁内快照（E1a：judge 已移出锁，读快照
+        避免锁外与并发计数竞争）；缺省时退回读当前实例状态（兼容直接调用）。
+        """
         try:
-            summary = self._build_call_summary()
+            if summary is None:
+                summary = self._build_call_summary()
+            if total_tool_calls is None:
+                total_tool_calls = self._tool_call_count
+            if total_model_calls is None:
+                total_model_calls = self._model_call_count
             prompt = _LOOP_JUDGE_PROMPT.format(
                 tool_calls_summary=summary,
-                total_tool_calls=self._tool_call_count,
-                total_model_calls=self._model_call_count,
+                total_tool_calls=total_tool_calls,
+                total_model_calls=total_model_calls,
             )
             from langchain_core.messages import HumanMessage
 
             response = model.invoke([HumanMessage(content=prompt)])
             answer = response.content.strip().lower()
-            logger.info(f"辅助模型判断结果: {answer} (工具={self._tool_call_count}, 模型={self._model_call_count})")
+            logger.info(f"辅助模型判断结果: {answer} (工具={total_tool_calls}, 模型={total_model_calls})")
             first_word = answer.split()[0] if answer.split() else ""
             return first_word == "loop"
         except Exception as e:
@@ -397,9 +491,8 @@ class RateLimitMiddleware(AgentMiddleware):
         tool_name = tool_call.tool_call.get("name", "unknown")
         tool_args = tool_call.tool_call.get("args", {})
         tool_call_id = tool_call.tool_call.get("id", "")
-        with self._lock:
-            self._tool_call_count += 1
-            loop_reason = self._check_tool_loop(tool_name, tool_args)
+        # E1a：计数与廉价判定在 _evaluate_tool_loop 锁内完成，L4 judge 在锁外执行
+        loop_reason = self._resolve_loop_reason(tool_name, tool_args)
         if loop_reason and self.graceful_degradation:
             return self._make_loop_stop_message(tool_call_id, loop_reason)
         rate_reason = self._check_rate_limit("tool")
@@ -417,9 +510,8 @@ class RateLimitMiddleware(AgentMiddleware):
         tool_name = tool_call.tool_call.get("name", "unknown")
         tool_args = tool_call.tool_call.get("args", {})
         tool_call_id = tool_call.tool_call.get("id", "")
-        with self._lock:
-            self._tool_call_count += 1
-            loop_reason = self._check_tool_loop(tool_name, tool_args)
+        # E1a：L4 judge 经 asyncio.to_thread 在线程池执行，不阻塞事件循环
+        loop_reason = await self._aresolve_loop_reason(tool_name, tool_args)
         if loop_reason and self.graceful_degradation:
             return self._make_loop_stop_message(tool_call_id, loop_reason)
         rate_reason = self._check_rate_limit("tool")

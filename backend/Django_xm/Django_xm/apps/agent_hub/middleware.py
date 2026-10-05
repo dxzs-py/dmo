@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 
+from Django_xm.apps.agent_hub.config import resolve_agent_type_str
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,10 +39,10 @@ def build_middleware(config) -> list:
 
         capabilities = config.capabilities
         if capabilities is None:
-            capabilities = registry.get_default_capabilities(_get_agent_type_str(config))
+            capabilities = registry.get_default_capabilities(resolve_agent_type_str(config))
 
         auto_middleware = registry.build_middleware_for_agent(
-            _get_agent_type_str(config),
+            resolve_agent_type_str(config),
             capabilities,
             user_id=config.user_id,
             model_name=config.model_name,
@@ -96,8 +98,40 @@ def build_middleware(config) -> list:
     except Exception as e:
         logger.warning(f"ContextManagerMiddleware 收敛点保底注入失败(非致命): {e}")
 
+    try:
+        ensure_tool_timeout_middleware(middleware_stack)
+    except Exception as e:
+        logger.warning(f"ToolExecutionTimeoutMiddleware 收敛点保底注入失败(非致命): {e}")
+
     logger.info(f"最终中间件栈: {len(middleware_stack)} 个")
     return middleware_stack
+
+
+def ensure_tool_timeout_middleware(middleware_stack: list) -> bool:
+    """确保 ToolExecutionTimeoutMiddleware 已注入中间件栈（B6/P2-13 不对齐项②）。
+
+    通用工具级缺省执行超时（默认 300s，AGENT_TOOL_EXECUTION_TIMEOUT 可覆盖），
+    约束无自带超时的工具，避免单个挂死工具无限推迟全局 hard_timeout 判定
+    （硬超时仅在事件间隙检查）。经收敛点注入使 base/deep/subagent 三 builder
+    构建的全部 agent 自动获得；栈中已存在时幂等跳过。
+
+    Args:
+        middleware_stack: 中间件栈（原地修改）。
+
+    Returns:
+        True 表示本次新注入；False 表示栈中已存在或注入失败（降级不抛异常）。
+    """
+    try:
+        from Django_xm.apps.ai_engine.services.tool_timeout import ToolExecutionTimeoutMiddleware
+
+        if any(isinstance(m, ToolExecutionTimeoutMiddleware) for m in middleware_stack):
+            return False
+        middleware_stack.append(ToolExecutionTimeoutMiddleware())
+        logger.info("已注入 ToolExecutionTimeoutMiddleware 到 agent 中间件栈（收敛点保底）")
+        return True
+    except Exception as e:
+        logger.warning(f"ToolExecutionTimeoutMiddleware 保底注入失败(非致命): {e}")
+        return False
 
 
 def ensure_context_middleware(middleware_stack: list, config) -> bool:
@@ -135,13 +169,3 @@ def ensure_context_middleware(middleware_stack: list, config) -> bool:
     except Exception as e:
         logger.warning(f"ContextManagerMiddleware 保底注入失败(非致命): {e}")
         return False
-
-
-def _get_agent_type_str(config) -> str:
-    type_map = {
-        "base": "base",
-        "rag": "base",
-        "safe_rag": "base",
-        "deep_research": "deep_research",
-    }
-    return type_map.get(config.agent_type.value, "base")

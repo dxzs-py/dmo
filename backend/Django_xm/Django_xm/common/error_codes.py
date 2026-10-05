@@ -60,6 +60,8 @@ class ErrorCode(IntEnum):
     DUPLICATE_RESOURCE = (40901, "资源已存在", 409)
     # 冲突：学习工作流已结束，无法继续提交答案
     WORKFLOW_ALREADY_FINISHED = (40902, "工作流已结束，无法提交答案", 409)
+    # 冲突：研究任务已终态（completed/failed/cancelled），不可取消（C1/P2-1）
+    TASK_NOT_CANCELLABLE = (40903, "任务当前状态不可取消", 409)
 
     RATE_LIMITED = (42901, "请求过于频繁", 429)
     TOO_MANY_REQUESTS = (42902, "请求次数超限", 429)

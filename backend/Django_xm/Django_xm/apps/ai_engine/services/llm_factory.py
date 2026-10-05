@@ -518,6 +518,11 @@ def get_chat_model_by_provider(
                     "base_url",
                 )
             }
+            # E1e：max_tokens 需映射为 ChatOllama 的 num_predict（ChatOllama 无
+            # max_tokens 字段），与 temperature/streaming 一样显式传参而非静默丢弃
+            if init_kwargs.get("max_tokens") is not None:
+                ollama_kwargs["num_predict"] = init_kwargs["max_tokens"]
+                logger.info(f"Ollama max_tokens 已映射为 num_predict={init_kwargs['max_tokens']}")
             model = create_chat_model(
                 model=resolved_model,
                 temperature=resolved_temp,

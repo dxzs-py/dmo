@@ -1513,6 +1513,13 @@ def resume_approval(
         }
 
     if approval.state in (Approval.State.APPROVED, Approval.State.REJECTED, Approval.State.TIMEOUT):
+        if approval.state == Approval.State.TIMEOUT:
+            # N-1 组合项③：超时后到达的用户确认被幂等丢弃，记 warning 明示
+            # （前端经响应 state=timeout + message 获知，见 views._build_idempotent_data）
+            logger.warning(
+                f"[ApprovalService] 审批已超时，此次确认未生效(幂等丢弃): "
+                f"interrupt_id={interrupt_id}, approved={approved}"
+            )
         logger.info(f"[ApprovalService] 审批已终态，幂等返回: interrupt_id={interrupt_id}, state={approval.state}")
         return {
             "approval": approval,
@@ -1567,6 +1574,12 @@ def resume_approval(
                 "not_found": True,
             }
         if approval.state in (Approval.State.APPROVED, Approval.State.REJECTED, Approval.State.TIMEOUT):
+            if approval.state == Approval.State.TIMEOUT:
+                # 锁内重读到超时终态（等待锁期间被 cleanup/自愈终态化）：同样明示确认被丢弃
+                logger.warning(
+                    f"[ApprovalService] 审批已超时，此次确认未生效(锁内重读幂等丢弃): "
+                    f"interrupt_id={interrupt_id}, approved={approved}"
+                )
             release_lock(lock_key)
             return {
                 "approval": approval,
@@ -1850,5 +1863,9 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
                 f"[ApprovalService] 超时恢复路由失败: interrupt_id={interrupt_id}"
             )
     except Exception:
+        # 异常吞掉不向上传播（既有语义：cleanup beat / 执行器自愈调用方各自兜底），
+        # 锁释放收敛到 finally：成功、dispatch_resume=False 早退、异常三条退出路径
+        # 统一释放，杜绝批次锁泄漏 300s TTL（N-1：同批次兄弟超时/确认被残留锁阻塞）。
         logger.exception("[ApprovalService] 超时处理异常")
+    finally:
         release_lock(lock_key)

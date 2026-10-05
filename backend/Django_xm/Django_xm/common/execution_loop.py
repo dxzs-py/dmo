@@ -11,8 +11,7 @@
 - 韧性能力在骨架内统一承载：
   - 软超时检查（``check_soft_timeout``）
   - 重复工具调用警告注入（``control.warnings``）
-  - 子代理重试指令注入（``control.retry_messages``）
-  以上三者的"检测 → 中断流 → 注入 graph state → 以 ``current_input=None``
+  以上两者的"检测 → 中断流 → 注入 graph state → 以 ``current_input=None``
   重入 astream（从 checkpoint 续流）"循环由本骨架实现；检测本身由 chunk
   处理器（回调）完成并通过 ``ChunkLoopControl`` 回传。
 - 审批挂起（协程内 await 决策）与业务等待挂起（``suspend_box``，协程退出 +
@@ -45,14 +44,12 @@ class ChunkLoopControl:
     """chunk 处理器向主循环回传的控制信号。
 
     - warnings：待注入 graph state 的重复工具调用警告消息（SystemMessage 列表）
-    - retry_messages：待注入 graph state 的子代理重试指令消息（SystemMessage 列表）
     - should_break：请求立即中断当前 astream（审批中断已处理，交由调用方以
       Command(resume) 重入；或 messages 处理器请求熔断终止——如 COST-01 会话
       Token 预算耗尽，由调用方优雅收尾）
     """
 
     warnings: list[Any] = field(default_factory=list)
-    retry_messages: list[Any] = field(default_factory=list)
     should_break: bool = False
 
 
@@ -70,7 +67,7 @@ async def run_astream_loop(
     inject_state_messages: Callable[[list], Awaitable[None]] | None = None,
     stream_mode: tuple[str, ...] = STREAM_MODE,
 ) -> AsyncGenerator[dict, None]:
-    """运行单次 astream 执行 pass（含警告/重试注入重入，不含审批 Command(resume) 重入）。
+    """运行单次 astream 执行 pass（含警告注入重入，不含审批 Command(resume) 重入）。
 
     审批的 ``Command(resume=...)`` 重入由调用方负责（chat 的 ``run_stream_loop``
     与 research 的 ``astream_research_with_interrupts`` 外层循环各自持有其 resume
@@ -100,9 +97,8 @@ async def run_astream_loop(
     """
     current_input = graph_input
     control = ChunkLoopControl()
-    while True:  # 重复调用警告 / 子代理重试指令注入重入
+    while True:  # 重复调用警告注入重入
         control.warnings.clear()
-        control.retry_messages.clear()
         control.should_break = False
 
         async for chunk in graph.astream(
@@ -139,7 +135,7 @@ async def run_astream_loop(
                     yield event
                 # should_break：messages 处理器请求熔断终止（COST-01 预算耗尽等），
                 # 立即中断当前 astream，不注入韧性消息、不重入
-                if control.should_break or control.warnings or control.retry_messages:
+                if control.should_break or control.warnings:
                     break
                 continue
 
@@ -152,9 +148,9 @@ async def run_astream_loop(
         if control.should_break:
             break
 
-        # 重复调用警告 / 子代理重试指令：注入 graph state 后以 None 续流
-        if control.warnings or control.retry_messages:
-            messages_to_inject = list(control.warnings) + list(control.retry_messages)
+        # 重复调用警告：注入 graph state 后以 None 续流
+        if control.warnings:
+            messages_to_inject = list(control.warnings)
             if inject_state_messages is not None:
                 logger.info(f"[ExecutionLoop] 注入 {len(messages_to_inject)} 条韧性消息到 agent 状态")
                 try:

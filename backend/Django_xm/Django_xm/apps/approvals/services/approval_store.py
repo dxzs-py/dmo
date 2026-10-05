@@ -3,6 +3,10 @@
 按 interrupt_id 索引（替代旧的按 session_id 索引），支持：
 - pending 审批持久化到 Redis List（按 source_id 分组）
 - processed 审批最终状态持久化到 Redis Key（按 interrupt_id 索引）
+
+**2026-10-05 决策保留（B-013）**：读侧已走 Approval DB 表 + SnapshotView/WS 推送，
+本模块 Redis 写侧（persist_* 系列）当前无生产读侧消费者，属冗余持久化；
+写侧保留（审批历史跨 DB 清理的兜底数据源），待出现明确读侧需求再评估去留。
 """
 
 import json

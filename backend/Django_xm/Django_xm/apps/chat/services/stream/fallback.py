@@ -21,6 +21,7 @@ from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHa
 from Django_xm.apps.chat.models import ChatMode
 from Django_xm.apps.chat.services.stream_helpers import (
     extract_thinking_content,
+    sync_usage_tracker_model,
     update_usage_and_tokens,
 )
 
@@ -33,7 +34,7 @@ class FallbackStreamService:
     def __init__(self, chat_service):
         """
         Args:
-            chat_service: ChatService 实例，提供 apply_context_engineering / acreate_human_message
+            chat_service: ChatService 实例，提供 aapply_context_engineering / acreate_human_message
         """
         self._chat_service = chat_service
 
@@ -88,8 +89,9 @@ class FallbackStreamService:
 
         chat_history = data.get("chat_history", [])
         # 走 ChatService 的公开 API（原为 _apply_context_engineering 私有方法，
-        # 跨对象依赖私有成员会在重构时静默破坏，已统一改为公开入口）
-        chat_history, _ce_metadata = self._chat_service.apply_context_engineering(
+        # 跨对象依赖私有成员会在重构时静默破坏，已统一改为公开入口）。
+        # 异步变体（D1/P2-7）：经 to_thread 移出事件循环，避免同步 embed/KG 阻塞
+        chat_history, _ce_metadata = await self._chat_service.aapply_context_engineering(
             chat_history,
             data.get("message", ""),
             mode=data.get("mode", ChatMode.AGENT),
@@ -152,6 +154,8 @@ class FallbackStreamService:
         if fb_callback.fallback_detected:
             fallback_info = fb_callback.get_fallback_info()
             if fallback_info:
+                # F2-1：降级后 usage/ChatMessage.model 统一记实际模型（先于事件 yield）
+                sync_usage_tracker_model(usage_tracker, fallback_info)
                 yield {
                     "type": "model_fallback",
                     "data": fallback_info,

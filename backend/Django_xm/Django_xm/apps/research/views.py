@@ -19,6 +19,7 @@ from Django_xm.common.serializers import EmptySerializer
 from Django_xm.common.signal_bus import (
     SESSION_TYPE_RESEARCH,
     SIGNAL_START,
+    SIGNAL_STOP,
     publish_signal,
 )
 
@@ -28,7 +29,7 @@ from .serializers import (
     ResearchStartSerializer,
     ResearchTaskSerializer,
 )
-from .services.task_manager import get_task_manager, get_task_status
+from .services.task_manager import CANCELLABLE_STATUSES, get_task_manager, get_task_status
 
 logger = logging.getLogger(__name__)
 task_manager = get_task_manager()
@@ -317,6 +318,52 @@ class DeepResearchStatusView(APIView):
                 response_data["files"] = []
 
         return success_response(data=response_data)
+
+
+class DeepResearchTaskCancelView(APIView):
+    """取消研究任务（C1/P2-1）：发布 SIGNAL_STOP 信令，执行服务负责终态化与级联清理。
+
+    职责边界：
+    - 仅校验归属（created_by）与状态可取消（pending/running/awaiting_approval），
+      随后发布 SIGNAL_STOP（session_type=research）并立即返回 200；
+    - **不落任务状态**：终态化（CANCELLED + 状态广播）由执行服务完成——端点直写
+      会与执行器的条件终态化形成双写竞争（如取消瞬间任务恰好完成/失败）；
+    - 信令丢失兜底：会话无内存执行器时由 SessionManager.stop_session 以
+      cancel_task_if_active 条件终态化（DB 层消除竞争）。
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
+    def post(self, request, task_id):
+        with transaction.atomic():
+            task = (
+                ResearchTask.objects.select_for_update()
+                .filter(task_id=task_id, created_by=request.user, is_deleted=False)
+                .first()
+            )
+            if not task:
+                raise NotFound("研究任务不存在或无权操作")
+            if task.status not in CANCELLABLE_STATUSES:
+                raise BaseAppError(
+                    f"任务当前状态为「{task.get_status_display()}」，不可取消",
+                    business_code=ErrorCode.TASK_NOT_CANCELLABLE,
+                )
+            publish_signal(
+                SIGNAL_STOP,
+                task.task_id,
+                {"session_type": SESSION_TYPE_RESEARCH},
+            )
+
+        logger.info(f"研究任务取消请求已下发执行服务：{task_id} (status={task.status})")
+        return success_response(
+            data={
+                "task_id": task.task_id,
+                "status": task.status,
+                "cancel_requested": True,
+            },
+            message="取消请求已发送",
+        )
 
 
 class DeepResearchTaskDeleteView(APIView):

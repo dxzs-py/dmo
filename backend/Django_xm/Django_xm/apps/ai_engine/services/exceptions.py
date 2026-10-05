@@ -329,3 +329,20 @@ def classify_exception(exc: Exception) -> LCAgentException:
         recoverable=False,
         user_message="服务暂时不可用，请稍后重试",
     )
+
+
+def build_user_facing_error(exc: Exception) -> tuple[str, str]:
+    """任意异常 → (error_code, 用户可行动中文文案)（整改 A1.4）。
+
+    复用 classify_exception 的分类体系作为单一映射源（模型 402/超时/认证/
+    限流/工具异常/输入校验等 → 各自的 error_code + user_message），供流式链路
+    失败终态广播（chat_executor_core）与 research 失败处理（session_executor）
+    统一消费：用户面只见分类文案，原始异常 str(exc)/类名仅进日志，杜绝
+    SDK 原文（endpoint URL、内部结构）直达前端（审计 F1-2/F1-3）。
+
+    Returns:
+        tuple[str, str]: (error_code, user_message)，如
+        ("MODEL_CALL_ERROR", "模型服务余额不足，请检查账户余额或切换模型")
+    """
+    classified = classify_exception(exc)
+    return classified.error_code, classified.user_message

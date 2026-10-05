@@ -1324,6 +1324,34 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/research/tasks/{task_id}/cancel/:
+    post:
+      operationId: research_tasks_cancel_create
+      description: |-
+        取消研究任务（C1/P2-1）：发布 SIGNAL_STOP 信令，执行服务负责终态化与级联清理。
+
+        职责边界：
+        - 仅校验归属（created_by）与状态可取消（pending/running/awaiting_approval），
+          随后发布 SIGNAL_STOP（session_type=research）并立即返回 200；
+        - **不落任务状态**：终态化（CANCELLED + 状态广播）由执行服务完成——端点直写
+          会与执行器的条件终态化形成双写竞争（如取消瞬间任务恰好完成/失败）；
+        - 信令丢失兜底：会话无内存执行器时由 SessionManager.stop_session 以
+          cancel_task_if_active 条件终态化（DB 层消除竞争）。
+      parameters:
+      - in: path
+        name: task_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - research
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
   /api/v1/tools/custom/:
     get:
       operationId: tools_custom_retrieve
@@ -2170,6 +2198,86 @@ components:
           description: 知识库描述
       required:
       - name
+    EventCategoryEnum:
+      enum:
+      - chat
+      - rag
+      - knowledge
+      - workflow
+      - research
+      - file
+      - auth
+      - page_view
+      - api_call
+      - system
+      type: string
+      description: |-
+        * `chat` - 智能聊天
+        * `rag` - RAG检索
+        * `knowledge` - 知识库
+        * `workflow` - 学习工作流
+        * `research` - 深度研究
+        * `file` - 文件操作
+        * `auth` - 认证
+        * `page_view` - 页面浏览
+        * `api_call` - API调用
+        * `system` - 系统
+    EventTypeEnum:
+      enum:
+      - chat.message.send
+      - chat.message.receive
+      - chat.session.create
+      - chat.session.delete
+      - chat.mode.switch
+      - rag.query
+      - rag.index.create
+      - rag.index.delete
+      - rag.document.upload
+      - rag.document.delete
+      - knowledge.base.access
+      - cross_kb_search
+      - workflow.start
+      - workflow.submit
+      - workflow.complete
+      - research.start
+      - research.complete
+      - file.upload
+      - file.download
+      - file.delete
+      - auth.login
+      - auth.logout
+      - auth.register
+      - page.view
+      - api.request
+      - feature.use
+      type: string
+      description: |-
+        * `chat.message.send` - 发送聊天消息
+        * `chat.message.receive` - 接收AI回复
+        * `chat.session.create` - 创建会话
+        * `chat.session.delete` - 删除会话
+        * `chat.mode.switch` - 切换对话模式
+        * `rag.query` - RAG检索查询
+        * `rag.index.create` - 创建索引
+        * `rag.index.delete` - 删除索引
+        * `rag.document.upload` - 上传文档
+        * `rag.document.delete` - 删除文档
+        * `knowledge.base.access` - 访问知识库
+        * `cross_kb_search` - 跨库检索
+        * `workflow.start` - 启动工作流
+        * `workflow.submit` - 提交工作流答案
+        * `workflow.complete` - 完成工作流
+        * `research.start` - 启动研究
+        * `research.complete` - 完成研究
+        * `file.upload` - 文件上传
+        * `file.download` - 文件下载
+        * `file.delete` - 文件删除
+        * `auth.login` - 用户登录
+        * `auth.logout` - 用户登出
+        * `auth.register` - 用户注册
+        * `page.view` - 页面浏览
+        * `api.request` - API请求
+        * `feature.use` - 功能使用
     FeatureUse:
       type: object
       properties:
@@ -2625,11 +2733,9 @@ components:
       type: object
       properties:
         event_type:
-          type: string
-          maxLength: 50
+          $ref: '#/components/schemas/EventTypeEnum'
         event_category:
-          type: string
-          maxLength: 20
+          $ref: '#/components/schemas/EventCategoryEnum'
         session_id:
           type: string
           default: ''

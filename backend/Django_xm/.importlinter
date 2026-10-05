@@ -1,3 +1,14 @@
+# import-linter 架构契约（治理接线：remediate-agent-audit-findings A2，2026-10-05）
+#
+# 现状：存在 3 处已知硬环，本批次不破环，只让检查工具真实生效并如实暴露：
+#   环1 {ai_engine, context_manager}
+#   环2 {ai_engine, knowledge}          —— settings_views 与 knowledge 索引/Embedding 深度耦合
+#   环3 agent_hub <-> research          —— 业务互依（+ research -> chat 软边）
+# 因此 lint-imports 当前必然 violated（预期失败，非回归）；本检查的目的是"防新增环"：
+# 破环批次（批E/后续）完成前，新增环边会推高 violated 边数，review 时对照本文件豁免清单核查。
+#
+# 豁免原则：只精确豁免"已决策保留"的模块对（每条附注释），禁止整包/整环豁免；
+# 豁免条目若与代码脱节（no match）会导致 import-linter 直接拒绝运行，必须随代码同步清理。
 [importlinter]
 root_package = Django_xm
 
@@ -27,12 +38,12 @@ forbidden_modules =
     Django_xm.apps.knowledge
     Django_xm.apps.learning
 ignore_imports =
-    # 待后续批次：settings_views（AI 设置 API）与 knowledge 索引/Embedding 服务
+    # 待后续批次（批E）：settings_views（AI 设置 API）与 knowledge 索引/Embedding 服务
     # 深度耦合，拆分需将相关视图整体迁移至 knowledge app（涉及 URL 与前端契约），
-    # 代价跨多文件重构，本批次仅显式豁免。
-    Django_xm.apps.ai_engine.settings_views -> Django_xm.apps.knowledge.services.index_service
-    Django_xm.apps.ai_engine.settings_views -> Django_xm.apps.knowledge.services.embedding_service
-    Django_xm.apps.ai_engine.settings_views -> Django_xm.apps.knowledge.services.embedding_service
+    # 本批次仅精确豁免以下模块对。
+    # 注意：settings_views -> knowledge.services.cross_app（get_index_manager，
+    # settings_views.py:27）【未豁免】——保留为环2 {ai_engine,knowledge} 的可见违反，
+    # 防止豁免扩张把环完全藏起来。
     Django_xm.apps.ai_engine.settings_views -> Django_xm.apps.knowledge.services.embedding_service
     Django_xm.apps.ai_engine.settings_views -> Django_xm.apps.knowledge.vector_store.pgvector_backend
     Django_xm.apps.ai_engine.settings_views -> Django_xm.apps.knowledge.services.kb_service

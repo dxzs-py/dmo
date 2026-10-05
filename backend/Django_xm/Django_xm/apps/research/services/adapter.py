@@ -13,20 +13,26 @@
 废弃的 ``DeepResearchAgent``（deep_agent.py）已删除，
 本适配器是深度研究的唯一官方实现。
 
+E6 三边界拆分（行为等价重构，audit B 组 §2.3）：
+- ``result_extraction``：结果提取 + 磁盘扫描 + 短回复磁盘兜底（3 处重复参数化归一）。
+- ``event_publishing``：实时事件发布（``DeepResearchEventPublisher``：
+  工具生命周期 / 子代理转发回调 / 推理与正文 chunk 广播）。
+- ``resume_protocol``：审批中断解析 / resume_values 分组 / 业务等待挂起判定。
+本类保留：图执行三入口编排、韧性执行器装配、D4 预算挂载编排、
+会话级累计容器（accumulated_reasoning/_main_content/subagent_contents/
+_tool_entries——落库权威来源）。
+
 依赖关系：
 - 依赖 ``patches.py``：``_DeepAgentExecutor`` / ``_extract_ai_response``。
+- 依赖同包拆分模块：``result_extraction`` / ``event_publishing`` / ``resume_protocol``。
 - 被 ``builders.py`` 导入：``OfficialDeepAgentAdapter``（作为工厂函数返回类型）。
 """
 
-import asyncio
-import os
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from Django_xm.apps.ai_engine.config import AGENT_RECURSION_LIMIT_RESEARCH
-from Django_xm.apps.ai_engine.services.thinking import extract_thinking_content
-from Django_xm.apps.approvals.services.approval_batch import assert_non_empty_decision
 
 # 子 agent 机制（deepagents 0.7.5 官方，取代旧 subagent_patch monkey-patch）：
 # - 中断冒泡 + Command(resume) 恢复：0.7.5 原生支持，无需 checkpointer contextvar 注入。
@@ -36,6 +42,13 @@ from Django_xm.apps.approvals.services.approval_batch import assert_non_empty_de
 # - 子 agent 工具事件：SubAgentToolEventMiddleware 从 configurable 读取本模块注入的
 #   _on_tool_event 回调并转发到父 SSE 流。
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.apps.research.services.event_publishing import DeepResearchEventPublisher
+from Django_xm.apps.research.services.resume_protocol import handle_resume_interrupt
+from Django_xm.apps.research.services.result_extraction import (
+    apply_short_report_disk_fallback,
+    extract_files_info,
+    scan_disk_files,
+)
 from Django_xm.apps.research.services.patches import (
     _DeepAgentExecutor,
     _extract_ai_response,
@@ -84,11 +97,6 @@ class OfficialDeepAgentAdapter:
         #   避免前端覆盖语义下仅显示最后一个 chunk。
         # - 任务完成时由 research_runner 携带到 writeback，持久化到 ChatMessage.reasoning。
         self.accumulated_reasoning: str = ""
-        # 子代理重试指令队列（SessionExecutor 注入，astream 循环按 chunk 消费）：
-        # 队列元素为 {agent_path, tool_call_id, agent_name, original_args, ...}，
-        # 消费后构造 SystemMessage 经 aupdate_state 注入 graph state 后重入 astream，
-        # 主 agent 收到指令后以原始入参重新调用目标子代理（Task 3 单独重启失败子代理）。
-        self._retry_instruction_queue: asyncio.Queue | None = None
         # 子代理图层正文/思考累计（spec MODIFIED：按 subagent_thread_id 键累计）：
         #   key = subagent_thread_id（SubAgentRuntime 适配器写入的路由标识符）
         #   value = {"content": str, "reasoning_content": str}
@@ -103,6 +111,9 @@ class OfficialDeepAgentAdapter:
         # 图层 position。跨审批 resume / 业务等待挂起持续累计（同一 adapter 复用），
         # 挂起/完成时随结果落库，供前端刷新后恢复主 agent 过程正文。
         self._main_content = ""
+        # D4/P2-10：会话 Token 预算熔断标记（超限时由 _check_session_budget 置位，
+        # 随 result.budget_exceeded 携带到上层）
+        self._budget_exceeded: bool = False
         # 主/子代理统一工具条目会话级聚合（tool_call_id → entry）：落库权威来源。
         # 条目同时含主代理（depth=0）与子代理（含 subagent_thread_id/agent_name/depth
         # 图层字段）——ResearchTask.tool_calls 无写入点、ChatMessage.tool_calls 仅依赖
@@ -120,6 +131,10 @@ class OfficialDeepAgentAdapter:
         from Django_xm.apps.tools.tool_event_extractor import ToolEventExtractor
 
         self._tool_event_extractor = ToolEventExtractor()
+        # E6 三边界拆分：实时事件发布器（工具生命周期/子代理转发/推理与正文广播）。
+        # 持有本实例引用读写会话级累计容器；本类保留 _publish_tool_event
+        # 实例级委托入口（测试注入缝，见该方法的 docstring）。
+        self._event_publisher = DeepResearchEventPublisher(self)
 
     def research(
         self, query: str, config: dict[str, Any] | None = None, callbacks: list | None = None
@@ -143,18 +158,12 @@ class OfficialDeepAgentAdapter:
             )
 
             final_report = _extract_ai_response(result)
-            files_info = self._extract_files_info(result)
-            disk_files = self._scan_disk_files()
+            files_info = extract_files_info(result)
+            disk_files = scan_disk_files(self.work_dir)
 
             # 当 AI 回复过短时（通常是确认语），从磁盘文件提取完整报告
-            if len(final_report.strip()) < 200 and disk_files:
-                for report_key in ("reports/final_report.md", "final_report.md"):
-                    if report_key in disk_files:
-                        report_content = disk_files[report_key].get("content", "")
-                        if len(report_content.strip()) > len(final_report.strip()):
-                            final_report = report_content
-                            logger.info(f"[OfficialDeepAgent] 使用磁盘报告文件替代短回复 ({len(final_report)} 字符)")
-                        break
+            # （E6 拆分：3 处重复兜底块参数化归一，见 result_extraction）
+            final_report = apply_short_report_disk_fallback(final_report, disk_files)
 
             return {
                 "success": True,
@@ -198,18 +207,12 @@ class OfficialDeepAgentAdapter:
             )
 
             final_report = _extract_ai_response(result)
-            files_info = self._extract_files_info(result)
-            disk_files = self._scan_disk_files()
+            files_info = extract_files_info(result)
+            disk_files = scan_disk_files(self.work_dir)
 
             # 当 AI 回复过短时（通常是确认语），从磁盘文件提取完整报告
-            if len(final_report.strip()) < 200 and disk_files:
-                for report_key in ("reports/final_report.md", "final_report.md"):
-                    if report_key in disk_files:
-                        report_content = disk_files[report_key].get("content", "")
-                        if len(report_content.strip()) > len(final_report.strip()):
-                            final_report = report_content
-                            logger.info(f"[OfficialDeepAgent] 使用磁盘报告文件替代短回复 ({len(final_report)} 字符)")
-                        break
+            # （E6 拆分：3 处重复兜底块参数化归一，见 result_extraction）
+            final_report = apply_short_report_disk_fallback(final_report, disk_files)
 
             return {
                 "success": True,
@@ -253,13 +256,6 @@ class OfficialDeepAgentAdapter:
 
         集成韧性模块：重试（指数退避）、降级（减少工具）、回退（无工具直接 LLM 回答）。
 
-        子代理重试指令（Task 3 单独重启失败子代理）：
-        SessionExecutor 通过 ``_retry_instruction_queue`` 注入重试指令，
-        chunk 循环在每轮 messages chunk 后非阻塞消费队列，经
-        ``graph.aupdate_state`` 将 SystemMessage 追加到 graph state 后
-        重入 astream（与重复工具调用警告注入同机制），主 agent 下一轮
-        LLM 调用可见指令并以原始入参重新调用目标子代理。
-
         Args:
             query: 研究查询（resume_command 模式时可为 None）
             config: LangGraph 运行配置
@@ -275,19 +271,18 @@ class OfficialDeepAgentAdapter:
         """
         from types import SimpleNamespace
 
-        from langgraph.types import Command, Interrupt
+        from langgraph.types import Command
 
         from Django_xm.apps.ai_engine.services.agent_resilience import (
             DuplicateToolCallDetector,
             ExecutionTimeoutManager,
             get_resilience_config,
         )
-        from Django_xm.apps.tools.base import is_approval_interrupt, is_subagent_wait_interrupt
 
         # 工具事件提取与发布（与子 agent 事件转发路径一致）
         # - 提取：复用实例级 self._tool_event_extractor（有状态，跨 chunk/resume）
-        # - 发布：由 _publish_tool_event 内部经 publish_tool_lifecycle_event 编排
-        #   （状态机 transition + 条目聚合统一入口），此处仅需 EventType
+        # - 发布：经实例级 _publish_tool_event 入口 → event_publishing 发布边界
+        #   （publish_tool_lifecycle_event 编排：状态机 transition + 条目聚合统一入口）
         from Django_xm.common.event_schema import EventType
         from Django_xm.common.execution_loop import run_astream_loop
 
@@ -335,170 +330,28 @@ class OfficialDeepAgentAdapter:
         if callbacks:
             config["callbacks"] = callbacks
 
-        # 注入 _on_tool_event 回调到 config["configurable"]：
-        # SubAgentToolEventMiddleware（子 agent middleware）会从 configurable 读取此回调，
-        # 将子 agent 工具调用事件转发到父 SSE 流。父 config 经 langgraph ensure_config
-        # 自动传播到子 agent。
-        #
-        # 回调签名：
-        #   on_tool_event(event_type, tool_call_id, tool_name, **kwargs) -> coroutine
-        # kwargs 可能包含 parameters / result / error / depth / risk_ceiling
-        # （agent_path 不再透传——spec REMOVED：agent_path 从事件 payload 中删除，
-        # 路由唯一依据 subagent_thread_id）
-        #
-        # 回调内部构造 evt dict 并调用 _publish_tool_event 发布到统一 tool_call_lifecycle.service，
-        # 与父 graph 的工具事件发布路径完全一致（service.transition_async）。
-        async def _on_tool_event(
-            event_type,
-            tool_call_id,
-            tool_name,
-            **kwargs,
-        ):
-            """子 agent 工具事件转发回调。
+        # 注入子代理/内容回调到 config["configurable"]（E6 拆分：回调构造移至
+        # event_publishing 发布边界，闭包体原样迁移、签名与注入契约不变）：
+        # - _on_tool_event：SubAgentToolEventMiddleware（子 agent middleware）从
+        #   configurable 读取此回调，将子 agent 工具调用事件转发到父 SSE 流，
+        #   父 config 经 langgraph ensure_config 自动传播到子 agent——回调构造
+        #   evt dict 后经 self._publish_tool_event（实例级入口 → 发布边界）统一发布，
+        #   与父 graph 的工具事件发布路径完全一致（service.transition_async）；
+        #   回调签名 on_tool_event(event_type, tool_call_id, tool_name, **kwargs)，
+        #   kwargs 可能包含 parameters / result / error / depth / risk_ceiling
+        #   （agent_path 不再透传——spec REMOVED：路由唯一依据 subagent_thread_id）。
+        event_publisher = self._event_publisher
+        config["configurable"]["_on_tool_event"] = event_publisher.make_tool_event_callback()
 
-            将子 agent 内部的工具调用事件转发到父 SSE 流，
-            通过统一 ``service.transition_async`` 发布到实时频道。
-
-            子 agent 嵌套层级字段（Phase E3）：
-            SubAgentToolEventMiddleware 通过 kwargs 传递
-            depth / risk_ceiling（agent_name 由回调自行读取），
-            本回调透传到 evt dict，由 _publish_tool_event 注册到 ToolCallContext，
-            最终经 transition_async 透传到事件 payload，前端 ToolCallCard 可展示
-            嵌套层级（与父 agent 直接调用的工具行为一致）；agent_path 不透传
-            （spec REMOVED：事件 payload 不再携带 agent_path）。
-            """
-            logger.info(
-                f"[OfficialDeepAgent] _on_tool_event 入口: event_type={event_type}, "
-                f"tool={tool_name}, tc_id={tool_call_id}, "
-                f"has_params={bool(kwargs.get('parameters'))}, has_result={'result' in kwargs}"
-            )
-            evt: dict[str, Any] = {
-                "event_type": event_type,
-                "tool_call_id": tool_call_id,
-                "tool_name": tool_name,
-            }
-            # 透传 parameters / result / error
-            # must-use is-not-None check: 空 dict {} 是 falsy 但仍是有效值，
-            # "if kwargs.get('parameters'):" 会丢弃空 dict → evt 缺 key → _publish_tool_event 取到 {}
-            if kwargs.get("parameters") is not None:
-                evt["parameters"] = kwargs["parameters"]
-            if "result" in kwargs and kwargs["result"] is not None:
-                evt["result"] = kwargs["result"]
-            if "error" in kwargs and kwargs["error"] is not None:
-                evt["error"] = kwargs["error"]
-            # 透传子 agent 嵌套层级字段（Phase E3）
-            # 注意：不能使用 `val not in {"", 0}` 判断——list 参与 set 成员测试
-            # 会抛 `unhashable type: 'list'`。改用 tuple 成员测试（in 逐元素 ==
-            # 比较，list == "" / list == 0 均安全返回 False）。
-            for sub_field in (
-                "parent_tool_call_id",
-                "depth",
-                "agent_name",
-                "risk_ceiling",
-                # description：子 agent 角色描述（任务目标，Task 2.4），
-                # 由 SubAgentToolEventMiddleware 从 nesting 透传，仅子 agent 事件携带
-                "description",
-                # subagent_thread_id：子代理 SSE 定向推送路由标识符（spec D10），
-                # 由 SubAgentToolEventMiddleware 从 configurable 透传，仅子 agent 事件携带
-                "subagent_thread_id",
-            ):
-                val = kwargs.get(sub_field)
-                if val is None or val in ("", 0):
-                    # 空字符串 / 0（depth=0 主 agent）不写入
-                    continue
-                evt[sub_field] = val
-            await self._publish_tool_event(evt)
-
-        config["configurable"]["_on_tool_event"] = _on_tool_event
-
-        # 注入子代理正文/思考回调到 config["configurable"]：
-        # SubAgentContentMiddleware（子 agent middleware）从 configurable 读取此回调，
-        # 在子代理每次模型调用后转发其正文与中间思考到父 SSE 流（Agent 图层嵌套）。
-        # 父 config 经 langgraph ensure_config 自动传播到子 agent。
-        #
-        # 回调签名：
-        #   on_subagent_content(agent_path, content, reasoning_content, agent_name, depth,
-        #                       subagent_thread_id, msg_id) -> coroutine
-        # （agent_path 仅保留为展示元数据参数；路由与累计唯一依据 subagent_thread_id）
-        #
-        # 处理逻辑（spec MODIFIED：路由收敛）：
-        # 1. 按 subagent_thread_id 累计到 self.subagent_contents（废弃 agent_path
-        #    拼接键），content/reasoning_content 追加式累积（多轮模型调用拼接）；
-        #    按 msg_id 幂等去重——审批 interrupt 恢复时 LangGraph 重放节点，
-        #    同一条 AIMessage 会再次触发回调，跳过已转发消息（防重复 + 防错位）；
-        # 2. 发布 STREAM_SUBAGENT_CONTENT WebSocket 事件到 session/task 频道，
-        #    前端按 subagent_thread_id 路由到对应子代理卡片实时展示
-        #    （data 不携带 agent_path，仅保留 subagent_thread_id 定向路由）；
-        # 3. 事件携带 message_id（chat 关联场景定位归属消息）。
-        if not hasattr(self, "_sent_subagent_msg_keys"):
-            self._sent_subagent_msg_keys: dict[str, set] = {}
-
-        async def _on_subagent_content(
-            agent_path,
-            content,
-            reasoning_content,
-            agent_name,
-            depth,
-            subagent_thread_id="",
-            msg_id="",
-        ):
-            """子代理正文/中间思考转发回调（spec MODIFIED：按 subagent_thread_id 路由累计）。"""
-            if not subagent_thread_id:
-                return
-            from Django_xm.common.tool_call_aggregation import merge_subagent_content
-
-            if merge_subagent_content(
-                self.subagent_contents,
-                subagent_thread_id,
-                content or "",
-                reasoning_content or "",
-                msg_id or "",
-                self._sent_subagent_msg_keys,
-            ):
-                logger.debug(
-                    f"[OfficialDeepAgent] 跳过重放子代理正文: "
-                    f"subagent_thread_id={subagent_thread_id}, msg_id={msg_id}"
-                )
-                return
-            try:
-                from Django_xm.common.event_schema import EventSource, EventType
-                from Django_xm.common.realtime_events import publish_event
-
-                _configurable = getattr(self, "_last_config", None)
-                _cfg = _configurable if isinstance(_configurable, dict) else {}
-                _session_id = (_cfg.get("configurable") or {}).get("chat_session_id") or self.chat_session_id
-                _assistant_message_id = (_cfg.get("configurable") or {}).get("assistant_message_id") or ""
-                if not _assistant_message_id:
-                    _assistant_message_id = getattr(self, "_assistant_message_id", "")
-
-                # 深度研究执行流：session/task 双频道（与工具事件路由一致）
-                await publish_event(
-                    EventType.STREAM_SUBAGENT_CONTENT,
-                    {
-                        "source": EventSource.DEEP_RESEARCH,
-                        "source_id": self.thread_id,
-                        "message_id": _assistant_message_id or None,
-                        "data": {
-                            # data 不携带 agent_path（spec MODIFIED：data.agent_path 废弃，
-                            # 路由唯一依据顶层 subagent_thread_id，协议标识符保持
-                            # snake_case，见 sessionTransformers 转换边界）
-                            "content": content,
-                            "reasoning_content": reasoning_content,
-                            "agent_name": agent_name or "",
-                            "depth": depth,
-                        },
-                    },
-                    session_id=_session_id or None,
-                    task_id=self.thread_id,
-                    subagent_thread_id=subagent_thread_id or None,
-                )
-            except Exception as e:
-                logger.warning(
-                    f"[OfficialDeepAgent] 广播子代理正文失败: "
-                    f"subagent_thread_id={subagent_thread_id}, err={e}"
-                )
-
-        config["configurable"]["_on_subagent_content"] = _on_subagent_content
+        # - _on_subagent_content：SubAgentContentMiddleware（子 agent middleware）从
+        #   configurable 读取此回调，在子代理每次模型调用后转发其正文与中间思考到
+        #   父 SSE 流（Agent 图层嵌套），父 config 经 langgraph ensure_config 自动
+        #   传播到子 agent——按 subagent_thread_id 累计（spec MODIFIED：废弃
+        #   agent_path 拼接键，仅保留为展示元数据参数）+ msg_id 幂等去重（审批
+        #   interrupt 恢复时 LangGraph 重放节点防重复/防错位）+
+        #   STREAM_SUBAGENT_CONTENT 发布（data 不携带 agent_path，仅保留
+        #   subagent_thread_id 定向路由；事件携带 message_id 定位归属消息）。
+        config["configurable"]["_on_subagent_content"] = event_publisher.make_subagent_content_callback()
         # 供 _on_subagent_content / _publish_tool_event 读取运行时 config
         # （chat_session_id / assistant_message_id 等执行期注入字段）
         self._last_config = config
@@ -516,6 +369,103 @@ class OfficialDeepAgentAdapter:
             window_seconds=resilience_config.duplicate_tool_call_window,
             threshold=resilience_config.duplicate_tool_call_threshold,
         )
+
+        # ── D4/P2-10：会话级 Token 硬预算守卫（与 chat 链 COST-01 同源对齐）──
+        # 判定实现复用共享层 SessionTokenBudgetGuard（ai_engine/services/usage_tracker.py），
+        # chat/research 不各自重建预算逻辑；挂载编排因两链事件/正文通道不同而各自实现
+        # （chat 走 SSE chunk 事件，research 走 writeback 广播 + main_content 落库）。
+        # session_id 归属：
+        # - chat 关联场景（chat_session_id 非空）：归属父 chat 会话——基线取
+        #   ChatMessage.token_count DB 聚合（get_session_total_tokens），深研自身
+        #   消耗经 callbacks 上的 TokenUsageCallbackHandler 作为当前请求增量计入，
+        #   即深研与父会话共享同一预算池（与 chat 主链子代理语义一致：子代理
+        #   LLM 调用经 langgraph 继承 callbacks 同样汇入该 cb，无独立子预算）；
+        # - 独立深度研究：chat_session_id 为空 → 回退 thread_id（research task_id，
+        #   不存在于 ChatSession → DB 聚合基线为 0），预算约束本次执行的全部
+        #   LLM 增量（主链 + 子代理）。
+        # 预算未配置（session_token_budget<=0）时守卫自动不启用（enabled=False）。
+        from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
+        from Django_xm.apps.ai_engine.services.usage_tracker import (
+            create_session_token_budget_guard,
+        )
+
+        budget_guard = create_session_token_budget_guard(self.chat_session_id or self.thread_id)
+        # 当前请求 token 增量来源：research_runner.execute_research_async 传入的
+        # TokenUsageCallbackHandler（挂在 config["callbacks"]，每轮 LLM 调用结束累加，
+        # 子代理经 langgraph config 继承汇入同一 cb）。
+        usage_cb = next(
+            (c for c in (config.get("callbacks") or []) if isinstance(c, TokenUsageCallbackHandler)),
+            None,
+        )
+
+        # 超预算收尾提示：与 chat 链 _BUDGET_EXCEEDED_NOTICE 同文案（loop.py:265），
+        # research 侧追加到 self._main_content（经 result.main_content → writeback
+        # 落库 ChatMessage.content / ResearchTask.content）。
+        _BUDGET_EXCEEDED_NOTICE = "\n\n[系统提示] 本会话 Token 预算已耗尽，已自动停止本次生成。"
+
+        async def _check_session_budget() -> dict[str, Any] | None:
+            """检查会话 Token 硬预算，超限时发布事件并追加正文提示（对齐 chat COST-01）。
+
+            Returns:
+                超限时的预算 info dict；未超限/未启用/检查异常返回 None（不阻塞主流程）。
+            """
+            if not budget_guard.enabled:
+                return None
+            try:
+                info = budget_guard.check(usage_cb.total_tokens if usage_cb is not None else 0)
+            except Exception as e:
+                logger.warning(f"[OfficialDeepAgent] 会话预算检查失败（忽略）: {e}")
+                return None
+            if not info.get("exceeded"):
+                return None
+
+            logger.warning(
+                f"[OfficialDeepAgent] 会话 Token 预算耗尽，终止本轮研究: "
+                f"task={self.thread_id}, total={info.get('total')}/{info.get('limit')}"
+            )
+            # 发布 budget_exceeded 事件（session/task 双频道路由与正文广播一致；
+            # 前端未监听不影响熔断；发布失败不阻断终止）
+            try:
+                from Django_xm.common.event_schema import EventSource
+                from Django_xm.common.realtime_events import publish_event
+
+                await publish_event(
+                    EventType.BUDGET_EXCEEDED,
+                    {
+                        "source": EventSource.DEEP_RESEARCH,
+                        "source_id": self.thread_id,
+                        "session_id": self.chat_session_id or "",
+                        "data": {
+                            "session_id": self.chat_session_id or self.thread_id,
+                            "used_tokens": info.get("total"),
+                            "budget_limit": info.get("limit"),
+                        },
+                    },
+                    session_id=self.chat_session_id or None,
+                    task_id=self.thread_id,
+                )
+            except Exception:
+                logger.exception("[OfficialDeepAgent] budget_exceeded 事件发布失败（熔断继续）")
+            # 正文追加系统提示并广播（随 result.main_content 落库，对齐 chat
+            # "正文追加系统提示 → finalizer 持久化"语义）
+            self._main_content += _BUDGET_EXCEEDED_NOTICE
+            self._budget_exceeded = True
+            try:
+                from Django_xm.apps.research.services.writeback import broadcast_stream_content
+
+                _cfg_budget = config.get("configurable") or {}
+                broadcast_stream_content(
+                    session_id=self.chat_session_id,
+                    task_id=self.thread_id,
+                    message_id=_cfg_budget.get("assistant_message_id")
+                    or getattr(self, "_assistant_message_id", ""),
+                    content=self._main_content,
+                )
+            except Exception as _budget_broadcast_err:
+                logger.warning(
+                    f"[OfficialDeepAgent] 预算提示正文广播失败（熔断继续）: {_budget_broadcast_err}"
+                )
+            return info
 
         # StreamContext-like 对象，供 AgentExecutor 使用
         # - retry_count: 重试计数（每个外层 interrupt 循环重置）
@@ -646,6 +596,13 @@ class OfficialDeepAgentAdapter:
                             # 重复工具调用检测：仅对 PENDING 事件记录，
                             # 避免对同一 tool_call_id 的 COMPLETED/FAILED 重复计数
                             if evt.get("event_type") == EventType.TOOL_CALL_PENDING:
+                                # D4/P2-10：每轮工具调用前检查会话 Token 硬预算
+                                # （与 chat loop.py 同语义——工具循环自我膨胀的
+                                # 服务端刹车；超限置 should_break 后不再发布该
+                                # 工具事件，公共循环立即中断 astream）
+                                if await _check_session_budget() is not None:
+                                    control.should_break = True
+                                    return
                                 warning = duplicate_detector.record(
                                     evt.get("tool_name", "unknown"),
                                     evt.get("parameters") or {},
@@ -654,97 +611,23 @@ class OfficialDeepAgentAdapter:
                                     control.warnings.append(SystemMessage(content=warning.to_prompt()))
                             await self._publish_tool_event(evt)
 
-                        # 捕获 LLM thinking/reasoning 内容（AIMessageChunk.additional_kwargs.reasoning_content）
-                        # 累积后广播完整内容：每次 chunk 追加到 accumulated_reasoning，
-                        # 广播 content 为累积后的完整推理文本（前端 AiReasoning 覆盖语义下内容完整）。
-                        thinking_text = extract_thinking_content(msg_obj)
-                        if thinking_text:
-                            self.accumulated_reasoning = (self.accumulated_reasoning or "") + thinking_text
-                            _configurable = config_arg.get("configurable", {})
-                            _session_id = _configurable.get("chat_session_id") or self.chat_session_id
-                            _message_id = _configurable.get("assistant_message_id")
-                            if _session_id and _message_id:
-                                try:
-                                    from Django_xm.apps.research.services.writeback import (
-                                        broadcast_stream_reasoning,
-                                    )
-
-                                    broadcast_stream_reasoning(
-                                        session_id=_session_id,
-                                        task_id=self.thread_id,
-                                        message_id=_message_id,
-                                        content=self.accumulated_reasoning,
-                                    )
-                                except Exception as e:
-                                    logger.warning(
-                                        f"[OfficialDeepAgent] 广播推理内容失败: "
-                                        f"session={_session_id}, msg={_message_id}, err={e}"
-                                    )
-
-                        # 主 agent 图层累计正文（position 注入依据 + 过程信息权威源）：
-                        # messages 模式 chunk 含 AIMessageChunk（主 agent 模型输出）与
-                        # ToolMessage（工具返回文本）。**仅累计 AIMessageChunk**——
-                        # ToolMessage.content（如 spawn 返回的"子代理已启动..."）若混入
-                        # main_content，会同时污染：① 正文渲染（工具文本重复显示在
-                        # 主消息流）；② position 基准（len(_main_content) 掺入工具文本，
-                        # 与前端最终 content 错位 → 工具卡切段乱序，wait/子代理卡被排末尾）。
-                        # chat 链路同构实现（loop.py 用事件 content 累计，天然仅含 AI 文本）。
-                        from langchain_core.messages import AIMessageChunk
-
-                        _chunk_content = ""
-                        if isinstance(msg_obj, AIMessageChunk):
-                            _chunk_content = getattr(msg_obj, "content", None) or ""
-                            if _chunk_content:
-                                self._main_content += _chunk_content
-                                # 实时广播主 agent 累计正文（对齐 chat 链路 chunk →
-                                # STREAM_CONTENT_UPDATE），使前端 content 非空、
-                                # position 内联工具卡生效（乱序根因修复）。节流由
-                                # broadcast_stream_content 内部处理。
-                                try:
-                                    from Django_xm.apps.research.services.writeback import (
-                                        broadcast_stream_content,
-                                    )
-
-                                    _cfg_for_content = config_arg.get("configurable", {})
-                                    _content_session_id = (
-                                        _cfg_for_content.get("chat_session_id") or self.chat_session_id
-                                    )
-                                    _content_message_id = (
-                                        _cfg_for_content.get("assistant_message_id")
-                                        or getattr(self, "_assistant_message_id", "")
-                                    )
-                                    broadcast_stream_content(
-                                        session_id=_content_session_id,
-                                        task_id=self.thread_id,
-                                        message_id=_content_message_id,
-                                        content=self._main_content,
-                                    )
-                                except Exception as _content_broadcast_err:
-                                    logger.warning(
-                                        f"[OfficialDeepAgent] 广播主 agent 正文失败: "
-                                        f"err={_content_broadcast_err}"
-                                    )
+                        # 捕获 LLM thinking/reasoning 与主 agent 正文累计广播
+                        # （E6 拆分：两段广播体原样迁移至 event_publishing 发布边界，
+                        # 先推理后正文的段序保持；累计容器仍在实例上）
+                        event_publisher.handle_reasoning_chunk(msg_obj, config_arg)
+                        event_publisher.handle_content_chunk(msg_obj, config_arg)
 
                         # 检测到重复调用：中断当前流以注入警告（公共循环据
                         # control.warnings 中断 astream 并注入后重入）
                         if control.warnings:
                             return
 
-                        # 子代理重试指令注入：每轮 messages chunk 后非阻塞消费
-                        # 重试队列，有指令时由公共循环经 aupdate_state 追加
-                        # SystemMessage 到 graph state 后重入 astream。
-                        # 注意：审批中断（resume_values 非空）时流即将结束，
-                        # 恢复由外层 Command(resume=...) 驱动，若此刻注入会丢失
-                        # 恢复决策 → 跳过本轮，指令在恢复流中继续被消费。
-                        pending_retries = self._drain_retry_instructions()
-                        if pending_retries:
-                            if resume_values:
-                                logger.info(
-                                    "[OfficialDeepAgent] 存在待恢复审批决策，"
-                                    "重试指令延后到恢复流消费"
-                                )
-                            else:
-                                control.retry_messages.extend(pending_retries)
+                        # D4/P2-10：本轮 LLM 调用结束（流式末尾 chunk 携带
+                        # usage_metadata）后检查会话预算（与 chat loop.py 同语义）
+                        if getattr(msg_obj, "usage_metadata", None) is not None:
+                            if await _check_session_budget() is not None:
+                                control.should_break = True
+                                return
 
                         # 公共循环契约：process_chunk 必须是 async generator
                         # （execution_loop 以 async for 迭代，chat 模块同构）。
@@ -755,111 +638,23 @@ class OfficialDeepAgentAdapter:
 
                     # updates 模式处理器（公共循环注入）
                     async def _handle_updates(mode_data, resume_values, suspend_box, control):
+                        # 审批中断解析/决策收集与业务等待挂起判定（E6 拆分）：
+                        # 协议体原样迁移至 resume_protocol.handle_resume_interrupt，
+                        # 本协程仅遍历 interrupt 条目并回填 suspend_box（公共循环
+                        # 契约不变：async generator + 写入 resume_values/suspend_box）。
                         if isinstance(mode_data, dict) and "__interrupt__" in mode_data:
                             interrupts = mode_data["__interrupt__"]
                             if interrupts:
                                 for intr in interrupts:
-                                    if isinstance(intr, Interrupt):
-                                        interrupt_value = intr.value
-                                        interrupt_id = intr.id
-                                    elif isinstance(intr, dict):
-                                        interrupt_value = intr.get("value", intr)
-                                        interrupt_id = intr.get("id", "")
-                                    else:
-                                        interrupt_value = intr
-                                        interrupt_id = ""
-
-                                    # 业务等待挂起（spec D4）：wait_for_subagent 触发，
-                                    # 非审批 interrupt，不产出审批 UI。记录挂起信息后
-                                    # 退出流，由外层返回 suspended 结果（父协程退出）。
-                                    if is_subagent_wait_interrupt(interrupt_value):
-                                        _wait_ids = interrupt_value.get("subagent_thread_ids", []) or []
-                                        suspend_box["suspend"] = {
-                                            "subagent_thread_ids": _wait_ids,
-                                            "interrupt_id": interrupt_id,
-                                        }
-                                        logger.info(
-                                            f"[OfficialDeepAgent] 业务等待挂起: "
-                                            f"subagents={_wait_ids}, "
-                                            f"interrupt_id={interrupt_id}"
-                                        )
+                                    suspend_info = await handle_resume_interrupt(
+                                        intr,
+                                        on_interrupt=on_interrupt,
+                                        timeout_mgr=timeout_mgr,
+                                        resume_values=resume_values,
+                                    )
+                                    if suspend_info is not None:
+                                        suspend_box["suspend"] = suspend_info
                                         return
-
-                                    if is_approval_interrupt(interrupt_value):
-                                        # 使用公共审批中断解析器，统一批量/单工具两种格式
-                                        from Django_xm.common.approval_parser import (
-                                            parse_approval_interrupt as _parse_interrupt,
-                                        )
-
-                                        interrupt_list = _parse_interrupt(
-                                            interrupt_value,
-                                            graph_interrupt_id=interrupt_id,
-                                            langgraph_resume_id=interrupt_id,
-                                        )
-                                        if not interrupt_list:
-                                            continue
-
-                                        is_batch = len(interrupt_list) > 1
-                                        logger.info(
-                                            f"[OfficialDeepAgent] 审批中断: "
-                                            f"{'批量' if is_batch else '单工具'}, "
-                                            f"{len(interrupt_list)} 个工具, "
-                                            f"tools={[b['tool_name'] for b in interrupt_list]}"
-                                        )
-                                        if on_interrupt is not None:
-                                            logger.info(
-                                                f"[OfficialDeepAgent] 实时通知审批回调"
-                                                f"{'(批量)' if is_batch else ''}: "
-                                                f"{len(interrupt_list)} 个工具"
-                                            )
-                                            async def _call_interrupt_handler(interrupts):
-                                                """调用审批中断回调（暂停超时计时）。
-
-                                                会话级单执行流：on_interrupt 必须返回非空决策；
-                                                空 dict 表示审批创建失败，直接抛错终止（不再走
-                                                Celery 时代"退出等待外部恢复"的 Path D 语义）。
-                                                """
-                                                timeout_mgr.pause()
-                                                try:
-                                                    result = on_interrupt(interrupts)
-                                                    if asyncio.iscoroutine(result):
-                                                        result = await result
-                                                finally:
-                                                    timeout_mgr.resume()
-                                                assert_non_empty_decision(result)
-                                                return result
-
-                                            batch_resume = await _call_interrupt_handler(interrupt_list)
-                                            # 按 langgraph_resume_id 分组构造 resume dict
-                                            # Command(resume=...) 的 key 必须是 LangGraph Interrupt.id
-                                            langgraph_id = interrupt_list[0].get("langgraph_resume_id", "")
-                                            if isinstance(batch_resume, dict):
-                                                if langgraph_id:
-                                                    resume_values.setdefault(
-                                                        langgraph_id, {}
-                                                    ).update(batch_resume)
-                                                else:
-                                                    resume_values.update(batch_resume)
-                                            elif langgraph_id:
-                                                for bi in interrupt_list:
-                                                    resume_values.setdefault(
-                                                        langgraph_id, {}
-                                                    )[bi["interrupt_id"]] = batch_resume
-                                            else:
-                                                for bi in interrupt_list:
-                                                    resume_values[
-                                                        bi["interrupt_id"]
-                                                    ] = batch_resume
-                                        else:
-                                            langgraph_id = interrupt_list[0].get("langgraph_resume_id", "")
-                                            if langgraph_id:
-                                                for bi in interrupt_list:
-                                                    resume_values.setdefault(
-                                                        langgraph_id, {}
-                                                    )[bi["interrupt_id"]] = False
-                                            else:
-                                                for bi in interrupt_list:
-                                                    resume_values[bi["interrupt_id"]] = False
 
                         # 公共循环契约：handle_updates 必须是 async generator
                         # （execution_loop 以 async for 迭代）。审批/业务等待处理
@@ -946,18 +741,12 @@ class OfficialDeepAgentAdapter:
                 accumulated_result = {}
 
             final_report = _extract_ai_response(accumulated_result)
-            files_info = self._extract_files_info(accumulated_result)
-            disk_files = self._scan_disk_files()
+            files_info = extract_files_info(accumulated_result)
+            disk_files = scan_disk_files(self.work_dir)
 
             # 当 AI 回复过短时，从磁盘文件提取完整报告
-            if len(final_report.strip()) < 200 and disk_files:
-                for report_key in ("reports/final_report.md", "final_report.md"):
-                    if report_key in disk_files:
-                        report_content = disk_files[report_key].get("content", "")
-                        if len(report_content.strip()) > len(final_report.strip()):
-                            final_report = report_content
-                            logger.info(f"[OfficialDeepAgent] 使用磁盘报告文件替代短回复 ({len(final_report)} 字符)")
-                        break
+            # （E6 拆分：3 处重复兜底块参数化归一，见 result_extraction）
+            final_report = apply_short_report_disk_fallback(final_report, disk_files)
 
             result = {
                 "success": True,
@@ -976,6 +765,10 @@ class OfficialDeepAgentAdapter:
             # 落库（ChatMessage.content / ResearchTask.content），供前端刷新后
             # 恢复主 agent 过程正文（position 内联对齐的权威正文）。
             result["main_content"] = self._main_content
+            # D4/P2-10：预算熔断标记（对齐 chat data["_budget_exceeded"]），
+            # 供上层（research_runner/session_executor）感知非正常终止原因。
+            if self._budget_exceeded:
+                result["budget_exceeded"] = True
             # Agent 图层嵌套规范 Task 1.5：子代理图层正文/思考携带到结果，
             # 由 research_runner 透传到 writeback_to_chat_message 落库
             if self.subagent_contents:
@@ -996,193 +789,22 @@ class OfficialDeepAgentAdapter:
                 "error": error_msg,
             }
 
-    def _drain_retry_instructions(self) -> list[SystemMessage]:
-        """非阻塞消费子代理重试指令队列，构造注入用的 SystemMessage 列表。
-
-        由 astream chunk 循环在每轮 chunk 后调用；队列为空时返回空列表。
-        指令内容携带目标子代理名称/调用链路/原始委派入参，主 agent 收到后
-        以原始入参重新调用目标子代理（Task 3 单独重启失败子代理）。
-
-        Returns:
-            list[SystemMessage]：待注入 graph state 的重试指令消息
-        """
-        if self._retry_instruction_queue is None:
-            return []
-        messages: list[SystemMessage] = []
-        while True:
-            try:
-                instruction = self._retry_instruction_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            messages.append(self._build_retry_system_message(instruction))
-        return messages
-
-    @staticmethod
-    def _build_retry_system_message(instruction: dict) -> SystemMessage:
-        """构造子代理重试指令 SystemMessage。
-
-        Args:
-            instruction: 重试指令 dict，字段：
-                - agent_name: 目标子代理名称（agent_path 末位）
-                - agent_path: 完整调用链路（如 ["main", "web-researcher"]）
-                - tool_call_id: 失败子代理工具调用 ID
-                - original_args: 子代理原始委派入参（task 工具参数）
-
-        Returns:
-            SystemMessage：注入 graph state 的重试指令（主 agent 下一轮 LLM 可见）
-        """
-        import json as _json
-
-        agent_name = instruction.get("agent_name") or ""
-        agent_path = instruction.get("agent_path") or []
-        tool_call_id = instruction.get("tool_call_id") or ""
-        original_args = instruction.get("original_args") or {}
-        path_display = " → ".join(str(p) for p in agent_path) if agent_path else agent_name
-        args_display = ""
-        if isinstance(original_args, dict) and original_args:
-            try:
-                args_display = _json.dumps(original_args, ensure_ascii=False)
-            except (TypeError, ValueError):
-                args_display = str(original_args)
-        content = (
-            "【用户指令：重新执行失败的子代理】\n"
-            f"目标子代理: {agent_name or 'unknown'}\n"
-            f"调用链路: {path_display}\n"
-            f"失败工具调用 ID: {tool_call_id or 'unknown'}\n"
-            f"原始委派参数: {args_display or '（无，请根据当前研究进展重新委派）'}\n"
-            "要求：立即通过 task 工具重新调用该子代理完成同一研究任务，"
-            "执行过程中如遇工具失败请调整策略重试，完成后将结果汇总到最终报告。"
-        )
-        return SystemMessage(content=content)
-
     async def _publish_tool_event(self, evt: dict[str, Any]) -> None:
-        """发布单个工具调用生命周期事件到实时频道（唯一编排入口调用方）。
+        """发布单个工具调用生命周期事件到实时频道（E6 拆分：实现委托发布边界）。
 
-        收敛历史内联四步（register → bind_position → transition_async →
-        aggregate_tool_entry）为单次 ``publish_tool_lifecycle_event(...)`` 调用，
-        与 chat 主链路 / chat 子代理共享同一编排实现（参数兜底、PENDING 补发
-        防护、position 绑定、条目聚合均由编排函数内置）。
+        保留实例级入口的原因：
+        - test_session_budget 等测试以实例属性替换本方法作为工具事件注入缝；
+        - 子代理回调（event_publishing.make_tool_event_callback）与 _process_chunk
+          均经该入口发布，实例属性查找保证替换全局生效。
 
-        路由策略（与 writeback.broadcast_stream_completed 一致）：
-        - chat 关联场景（self.chat_session_id 非空）：session + task 双频道
-          由 cross_module_id 触发，transition 从 context 透传给底层 publish_tool_call
-        - 独立深度研究场景：仅 task 频道
-
-        子 agent 嵌套层级字段（Phase E3）：
-        evt 中的 parent_tool_call_id / depth / agent_name / risk_ceiling / description /
-        subagent_thread_id（由 _on_tool_event 从 SubAgentToolEventMiddleware 透传）
-        注册到 ToolCallContext 并经 transition 透传到事件 payload；主 agent 工具不携带
-        （evt 中无对应 key）。agent_path 不再注册/透传（spec REMOVED：路由唯一依据
-        subagent_thread_id）。
-
-        Args:
-            evt: ToolEventExtractor.feed 返回的事件 dict（或 _on_tool_event 构造），字段：
-                - event_type: EventType (TOOL_CALL_PENDING / TOOL_CALL_COMPLETED / TOOL_CALL_FAILED)
-                - tool_call_id: str
-                - tool_name: str
-                - parameters: dict
-                - result: str (仅 COMPLETED)
-                - error: str (仅 FAILED)
-                - parent_tool_call_id/depth/agent_name/risk_ceiling/description/
-                  subagent_thread_id: 子 agent 嵌套字段（可选）
+        实现原样迁移至 ``DeepResearchEventPublisher.publish_tool_event``
+        （event_publishing.py）：收敛历史内联四步（register → bind_position →
+        transition_async → aggregate_tool_entry）为单次 ``publish_tool_lifecycle_event``
+        调用，与 chat 主链路 / chat 子代理共享同一编排实现（跨模块路由、
+        position 绑定、条目聚合、参数兜底、PENDING 补发防护）——payload 形状
+        与发布顺序不变。
         """
-        from Django_xm.common.approval_utils import derive_cross_module_id_from_source
-        from Django_xm.common.event_schema import EventSource, EventType
-        from Django_xm.common.tool_event_publisher import publish_tool_lifecycle_event
-
-        event_type = evt.get("event_type")
-        tool_call_id = evt.get("tool_call_id", "") or ""
-        tool_name = evt.get("tool_name") or "unknown"
-        parameters = evt.get("parameters") or {}
-
-        logger.info(
-            f"[OfficialDeepAgent] _publish_tool_event 入口: event_type={event_type}, "
-            f"tool={tool_name}, tc_id={tool_call_id}, "
-            f"params_keys={list(parameters.keys()) if isinstance(parameters, dict) else type(parameters).__name__}"
-        )
-
-        # event_type 必须为 EventType 枚举（提取器保证）
-        # 防御性校验：跳过非法事件类型，避免 transition_async 内部抛 KeyError
-        if not isinstance(event_type, EventType):
-            logger.warning(
-                f"[OfficialDeepAgent] 跳过非 EventType 事件: event_type={event_type!r}, tool_call_id={tool_call_id}"
-            )
-            return
-
-        # 跨模块同步目标：chat 关联场景非空 → session + task 双频道
-        cross_module_id = derive_cross_module_id_from_source("deep_research", self.chat_session_id)
-
-        # message_id：chat 关联场景优先从当前 langgraph 运行上下文读取
-        # assistant_message_id（research_runner 在 config.configurable 中注入），
-        # 回退实例属性。前端工具卡归属依赖 messageBackendId，缺失时聊天深度研究
-        # 模式的工具卡片会消失（根因修复）。
-        _assistant_message_id = ""
-        if self.chat_session_id:
-            try:
-                from langgraph.config import get_config as _get_config
-
-                _cfg = _get_config()
-                if isinstance(_cfg, dict):
-                    _assistant_message_id = (
-                        (_cfg.get("configurable") or {}).get("assistant_message_id") or ""
-                    )
-            except Exception:
-                _assistant_message_id = ""
-        if not _assistant_message_id:
-            _assistant_message_id = getattr(self, "_assistant_message_id", "")
-
-        # 提取子 agent 嵌套层级字段（Phase E3）：evt 无对应 key 时取默认空值（主 agent）
-        sub_parent_tool_call_id = evt.get("parent_tool_call_id", "") or ""
-        sub_depth = evt.get("depth", 0)
-        if not isinstance(sub_depth, int) or sub_depth < 0:
-            sub_depth = 0
-        sub_agent_name = evt.get("agent_name", "") or ""
-        # risk_ceiling 统一转字符串（可能是 RiskLevel 枚举）
-        sub_risk_ceiling_raw = evt.get("risk_ceiling")
-        if sub_risk_ceiling_raw is not None and not isinstance(sub_risk_ceiling_raw, str):
-            sub_risk_ceiling = (
-                sub_risk_ceiling_raw.value if hasattr(sub_risk_ceiling_raw, "value") else str(sub_risk_ceiling_raw)
-            )
-        else:
-            sub_risk_ceiling = sub_risk_ceiling_raw or ""
-        # description：子 agent 角色描述（任务目标，Task 2.4），仅子 agent 事件携带
-        sub_description = evt.get("description", "") or ""
-        # subagent_thread_id：子代理 SSE 定向推送路由标识符（spec D10），仅子代理事件携带
-        sub_subagent_thread_id = evt.get("subagent_thread_id", "") or ""
-
-        # position 采集（按图层局部化，单一权威来源，D3）：
-        # - 子代理（subagent_thread_id 非空）：该子代理图层已转发正文 content 长度
-        # - 主 agent：主 agent 已输出累计正文 _main_content 长度
-        # 传入编排函数经 service.bind_position 写入 context（仅补全空字段，永久不变）。
-        if sub_subagent_thread_id:
-            _sub_entry = self.subagent_contents.get(sub_subagent_thread_id) or {}
-            _position: int | None = len(_sub_entry.get("content") or "")
-        else:
-            _position = len(self._main_content)
-
-        # 唯一编排入口：register → bind_position → transition_async → aggregate_tool_entry
-        # （参数权威源兜底、PENDING 补发防护、position 绑定、条目聚合均内置；
-        #  entries 传 self._tool_entries → 主/子代理统一落库条目聚合）。
-        await publish_tool_lifecycle_event(
-            module=EventSource.DEEP_RESEARCH,
-            module_id=self.thread_id,
-            tool_call_id=tool_call_id,
-            tool_name=tool_name,
-            event_type=event_type,
-            message_id=_assistant_message_id,
-            parameters=parameters,
-            result=evt.get("result"),
-            error=evt.get("error"),
-            cross_module_id=cross_module_id,
-            parent_tool_call_id=sub_parent_tool_call_id,
-            depth=sub_depth,
-            agent_name=sub_agent_name,
-            risk_ceiling=sub_risk_ceiling,
-            description=sub_description,
-            subagent_thread_id=sub_subagent_thread_id,
-            entries=self._tool_entries,
-            position=_position,
-        )
+        await self._event_publisher.publish_tool_event(evt)
 
     async def _rebuild_with_degraded_tools(self, degraded_tools: list[Any]) -> Any | None:
         """使用降级工具集重建 graph
@@ -1276,51 +898,3 @@ class OfficialDeepAgentAdapter:
             "thread_id": self.thread_id,
             "engine": "deepagents_official",
         }
-
-    def _scan_disk_files(self) -> dict[str, Any]:
-        if not self.work_dir or not os.path.isdir(self.work_dir):
-            return {}
-        files = {}
-        for subdir in ("notes", "plans", "reports"):
-            sub_path = os.path.join(self.work_dir, subdir)
-            if not os.path.isdir(sub_path):
-                continue
-            for root, _dirs, fnames in os.walk(sub_path):
-                for fname in fnames:
-                    full_path = os.path.join(root, fname)
-                    rel_path = os.path.relpath(full_path, self.work_dir).replace("\\", "/")
-                    try:
-                        with open(full_path, encoding="utf-8") as f:
-                            content = f.read()
-                        files[rel_path] = {
-                            "content": content,
-                            "encoding": "utf-8",
-                        }
-                    except (UnicodeDecodeError, OSError):
-                        pass
-        if files:
-            logger.info(f"[OfficialDeepAgent] 从磁盘扫描到 {len(files)} 个文件: {list(files.keys())}")
-        return files
-
-    @staticmethod
-    def _extract_files_info(result: dict[str, Any]) -> list[dict[str, Any]]:
-        files = []
-        messages = result.get("messages", [])
-        for msg in messages:
-            if hasattr(msg, "tool_calls"):
-                for tc in msg.tool_calls:
-                    if tc.get("name") == "write_file":
-                        args = tc.get("args", {})
-                        path = args.get("path", "")
-                        if path:
-                            files.append(
-                                {
-                                    "path": path,
-                                    "name": os.path.basename(path),
-                                    "type": "file",
-                                    "size": len(args.get("content", "")),
-                                }
-                            )
-            if hasattr(msg, "name") and msg.name == "write_file":
-                pass
-        return files

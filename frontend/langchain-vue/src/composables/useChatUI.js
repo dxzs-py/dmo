@@ -55,9 +55,10 @@ export function useChatUI() {
   const handleRegenerate = async (index) => {
     // 链式删除进行中（Task 7.4）禁止重新生成（store 层亦有守卫，此处 UI 层提前拦截）
     if (chatStore.isLoading || chatStore.isDeleting) return
+    // 不弹"正在重新生成回复..."提示（audit P3-04）：regenerateMessage 在流结束后才
+    // resolve，届时弹"正在生成"与实际状态相反；流式状态由消息区 typing 指示呈现
     try {
       await chatStore.regenerateMessage(index)
-      ElMessage.success('正在重新生成回复...')
     } catch {
       ElMessage.error('重新生成失败，请稍后重试')
     }

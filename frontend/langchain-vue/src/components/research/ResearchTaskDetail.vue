@@ -10,6 +10,18 @@
           <el-tag :type="getTaskStatusTagType(task.status)">
             {{ getTaskStatusText(task.status) }}
           </el-tag>
+          <!-- 取消入口（C1/P2-1）：仅活跃态可取消；终态化由后端执行服务完成，
+               状态经 status_change 实时通道刷新，已产出部分成果照常展示 -->
+          <el-button
+            v-if="canCancel"
+            link
+            type="danger"
+            size="small"
+            :loading="cancelLoading"
+            @click="emit('cancel', task)"
+          >
+            取消任务
+          </el-button>
           <el-button link type="primary" size="small" @click="emit('back')">
             返回列表
           </el-button>
@@ -60,14 +72,20 @@
         || task.status === ResearchTaskStatus.AWAITING_APPROVAL"
       class="progress-section"
     >
+      <!-- F4/UX-02：阶段真实信息不足以支撑可靠进度分档（status_change 仅
+           research_started/waiting_subagent 两个运行中阶段标记），按审计第二案
+           去掉时间估算百分比数字，改用不确定态动画条 + 用时计时 + 阶段文本
+           （阶段文本 progressMessage 见头部标签）；终态（completed/failed/cancelled）
+           不渲染本区域，无残留伪进度 -->
       <el-progress
-        :percentage="progressPercentage"
-        :status="task.status === ResearchTaskStatus.PENDING ? '' : undefined"
+        :percentage="50"
+        :indeterminate="true"
+        :show-text="false"
+        :duration="2"
         :stroke-width="8"
         striped
-        striped-flow
       />
-      <p class="progress-hint">深度研究通常需要 5-10 分钟，请耐心等待...</p>
+      <p class="progress-hint">已用时 {{ formatDuration(elapsedSeconds) }} · 深度研究通常需要 5-10 分钟，请耐心等待...</p>
     </div>
 
     <!-- 统一渲染管线：推理区 → 正文内联工具切段 → orphans 子代理卡
@@ -112,7 +130,7 @@ import { buildSubagentsFromMessage } from '@/utils/subagentAggregation'
 import { useSubagents, subagentsMetaMap } from '@/composables/useSubagents'
 import { useSubagentExpansion } from '@/composables/useSubagentExpansion'
 import ResearchTaskReport from './ResearchTaskReport.vue'
-import { formatDate } from '@/utils/format'
+import { formatDate, formatDuration } from '@/utils/format'
 import { getTaskStatusText, getTaskStatusTagType } from '@/utils/researchTaskStatus'
 import { isApprovalDisabled } from '@/utils/approvalGate'
 import { ResearchTaskStatus } from '@/types'
@@ -147,8 +165,8 @@ const props = defineProps({
     type: Object,
     default: null,
   },
-  /** 进度百分比 */
-  progressPercentage: {
+  /** 研究已用时（秒，useDeepResearchPolling elapsed timer；F4/UX-02 替代原伪进度百分比） */
+  elapsedSeconds: {
     type: Number,
     default: 0,
   },
@@ -178,6 +196,11 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  /** 取消请求进行中（按钮 loading 态） */
+  cancelLoading: {
+    type: Boolean,
+    default: false,
+  },
 })
 
 const emit = defineEmits([
@@ -188,7 +211,17 @@ const emit = defineEmits([
   'load-doc-analysis',
   'approve',
   'reject',
+  'cancel',
 ])
+
+// 取消按钮可见性：仅活跃态（pending/running/awaiting_approval）可取消，
+// 与后端 CANCELLABLE_STATUSES 口径一致（终态拒绝并返回 409）
+const ACTIVE_STATUSES = [
+  ResearchTaskStatus.PENDING,
+  ResearchTaskStatus.RUNNING,
+  ResearchTaskStatus.AWAITING_APPROVAL,
+]
+const canCancel = computed(() => ACTIVE_STATUSES.includes(props.task?.status))
 
 // 子代理渲染（spec D10：摘要卡片 + 独立展开，替代 AgentLayerCard 递归）。
 // 深度研究模块子代理按 parent_thread_id = taskId 关联（无 assistantMessageId 分消息）。
@@ -200,12 +233,14 @@ const { fetchSubagents } = useSubagents()
 // （合并顺序非 seq），不排序会导致 wait 等工具卡乱序渲染。
 const mainToolCalls = computed(() => filterMainToolCalls(props.toolCalls))
 
-// 审批控件置灰（统一 chat 语义：任务终态视为固化，其余可交互）
+// 审批控件置灰（统一 chat 语义：任务终态视为固化，其余可交互）。
+// C1：cancelled 同为终态（服务端正在收尾遗留审批批次），控件必须禁用
 const approvalDisabled = computed(() =>
   isApprovalDisabled({
     isFinalized:
       props.task?.status === ResearchTaskStatus.COMPLETED ||
-      props.task?.status === ResearchTaskStatus.FAILED,
+      props.task?.status === ResearchTaskStatus.FAILED ||
+      props.task?.status === ResearchTaskStatus.CANCELLED,
   })
 )
 

@@ -15,9 +15,9 @@ import logging
 from asgiref.sync import sync_to_async
 
 from Django_xm.common.signal_bus import (
+    SESSION_TYPE_CHAT,
     SIGNAL_APPROVAL,
     SIGNAL_PREFIX,
-    SIGNAL_RETRY_SUBAGENT,
     SIGNAL_START,
     SIGNAL_STOP,
     get_signal_redis_url,
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # 不属于跨进程信令，收到会导致 "未知信令类型: kind=result" 告警）
 SIGNAL_PATTERNS = [
     f"{SIGNAL_PREFIX}:{kind}:*"
-    for kind in (SIGNAL_START, SIGNAL_APPROVAL, SIGNAL_STOP, SIGNAL_RETRY_SUBAGENT)
+    for kind in (SIGNAL_START, SIGNAL_APPROVAL, SIGNAL_STOP)
 ]
 
 # 默认最大并发会话数
@@ -126,7 +126,9 @@ class SessionManager:
         if self._recovery_sweep_task and not self._recovery_sweep_task.done():
             self._recovery_sweep_task.cancel()
         for thread_id, executor in list(self._sessions.items()):
-            executor.stop()
+            # 停机不是用户取消（C1）：research 任务保持可恢复态，重启后由
+            # recover_unfinished 恢复续跑，不得终态化为 CANCELLED
+            executor.stop(finalize_cancel=False)
             logger.info(f"[SessionManager] 已停止会话: thread_id={thread_id}")
         self._sessions.clear()
         if self._pubsub:
@@ -158,6 +160,14 @@ class SessionManager:
                 f"[SessionManager] 超过最大并发会话数({self.max_concurrency})，拒绝启动: thread_id={thread_id}"
             )
             return
+        # C1（P2-1）取消竞态防护：任务已被取消（取消信令先于迟到 start 信令/
+        # 恢复扫描处理，DB 兜底终态化）则拒绝启动，防止已取消任务复活续跑。
+        # start_session 是会话创建唯一入口，此处单点拦截覆盖信令启动与恢复扫描。
+        if payload.get("session_type") != SESSION_TYPE_CHAT and await self._is_research_task_cancelled(
+            thread_id
+        ):
+            logger.info(f"[SessionManager] 任务已取消，拒绝启动: thread_id={thread_id}")
+            return
 
         executor = SessionExecutor(
             self,
@@ -177,12 +187,71 @@ class SessionManager:
             f"session_id={payload.get('session_id')}, active={len(self._sessions)}"
         )
 
-    def stop_session(self, thread_id: str) -> None:
-        """终止指定会话。"""
+    async def stop_session(self, thread_id: str) -> None:
+        """终止指定会话（C1/P2-1：信令分发入口，含 research 无执行器 DB 兜底）。"""
         executor = self._sessions.get(thread_id)
         if executor:
             executor.stop()
             logger.info(f"[SessionManager] 已终止会话: thread_id={thread_id}")
+            return
+        # 无内存执行器：PENDING 未启动（启动信令丢失/未送达）或已结束清理。
+        # research 任务 DB 兜底条件终态化（原子，防与完成终态竞争），否则已取消
+        # 的 PENDING 任务会被 5min 恢复扫描补偿启动（复活续跑）。chat 无任务表，
+        # 无兜底语义（信令丢失时停止按钮可重发，无副作用）。
+        if await self._fallback_cancel_research_task(thread_id):
+            logger.info(
+                f"[SessionManager] 停止信令无活跃会话，DB 兜底取消研究任务: thread_id={thread_id}"
+            )
+
+    async def _fallback_cancel_research_task(self, thread_id: str) -> bool:
+        """无执行器时兜底取消研究任务（条件终态化 + 状态广播，跨浏览器实时同步）。"""
+        from Django_xm.apps.research.models import ResearchTask, ResearchTaskStatus
+        from Django_xm.apps.research.services.task_manager import cancel_task_if_active
+
+        try:
+            cancelled = await sync_to_async(cancel_task_if_active)(thread_id)
+            if not cancelled:
+                return False
+            session_id = await sync_to_async(
+                lambda: (
+                    ResearchTask.objects.filter(task_id=thread_id)
+                    .values_list("session_id", flat=True)
+                    .first()
+                )
+                or None
+            )()
+            from Django_xm.common.realtime_sync import publish_task_status
+
+            await publish_task_status(
+                task_id=thread_id,
+                status=ResearchTaskStatus.CANCELLED,
+                current_step="cancelled",
+                error="用户已取消该研究任务",
+                cross_module_id=session_id,
+            )
+            return True
+        except Exception:
+            logger.exception(f"[SessionManager] 兜底取消研究任务失败: thread_id={thread_id}")
+            return False
+
+    async def _is_research_task_cancelled(self, thread_id: str) -> bool:
+        """任务是否已被取消（start_session 取消竞态防护，C1）。
+
+        仅 research 会话调用（chat 无任务表）。查询异常放行启动（失败安全：
+        宁可多跑一个任务，不因防护检查故障阻塞正常启动）。
+        """
+        from Django_xm.apps.research.models import ResearchTask, ResearchTaskStatus
+
+        try:
+            status = await sync_to_async(
+                lambda: ResearchTask.objects.filter(task_id=thread_id)
+                .values_list("status", flat=True)
+                .first()
+            )()
+        except Exception:
+            logger.exception(f"[SessionManager] 读取任务取消状态失败: thread_id={thread_id}")
+            return False
+        return status == ResearchTaskStatus.CANCELLED
 
     def remove_session(self, thread_id: str) -> None:
         """执行协程结束时移除会话槽位（幂等，成功/失败/取消均调用）。"""
@@ -315,84 +384,6 @@ class SessionManager:
                 f"subagent={subagent_thread_id}, parent={parent_thread_id}"
             )
 
-    async def on_retry_subagent_signal(self, thread_id: str, payload: dict) -> None:
-        """重试子代理信令路由：运行中会话直接注入；已结束/恢复态从 checkpoint 恢复后注入。
-
-        运行中会话由 SessionExecutor.on_retry_subagent 入队（adapter astream
-        循环按 chunk 消费并注入 graph state）；执行协程已结束或会话不在内存
-        （任务失败后/服务重启）时，从 checkpoint 恢复会话并预置重试指令。
-        """
-        executor = self._sessions.get(thread_id)
-        if executor is not None:
-            if executor.on_retry_subagent(payload):
-                logger.info(
-                    f"[SessionManager] 已向运行中会话注入子代理重试指令: thread_id={thread_id}"
-                )
-                return
-            logger.info(
-                f"[SessionManager] 运行中会话无法注入（协程已结束），转入恢复路径: thread_id={thread_id}"
-            )
-        await self._start_retry_recovery(thread_id, payload)
-
-    async def _start_retry_recovery(self, thread_id: str, payload: dict) -> None:
-        """从 checkpoint 恢复会话并预置子代理重试指令（会话已结束/服务重启恢复态）。
-
-        与 ``recover_unfinished`` 使用同一恢复启动参数组装逻辑：
-        - 任务不存在 / 已完成时放弃恢复（completed 无法重试）；
-        - 恢复会话以 resume_mode=True 启动，retry_instruction 由
-          SessionExecutor 在首个 astream 前预注入重试队列。
-        """
-        from Django_xm.apps.research.models import ResearchTask, ResearchTaskStatus
-
-        # 等待旧会话槽位释放（执行协程结束清理与重试信令到达的竞态窗口）
-        for _ in range(10):
-            if thread_id not in self._sessions:
-                break
-            await asyncio.sleep(0.05)
-        if thread_id in self._sessions:
-            logger.warning(
-                f"[SessionManager] 会话槽位未释放，放弃重试恢复: thread_id={thread_id}"
-            )
-            return
-
-        try:
-            task = await sync_to_async(
-                lambda: ResearchTask.objects.filter(task_id=thread_id, is_deleted=False).first()
-            )()
-        except Exception:
-            logger.exception(f"[SessionManager] 查询任务失败，重试恢复中止: thread_id={thread_id}")
-            return
-        if task is None:
-            logger.warning(f"[SessionManager] 任务不存在，重试恢复中止: thread_id={thread_id}")
-            return
-        if task.status == ResearchTaskStatus.COMPLETED:
-            logger.warning(
-                f"[SessionManager] 任务已完成，无法重试子代理: thread_id={thread_id}"
-            )
-            return
-
-        start_payload = {
-            "thread_id": task.task_id,
-            "query": task.query,
-            "user_id": task.created_by_id,
-            "session_id": task.session_id,
-            "message_id": "",
-            "enable_web_search": task.enable_web_search,
-            "enable_doc_analysis": task.enable_doc_analysis,
-            "enable_sandbox": task.enable_sandbox,
-            "knowledge_base_ids": task.knowledge_base_ids,
-            "use_mcp": task.use_mcp,
-            "selected_mcp_servers": task.selected_mcp_servers,
-            "selected_tools": task.selected_tools,
-            "model_name": task.model,
-            "resume_mode": True,
-            "retry_instruction": payload,
-        }
-        await self.start_session(start_payload)
-        logger.info(
-            f"[SessionManager] 已恢复会话并预置子代理重试指令: thread_id={thread_id}"
-        )
-
     # ------------------------------------------------------------------
     # 信令订阅循环
     # ------------------------------------------------------------------
@@ -486,9 +477,9 @@ class SessionManager:
         elif kind == SIGNAL_APPROVAL:
             self.on_approval_signal(thread_id, payload)
         elif kind == SIGNAL_STOP:
-            self.stop_session(thread_id)
-        elif kind == SIGNAL_RETRY_SUBAGENT:
-            await self.on_retry_subagent_signal(thread_id, payload)
+            # C1：await 保证同一订阅循环内 stop（DB 兜底）先于后续 start 处理，
+            # 消除「取消信令 → 迟到 start 信令」乱序复活窗口
+            await self.stop_session(thread_id)
         else:
             logger.warning(f"[SessionManager] 未知信令类型: kind={kind}")
 
@@ -574,6 +565,124 @@ class SessionManager:
             recovered += 1
         if recovered:
             logger.info(f"[SessionManager] 已恢复 {recovered} 个未完成任务")
+
+        # B4（P2-11）：chat 会话审批挂起恢复扫描（chat 无任务表，以审批行锚定）
+        await self._recover_chat_approvals()
+
+    async def _recover_chat_approvals(self) -> None:
+        """chat 会话审批挂起恢复扫描（B4/P2-11）。
+
+        chat 无 DB 任务记录，重启后以审批行为锚：存在未收尾批次
+        （PENDING/PROCESSING/WAITING，主代理行）的会话以 resume_mode 重建
+        executor，``SessionExecutor._wait_for_chat_initial_batch`` 等待批次
+        决断后 Command(resume) 重入（与 research 恢复路径同构）。已在内存的
+        会话跳过（start_session 幂等，_sessions 查重）；并发满被拒的会话由
+        周期扫描（_recovery_sweep_loop）下次重试。扫描异常不阻断 research
+        恢复主流程。会话已删除/不存在的孤儿审批在扫描期直接收编（TIMEOUT），
+        不重建幽灵执行器；恢复 payload 补 mode=agent / message 空串（B4 勘误：
+        缺键曾致恢复会话在 chat_service 硬索引处 KeyError 崩溃循环）。
+        """
+        from Django_xm.apps.approvals.models import Approval
+
+        def _scan() -> tuple[dict[str, dict], list[str]]:
+            rows = Approval.objects.filter(
+                source=Approval.Source.CHAT,
+                state__in=[
+                    Approval.State.PENDING,
+                    Approval.State.PROCESSING,
+                    Approval.State.WAITING,
+                ],
+            ).order_by("created_at")
+            sessions: dict[str, dict] = {}
+            for row in rows:
+                extra = row.extra if isinstance(row.extra, dict) else {}
+                if extra.get("subagent_thread_id"):
+                    # 子代理审批经独立子代理运行时恢复路由
+                    # （_resume_subagent_from_signal），不在此重建父会话
+                    continue
+                if not extra.get("graph_interrupt_id"):
+                    continue
+                # 每会话只重建一次；恢复 payload 以最新一行的 extra 为准
+                # （同会话多批次时 checkpoint 对应最新批次）
+                sessions[row.source_id] = {
+                    "message_id": str(extra.get("message_id") or ""),
+                    "tool_config": extra.get("tool_config") or {},
+                    "model_config": extra.get("model_config") or {},
+                    "user_id": row.user_id,
+                }
+            # 孤儿审批：会话已被删除（软删含）/不存在 → 恢复重建后必然失败
+            # （persist_stream_result 报"会话不存在"）且审批永远无法再被消费
+            # → 扫描期剔除并收编，不重建幽灵执行器
+            from Django_xm.apps.chat.models import ChatSession
+
+            existing_ids = set(
+                ChatSession.objects.filter(session_id__in=sessions.keys()).values_list(
+                    "session_id", flat=True
+                )
+            )
+            orphans = [sid for sid in sessions if sid not in existing_ids]
+            for sid in orphans:
+                sessions.pop(sid)
+            return sessions, orphans
+
+        try:
+            sessions, orphans = await sync_to_async(_scan)()
+        except Exception:
+            logger.exception("[SessionManager] chat 审批挂起扫描失败")
+            return
+
+        # 孤儿会话（已删除/不存在）的遗留审批收编为 TIMEOUT：不收编则每次
+        # 重启重复进入扫描（此前还会重建幽灵执行器 → 执行失败 + persist
+        # "会话不存在" 噪声）
+        if orphans:
+            from Django_xm.apps.approvals.services.approval_batch import (
+                abandon_session_pending_approvals,
+            )
+
+            for orphan_id in orphans:
+                try:
+                    await sync_to_async(abandon_session_pending_approvals)(
+                        Approval.Source.CHAT, orphan_id
+                    )
+                except Exception:
+                    logger.warning(
+                        f"[SessionManager] 孤儿会话审批收编失败（非致命）: session={orphan_id}"
+                    )
+
+        recovered = 0
+        for session_id, meta in sessions.items():
+            if session_id in self._sessions:
+                continue
+            payload = {
+                "thread_id": session_id,
+                "session_id": session_id,
+                "session_type": SESSION_TYPE_CHAT,
+                "query": "",
+                "resume_mode": True,
+                "message_id": meta["message_id"],
+                "user_id": meta["user_id"],
+                **meta["tool_config"],
+                **meta["model_config"],
+                # chat 审批中断仅产生于 agent 模式聊天图（深研审批 source=
+                # deep_research 走研究链恢复、RAG 链无工具审批），恢复重入
+                # 的目标即该图的 checkpoint，故 mode 恒为 agent（B4 勘误：
+                # 缺该键曾致恢复会话在 chat_service data["mode"] 硬索引处
+                # KeyError 崩溃循环）
+                "mode": "agent",
+                # 恢复重入不发送新用户消息（graph_input 用 Command(resume)），
+                # 但 chat_message_builder.abuild_user_content 对 data["message"]
+                # 亦为硬索引契约，补空串满足同形状（置于展开后，配置键不覆盖）
+                "message": "",
+            }
+            try:
+                await self.start_session(payload)
+                recovered += 1
+            except Exception:
+                logger.exception(
+                    f"[SessionManager] chat 审批挂起恢复失败: session={session_id}"
+                )
+        if recovered:
+            logger.info(f"[SessionManager] 已恢复 {recovered} 个 chat 审批挂起会话")
 
     async def _recovery_sweep_loop(self) -> None:
         """周期自愈扫描（B5）：运行期 start 信令丢失的 PENDING 任务补偿。

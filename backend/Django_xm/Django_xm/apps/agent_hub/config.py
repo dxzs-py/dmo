@@ -19,6 +19,35 @@ class AgentType(StrEnum):
     DEEP_RESEARCH = "deep_research"
 
 
+# AgentType → CapabilityRegistry agent-type 键映射（唯一真源，禁止在他处复制）。
+# 消费方：tool_resolver.resolve_tools / middleware.build_middleware。此前两处
+# 各持一份字面量副本（spec E2，arch 审计 §5.2 定案）：新增 AgentType 漏改任一
+# 副本会静默 fallback "base"，已收敛至此与 AgentType 枚举同文件维护。
+# 语义：CapabilityRegistry 的 is_compatible 键空间为 base/deep_research/learning
+# （ai_engine/capabilities/builtin.py），rag/safe_rag 在该层复用 base 装配；
+# 键集合必须与 AgentType 成员一一对应（新增枚举值时同步本表，
+# test_agent_type_mapping 有防漂移断言）。
+AGENT_TYPE_CAPABILITY_KEY: dict[str, str] = {
+    AgentType.BASE.value: "base",
+    AgentType.RAG.value: "base",
+    AgentType.SAFE_RAG.value: "base",
+    AgentType.DEEP_RESEARCH.value: "deep_research",
+}
+
+
+def resolve_agent_type_str(config) -> str:
+    """解析 AgentConfig 在 CapabilityRegistry 层使用的 agent-type 键。
+
+    Args:
+        config: AgentConfig（读取 agent_type）。
+
+    Returns:
+        注册表层 agent-type 键；未知 agent_type 值静默回退 "base"
+        （与收敛前两份副本行为一致，防漂移由测试断言兜底）。
+    """
+    return AGENT_TYPE_CAPABILITY_KEY.get(config.agent_type.value, "base")
+
+
 # 能力默认表：唯一权威定义在 ai_engine/config.py 的 Settings.AGENT_CAPABILITIES_DEFAULT
 # （ARCH-06 双源合并，已删除本地硬编码副本），此处导入同一对象引用。
 # 子代理运行时统一以 AgentType.BASE 构建（spawn.py / langgraph_adapter.py），

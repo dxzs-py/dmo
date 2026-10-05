@@ -251,6 +251,34 @@ class _StaticDocRetriever(BaseRetriever):
         return self._docs
 
 
+class _ScoreThresholdRetriever:
+    """InMemory 阈值检索适配器（C2/KV-1）。
+
+    langchain-core 1.5.4 的 InMemoryVectorStore 不支持
+    search_type="similarity_score_threshold"（invoke 即抛 NotImplementedError，
+    运行时实测），且异常被调用方吞掉 → 阈值检索从未生效，RAG 恒走关键词
+    召回降级。本适配器用等价实现替代：similarity 检索取回候选后按相似度
+    阈值在应用层过滤（similarity_search_with_score 返回 cosine similarity，
+    越大越相关，与 config 阈值口径一致）。
+
+    只实现 invoke(query)——消费方（_initial_search_from_retriever 等）
+    仅使用该接口。
+    """
+
+    def __init__(self, vector_store: InMemoryVectorStore, k: int, score_threshold: float):
+        self._store = vector_store
+        self._k = k
+        self._threshold = score_threshold
+
+    def invoke(self, query: str) -> list[Document]:
+        pairs = self._store.similarity_search_with_score(query, k=self._k)
+        return [
+            doc
+            for doc, score in pairs
+            if score is not None and score >= self._threshold
+        ]
+
+
 # ── 统一 RAG 检索管线 ───────────────────────────────────────────────────────────
 
 
@@ -517,6 +545,8 @@ class UnifiedRagPipeline:
         reload_vector_store: Callable[[], VectorStore] | None = None,
         required_dim: int | None = None,
         query_embedding: list[float] | None = None,
+        *,
+        score_semantics: str = "similarity",
     ) -> list[tuple[Document, float | None]]:
         """原始打分检索（Level 0）：向量库相似度打分检索 + 维度不匹配自愈重试。
 
@@ -533,9 +563,14 @@ class UnifiedRagPipeline:
             required_dim: 索引期望的向量维度（自愈重置 pgvector 运行时缓存用）
             query_embedding: 预计算的 query 向量；提供时走 by-vector 检索（跨库
                 聚合场景 embedding 仅算一次），None 时保持现行为由向量库自行 embed
+            score_semantics: 后端原生分数语义（C1/KV-2）。pgvector 返回 cosine
+                distance，须传 "distance"（归一 similarity = 1 - distance 后再
+                过滤/返回）；"similarity"（默认）行为不变。语义契约见
+                search_vector_store docstring。
 
         Returns:
-            (Document, score) 元组列表；score 可能为 None（取决于后端打分能力）
+            (Document, score) 元组列表；score 为相似度语义（越大越相关），
+            可能为 None（取决于后端打分能力）
 
         Raises:
             Exception: 非维度不匹配异常原样上抛
@@ -544,7 +579,12 @@ class UnifiedRagPipeline:
 
         try:
             return search_vector_store(
-                vector_store, query, k=k, score_threshold=score_threshold, query_embedding=query_embedding
+                vector_store,
+                query,
+                k=k,
+                score_threshold=score_threshold,
+                query_embedding=query_embedding,
+                score_semantics=score_semantics,
             )
         except Exception as e:
             if "different vector dimensions" not in str(e) or reload_vector_store is None:
@@ -561,13 +601,20 @@ class UnifiedRagPipeline:
             from Django_xm.apps.knowledge.vector_store.pgvector_runtime import reset_pgvector_cache
 
             reset_pgvector_cache(dimension=required_dim)
-            # 清理 IndexManager 缓存
+            # 清理 IndexManager 缓存，并释放快照中的旧 engine 连接池
+            # （C3/KV-3：此前直接丢弃快照，泄漏连接）
             from Django_xm.apps.knowledge.services.index_service import IndexManager
+            from Django_xm.apps.knowledge.vector_store import dispose_vector_stores
 
-            IndexManager.clear_cache()
+            dispose_vector_stores(IndexManager.clear_cache())
             rebuilt = reload_vector_store()
             return search_vector_store(
-                rebuilt, query, k=k, score_threshold=score_threshold, query_embedding=query_embedding
+                rebuilt,
+                query,
+                k=k,
+                score_threshold=score_threshold,
+                query_embedding=query_embedding,
+                score_semantics=score_semantics,
             )
 
     # ═══════════════════════════════════════════════════════════════════════════════
@@ -607,12 +654,12 @@ class UnifiedRagPipeline:
                 return self._fallback_full_text(documents, total_token_count)
 
             # 创建 retriever 并委托
-            retriever = vector_store.as_retriever(
-                search_type="similarity_score_threshold",
-                search_kwargs={
-                    "score_threshold": settings.rag_score_threshold,
-                    "k": settings.rag_initial_k,
-                },
+            # C2/KV-1：core 1.5.4 的 similarity_score_threshold 抛 NotImplementedError，
+            # 改用应用层阈值过滤适配器（阈值检索自本修复起才真实生效）
+            retriever = _ScoreThresholdRetriever(
+                vector_store,
+                k=settings.rag_initial_k,
+                score_threshold=settings.rag_score_threshold,
             )
             return self.search_with_retriever(
                 retriever=retriever,
@@ -656,12 +703,11 @@ class UnifiedRagPipeline:
                 return []
 
             # 创建 retriever 并委托
-            retriever = vector_store.as_retriever(
-                search_type="similarity_score_threshold",
-                search_kwargs={
-                    "score_threshold": settings.rag_score_threshold,
-                    "k": settings.rag_initial_k,
-                },
+            # C2/KV-1：同 search，改用应用层阈值过滤适配器
+            retriever = _ScoreThresholdRetriever(
+                vector_store,
+                k=settings.rag_initial_k,
+                score_threshold=settings.rag_score_threshold,
             )
             return self.retrieve_documents_from_retriever(
                 retriever=retriever,
@@ -707,12 +753,11 @@ class UnifiedRagPipeline:
 
         # 1) 扩展向量检索: 降低阈值 + 增加 k
         try:
-            expanded_retriever = vector_store.as_retriever(
-                search_type="similarity_score_threshold",
-                search_kwargs={
-                    "score_threshold": settings.rag_degraded_threshold,
-                    "k": settings.rag_degraded_k,
-                },
+            # C2/KV-1：同上，core 1.5.4 不支持 similarity_score_threshold，改应用层过滤
+            expanded_retriever = _ScoreThresholdRetriever(
+                vector_store,
+                k=settings.rag_degraded_k,
+                score_threshold=settings.rag_degraded_threshold,
             )
             vector_docs = expanded_retriever.invoke(query)
             all_docs.extend(vector_docs)

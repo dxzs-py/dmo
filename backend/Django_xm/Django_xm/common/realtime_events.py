@@ -7,6 +7,9 @@
 - 任务级事件：task_{task_id}（独立深度研究场景，无 chat_session_id 关联）
 - 序列号生成：Redis INCR
 - 历史事件：Redis List，单通道最多保留 500 条
+- 快照治理（D2/P2-8）：高频全量快照类事件（正文快照/中间态推理快照）经
+  ``publish_event(..., persist_history=False)`` 仅实时广播不入历史 List，
+  避免挤占回放窗口；seq 照常单调递增（允许跳号），回放/去重契约不变
 
 事件格式（WebSocket）：
 {
@@ -155,15 +158,23 @@ def set_user_history_filter(fn):
     _user_history_filter = fn
 
 
-# Lua 脚本：原子化 INCR + RPUSH + LTRIM + EXPIRE
+# Lua 脚本：原子化 INCR + (RPUSH + LTRIM + EXPIRE history) + EXPIRE seq
 # KEYS[1] = seq key, KEYS[2] = history key
-# ARGV[1] = event JSON（不含 seq），ARGV[2] = history TTL，ARGV[3] = seq TTL，ARGV[4] = history limit
+# ARGV[1] = event JSON（不含 seq），ARGV[2] = history TTL，ARGV[3] = seq TTL，
+# ARGV[4] = history limit，ARGV[5] = persist flag（"1" 写历史 List，"0" 跳过）
+#
+# persist_history=False（D2/P2-8 快照治理）：seq 照常 INCR（同频道 seq 严格
+# 单调、允许跳号的既有语义不变），事件仅实时广播不占用回放历史 List 席位——
+# 全量正文快照 / 中间态推理快照逐条占席会把 tool_call/approval/message_added
+# 等关键历史事件挤出 LTRIM 500 条窗口，重连回放语义受损。
 _PUBLISH_EVENT_LUA = """
 local seq = redis.call('INCR', KEYS[1])
 local event = string.gsub(ARGV[1], '^{', '{"seq":' .. seq .. ',', 1)
-redis.call('RPUSH', KEYS[2], event)
-redis.call('LTRIM', KEYS[2], -ARGV[4], -1)
-redis.call('EXPIRE', KEYS[2], ARGV[2])
+if tonumber(ARGV[5]) == 1 then
+  redis.call('RPUSH', KEYS[2], event)
+  redis.call('LTRIM', KEYS[2], -ARGV[4], -1)
+  redis.call('EXPIRE', KEYS[2], ARGV[2])
+end
 redis.call('EXPIRE', KEYS[1], ARGV[3])
 return seq
 """
@@ -185,7 +196,13 @@ def _get_publish_event_script(redis_client):
     return _PUBLISH_EVENT_LUA_SCRIPT if _PUBLISH_EVENT_LUA_SCRIPT is not False else None
 
 
-def _atomic_publish_event(redis_client, channel_type, channel_id, event):
+def _atomic_publish_event(
+    redis_client,
+    channel_type,
+    channel_id,
+    event,
+    persist_history: bool = True,
+):
     """原子化生成 seq 并持久化事件到 Redis List。
 
     通过 Lua 脚本保证 INCR + RPUSH + LTRIM + EXPIRE 的原子性，
@@ -196,6 +213,9 @@ def _atomic_publish_event(redis_client, channel_type, channel_id, event):
         channel_type: 'user' 或 'session'
         channel_id: 用户 ID 或会话 ID
         event: 不含 seq 字段的事件 dict
+        persist_history: 是否写入历史 List（D2/P2-8 快照治理）。False 时仅
+            生成 seq（实时广播用），事件不占用回放历史席位；seq 单调递增
+            语义不变（允许跳号）。
 
     Returns:
         int: 生成的序列号 seq
@@ -205,12 +225,13 @@ def _atomic_publish_event(redis_client, channel_type, channel_id, event):
     # 构建不含 seq 的事件 JSON，由 Lua 脚本注入 seq 字段
     event_without_seq = {k: v for k, v in event.items() if k != "seq"}
     event_json = json.dumps(event_without_seq, ensure_ascii=False)
+    persist_flag = "1" if persist_history else "0"
 
     script = _get_publish_event_script(redis_client)
     if script is not None:
         seq = script(
             keys=[seq_key, history_key],
-            args=[event_json, HISTORY_TTL_SECONDS, SEQ_TTL_SECONDS, EVENT_HISTORY_LIMIT],
+            args=[event_json, HISTORY_TTL_SECONDS, SEQ_TTL_SECONDS, EVENT_HISTORY_LIMIT, persist_flag],
             client=redis_client,
         )
     else:
@@ -223,15 +244,20 @@ def _atomic_publish_event(redis_client, channel_type, channel_id, event):
             str(HISTORY_TTL_SECONDS),
             str(SEQ_TTL_SECONDS),
             str(EVENT_HISTORY_LIMIT),
+            persist_flag,
         )
     return int(seq)
 
 
-async def _publish_to_session_async(session_id, event_type, payload, subagent_thread_id=None):
+async def _publish_to_session_async(
+    session_id, event_type, payload, subagent_thread_id=None, persist_history: bool = True
+):
     """异步实际发布会话事件到 WebSocket + Redis 持久化。
 
     底层实现函数，由 publish_event（异步路径）调用。
     先把 event 经直接 Redis 客户端存进历史 List（Lua 脚本生成 seq 一并存储）→ 拿到 seq 补回 event（此时与 Redis 内容一致）→ group_send 广播同组 Consumer → 前端收到同步渲染。
+    persist_history=False 时（D2/P2-8 快照治理）事件仅实时广播，不写入历史
+    List（seq 照常生成，单调语义不变）。
 
     Args:
         session_id: 会话 ID
@@ -239,6 +265,7 @@ async def _publish_to_session_async(session_id, event_type, payload, subagent_th
         payload: 事件载荷 dict
         subagent_thread_id: 子代理路由标识符（协议字段，snake_case，不参与
             camelCase 转换）。非空时注入 event 顶层，前端据此路由到子代理卡片。
+        persist_history: 是否写入回放历史 List（默认 True）。
     """
     try:
         redis_client = get_redis_client()
@@ -255,7 +282,9 @@ async def _publish_to_session_async(session_id, event_type, payload, subagent_th
             event["subagent_thread_id"] = subagent_thread_id
 
         # 原子化生成 seq 并持久化（seq 由 Lua 脚本注入到持久化事件中）
-        seq = _atomic_publish_event(redis_client, "session", session_id, event)
+        seq = _atomic_publish_event(
+            redis_client, "session", session_id, event, persist_history=persist_history
+        )
         event["seq"] = seq
 
         logger.debug(
@@ -284,7 +313,9 @@ async def _publish_to_session_async(session_id, event_type, payload, subagent_th
         )
 
 
-async def _publish_to_task_async(task_id, event_type, payload, subagent_thread_id=None):
+async def _publish_to_task_async(
+    task_id, event_type, payload, subagent_thread_id=None, persist_history: bool = True
+):
     """异步实际发布任务事件到 WebSocket + Redis 持久化。
 
     与 _publish_to_session_async 对齐，区别仅在于 channel_type 为 "task"，
@@ -296,6 +327,8 @@ async def _publish_to_task_async(task_id, event_type, payload, subagent_thread_i
         payload: 事件载荷 dict
         subagent_thread_id: 子代理路由标识符（协议字段，snake_case，不参与
             camelCase 转换）。非空时注入 event 顶层。
+        persist_history: 是否写入回放历史 List（默认 True，D2/P2-8 快照治理
+            由发布方按事件类型决定）。
     """
     try:
         redis_client = get_redis_client()
@@ -313,7 +346,9 @@ async def _publish_to_task_async(task_id, event_type, payload, subagent_thread_i
 
         # 原子化生成 seq 并持久化（seq 由 Lua 脚本注入到持久化事件中）
         # Redis key：realtime:seq:task:{task_id} / realtime:history:task:{task_id}
-        seq = _atomic_publish_event(redis_client, "task", task_id, event)
+        seq = _atomic_publish_event(
+            redis_client, "task", task_id, event, persist_history=persist_history
+        )
         event["seq"] = seq
 
         logger.debug(
@@ -336,7 +371,9 @@ async def _publish_to_task_async(task_id, event_type, payload, subagent_thread_i
         logger.exception(f"[RealtimeEvents] _publish_to_task_async 失败: task={task_id}, type={event_type}")
 
 
-async def _publish_to_user_async(user_id, event_type, payload):
+async def _publish_to_user_async(
+    user_id, event_type, payload, persist_history: bool = True
+):
     """异步发布用户事件到 WebSocket + Redis 持久化。
 
     与 _publish_to_session_async 对齐，区别在于 channel_type 为 "user"，
@@ -346,6 +383,7 @@ async def _publish_to_user_async(user_id, event_type, payload):
         user_id: 用户 ID
         event_type: 事件类型（ws_event_name 字符串）
         payload: 事件载荷 dict
+        persist_history: 是否写入回放历史 List（默认 True）。
     """
     try:
         redis_client = get_redis_client()
@@ -356,7 +394,9 @@ async def _publish_to_user_async(user_id, event_type, payload):
         }
 
         # 原子化生成 seq 并持久化（seq 由 Lua 脚本注入到持久化事件中）
-        seq = _atomic_publish_event(redis_client, "user", user_id, event)
+        seq = _atomic_publish_event(
+            redis_client, "user", user_id, event, persist_history=persist_history
+        )
         event["seq"] = seq
 
         logger.debug(
@@ -386,6 +426,7 @@ async def publish_event(
     task_id: str | None = None,
     user_id: str | None = None,
     subagent_thread_id: str | None = None,
+    persist_history: bool = True,
 ) -> None:
     """统一事件发布接口（唯一入口）。
 
@@ -415,6 +456,13 @@ async def publish_event(
             独立深度研究场景（无 chat_session_id 关联）使用
         user_id: 用户 ID，非空时发布到 user:{user_id} 频道；
             用于会话列表变更等用户级事件
+        persist_history: 是否写入回放历史 List（D2/P2-8 快照治理，默认 True）。
+            False 时事件仅实时广播（group_send），不占用每频道 LTRIM 500 条
+            历史席位；seq 照常生成，同频道严格单调递增（允许跳号）语义不变，
+            前端 lastSeq/dedupe/replay-barrier 契约不受影响。适用对象：高频
+            全量快照类中间态事件（如 STREAM_CONTENT_UPDATE 正文快照、
+            STREAM_REASONING 进行中推理快照）——重连回放的终态恢复由入历史
+            的权威事件承担（message_updated / 完成态推理 / stream_completed）。
 
     频道路由规则：
         1. session_id 非空 → session:{session_id}
@@ -487,7 +535,10 @@ async def publish_event(
         if session_id:
             channel_tasks.append(
                 _ordered_ensure_future(
-                    _publish_to_session_async(session_id, ws_event_name, payload, subagent_thread_id),
+                    _publish_to_session_async(
+                        session_id, ws_event_name, payload, subagent_thread_id,
+                        persist_history=persist_history,
+                    ),
                     f"session:{session_id}",
                 )
             )
@@ -500,7 +551,10 @@ async def publish_event(
         if task_id:
             channel_tasks.append(
                 _ordered_ensure_future(
-                    _publish_to_task_async(task_id, ws_event_name, payload, subagent_thread_id),
+                    _publish_to_task_async(
+                        task_id, ws_event_name, payload, subagent_thread_id,
+                        persist_history=persist_history,
+                    ),
                     f"task:{task_id}",
                 )
             )
@@ -513,7 +567,10 @@ async def publish_event(
         if user_id:
             channel_tasks.append(
                 _ordered_ensure_future(
-                    _publish_to_user_async(user_id, ws_event_name, payload),
+                    _publish_to_user_async(
+                        user_id, ws_event_name, payload,
+                        persist_history=persist_history,
+                    ),
                     f"user:{user_id}",
                 )
             )
@@ -607,6 +664,7 @@ def publish_event_sync(
     task_id: str | None = None,
     user_id: str | None = None,
     subagent_thread_id: str | None = None,
+    persist_history: bool = True,
 ) -> None:
     """publish_event 的同步版本（智能适配同步/async 上下文）。
 
@@ -620,7 +678,8 @@ def publish_event_sync(
       ``transaction.on_commit`` 回调），使用 ``async_to_sync`` 同步调用 ``publish_event``。
 
     Args:
-        同 publish_event
+        同 publish_event（含 persist_history：D2/P2-8 快照治理，False 时不写
+        回放历史 List）
     """
     try:
         try:
@@ -636,6 +695,7 @@ def publish_event_sync(
                     task_id=task_id,
                     user_id=user_id,
                     subagent_thread_id=subagent_thread_id,
+                    persist_history=persist_history,
                 )
             )
             _pending_publish_tasks.add(task)
@@ -649,6 +709,7 @@ def publish_event_sync(
                 task_id=task_id,
                 user_id=user_id,
                 subagent_thread_id=subagent_thread_id,
+                persist_history=persist_history,
             )
     except PayloadValidationError:
         # payload 校验失败：记录 ERROR 后重新抛出，由调用方决定降级策略

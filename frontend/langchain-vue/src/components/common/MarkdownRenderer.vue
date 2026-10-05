@@ -1,11 +1,13 @@
-<script setup>
-import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
+<script>
+/**
+ * 模块级单例初始化区（仅模块首次加载时执行一次）：marked 全局 renderer 注册 + highlight.js 语言注册。
+ * 此前位于 <script setup> 内，每次组件实例化都会重复向全局 marked 实例注册 renderer
+ * （重复覆盖且存在全局污染隐患）。注册逻辑不依赖任何组件实例状态，提升到模块顶层后全局只注册一次；
+ * EXTRA_LANG_LOADERS / loadedExtraLangs 闭包也随之成为真正的模块级单例。
+ */
 import { marked } from 'marked'
-import DOMPurify from 'dompurify'
 import hljs from 'highlight.js/lib/core'
-import { normalizeGfmTables } from '@/utils/markdownTable'
 import { logger } from '@/utils/logger'
-import { copyToClipboard } from '@/utils/dom'
 import javascript from 'highlight.js/lib/languages/javascript'
 import python from 'highlight.js/lib/languages/python'
 import json from 'highlight.js/lib/languages/json'
@@ -79,8 +81,7 @@ marked.use({
       const rowsHtml = rawLines.map((_, i) => {
         const lineNo = i + 1
         const code = highlightedLines[i] || '&#8203;'
-        const isHl = props.highlightLines.includes(lineNo)
-        return `<div class="code-row${isHl ? ' is-highlighted' : ''}"><span class="line-num${isHl ? ' is-highlighted' : ''}" data-line="${lineNo}">${lineNo}</span><span class="code-line">${code}</span></div>`
+        return `<div class="code-row"><span class="line-num" data-line="${lineNo}">${lineNo}</span><span class="code-line">${code}</span></div>`
       }).join('')
       return `<div class="code-block-wrapper">${langLabel}<button class="code-copy-btn" data-code="${encodeURIComponent(normalizedText)}" title="复制代码"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button><div class="code-block-body hljs ${language ? `language-${language}` : ''}">${rowsHtml}</div></div>`
     },
@@ -93,15 +94,18 @@ marked.use({
   breaks: true,
   gfm: true
 })
+</script>
+
+<script setup>
+import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import DOMPurify from 'dompurify'
+import { normalizeGfmTables } from '@/utils/markdownTable'
+import { copyToClipboard } from '@/utils/dom'
 
 const props = defineProps({
   content: {
     type: [String, Object],
     default: ''
-  },
-  highlightLines: {
-    type: Array,
-    default: () => []
   },
   citations: {
     type: Array,
@@ -299,11 +303,6 @@ function handleClick(e) {
   min-height: calc(1.8em); /* 1.8 line-height */
 }
 
-.markdown-renderer :deep(.code-row.is-highlighted) {
-  background-color: rgba(255, 255, 255, 0.08);
-  box-shadow: inset 3px 0 0 var(--el-color-warning);
-}
-
 .markdown-renderer :deep(.line-num) {
   display: block;
   padding: 0 8px;
@@ -314,11 +313,6 @@ function handleClick(e) {
   background-color: transparent;
   /* 关键：行号与代码在 grid 同一行，align-items: start 已对齐首行 */
   white-space: nowrap;
-}
-
-.markdown-renderer :deep(.line-num.is-highlighted) {
-  color: var(--el-color-warning);
-  font-weight: 700;
 }
 
 .markdown-renderer :deep(.code-line) {

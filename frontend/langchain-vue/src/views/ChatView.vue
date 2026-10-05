@@ -94,6 +94,16 @@ useChatKeyboard({
 const realtime = useRealtimeSync()
 const connectionStatus = computed(() => realtime.connectionStatus.value)
 
+/**
+ * 右侧详情面板移除产物：ChatRightPanel 只 emit 意图，
+ * 消息数据属主为 session store，经 removeMessageArtifact action 删除（单向数据流）
+ */
+const handleRemoveArtifact = (index) => {
+  const message = selectedMessage.value
+  if (!message) return
+  sessionStore.removeMessageArtifact(sessionStore.currentSessionId, message.id, index)
+}
+
 // --- 深度研究 SSE 重连（刷新/新浏览器恢复审批监听） ---
 const { connectResearchSSE, disconnectResearchSSE } = useResearchApprovalListener()
 
@@ -459,6 +469,7 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
         :message="selectedMessage"
         :visible="showRightPanel"
         :session-id="sessionStore.currentSessionId"
+        @remove-artifact="handleRemoveArtifact"
       />
     </div>
   </div>
