@@ -5,6 +5,16 @@ from Django_xm.apps.core.base_models import AuditModel
 
 
 class ResearchTaskStatus(models.TextChoices):
+    """深度研究任务状态。
+
+    ⚠️ `AWAITING_APPROVAL` 虽然**成员名**在后端 Python 中无引用，但**值**
+    `"awaiting_approval"` 被直接使用：
+    - 后端 `services/fastapi_service/session_executor.py`（写库与状态推送）
+      与 `session_manager.py`（启动恢复扫描 `status__in=["running", "awaiting_approval"]`）
+    - 前端 `types/index.js` 及 DeepResearchView / ResearchTaskDetail / ChatMessage 等组件
+    因此**不可**仅凭"成员名零引用"判定为孤儿并删除。
+    """
+
     PENDING = "pending", "待执行"
     AWAITING_APPROVAL = "awaiting_approval", "等待审批"
     RUNNING = "running", "执行中"

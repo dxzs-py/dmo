@@ -27,6 +27,7 @@ from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 from Django_xm.apps.knowledge.services.retrieval_service import create_retriever
 from Django_xm.apps.knowledge.views_utils import get_original_index_name
 
+from ..models import WorkflowStep
 from ..services.state import RetrievedDocument, StudyFlowState
 from .stream_events import emit_step
 
@@ -157,7 +158,7 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
         return {
             "retrieved_docs": [],
             "messages": [{"role": "assistant", "content": "\n\n⚠️ 学习计划生成失败，跳过文档检索。"}],
-            "current_step": "retrieval",
+            "current_step": WorkflowStep.RETRIEVAL,
             "updated_at": timezone.now().isoformat(),
         }
 
@@ -183,7 +184,7 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
                         "content": "\n\nℹ️ 未选择知识库，已使用网络查询获取学习资料。",
                     }
                 ],
-                "current_step": "retrieval",
+                "current_step": WorkflowStep.RETRIEVAL,
                 "updated_at": timezone.now().isoformat(),
             }
         logger.info(
@@ -201,7 +202,7 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
                     ),
                 }
             ],
-            "current_step": "retrieval",
+            "current_step": WorkflowStep.RETRIEVAL,
             "updated_at": timezone.now().isoformat(),
         }
 
@@ -257,7 +258,7 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
     return {
         "retrieved_docs": retrieved_docs,
         "messages": [{"role": "assistant", "content": retrieval_summary}],
-        "current_step": "retrieval",
+        "current_step": WorkflowStep.RETRIEVAL,
         "updated_at": timezone.now().isoformat(),
     }
 

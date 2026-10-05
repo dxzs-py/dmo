@@ -1,7 +1,7 @@
 import { useSnapshotSync, useSnapshotSyncByTask } from '@/composables/useSnapshotSync'
 import { parseProtocolEvent } from '@/utils/sse.js'
 import { logger } from '@/utils/logger'
-import { SNAPSHOT_TRIGGER_EVENTS } from '@/types/realtimeEvents'
+import { EventType, SNAPSHOT_TRIGGER_EVENTS } from '@/types/realtimeEvents'
 
 /**
  * @typedef {import('@/types/realtimeEvents').RealtimeEvent} RealtimeEvent
@@ -153,7 +153,16 @@ export function createDispatcher(ctx) {
       // 深度研究模块据此自动刷新任务列表，P8 根因修复）。这些事件后端仅
       // 发布到 user 频道（无 session_id/task_id 顶层路由字段），若不在此分发，
       // subscribeUserEvents 订阅者永远收不到。
-      if (['session_created', 'session_deleted', 'session_updated', 'task_created', 'task_status_changed', 'task_deleted'].includes(event.type)) {
+      if (
+        [
+          EventType.SESSION_CREATED,
+          EventType.SESSION_DELETED,
+          EventType.SESSION_UPDATED,
+          EventType.TASK_CREATED,
+          EventType.TASK_STATUS_CHANGED,
+          EventType.TASK_DELETED,
+        ].includes(event.type)
+      ) {
         for (const cb of ctx.userCallbacks) {
           try {
             await cb(event)

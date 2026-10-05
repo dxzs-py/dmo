@@ -429,10 +429,14 @@ async def publish_event(
         - 校验失败时记录 ERROR 并抛出 PayloadValidationError，调用方 MUST 捕获
           并决定降级策略（不再静默 return，避免事件被丢弃且调用方无感知）
 
-    WebSocket 事件名映射：
-        每个 EventType 使用其 value 作为独立 ws_event_name，
-        前端通过 event.type 直接区分事件子类型（不再统一映射为
-        tool_call_changed / approval_changed）。
+    WebSocket 事件名映射（由 event_schema.get_ws_event_name 统一解析）：
+        默认使用 EventType.value 作为 ws_event_name，前端通过 event.type 直接区分
+        事件子类型（不再统一映射为 tool_call_changed / approval_changed）。
+        **唯一例外**：STREAM_REASONING / STREAM_SOURCES / STREAM_SUGGESTIONS /
+        STREAM_CONTEXT / STREAM_CONTENT_UPDATE 这 5 个逻辑事件在
+        event_schema._WS_EVENT_NAME_MAP 中**统一收敛为单一 ws 名 `stream_event`**，
+        前端需再按 payload 内的 event_type 二次分流（见
+        stores/sync/streamStateHandlers.js）。
         - 工具事件：tool_call_pending / tool_call_waiting / tool_call_running /
           tool_call_completed / tool_call_failed / tool_call_timeout / tool_call_rejected 等
         - 审批事件：approval_pending / approval_processing / approval_approved /

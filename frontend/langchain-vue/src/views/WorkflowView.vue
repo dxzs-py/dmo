@@ -230,7 +230,7 @@ import { useApiTask } from '@/composables/useApiTask'
 import { useWorkflowPolling } from '@/composables/useWorkflowPolling'
 import { useWorkflowExecution } from '@/composables/useWorkflowExecution'
 import { useWorkflowStore } from '@/stores/workflow'
-import { LearningStep, LearningTaskStatus, LearningQuestionType } from '@/types'
+import { LearningStep, LearningTaskStatus, LearningQuestionType, toWorkflowStage } from '@/types'
 
 const workflowStore = useWorkflowStore()
 const modelStore = useModelStore()
@@ -344,7 +344,9 @@ const completedSteps = computed(() => {
   if (step === LearningStep.FEEDBACK_COMPLETED || step === LearningStep.END || step === LearningTaskStatus.COMPLETED) {
     return [...stepOrder]
   }
-  const currentIdx = stepOrder.indexOf(step)
+  // 节点结果值（planner_completed / quiz_error / grading_* / feedback_error 等）需先归并
+  // 到所属阶段，否则 indexOf 返回 -1 → 进度条显示"无已完成步骤"。
+  const currentIdx = stepOrder.indexOf(toWorkflowStage(step))
   if (currentIdx < 0) return []
   return stepOrder.slice(0, currentIdx)
 })
@@ -361,6 +363,14 @@ const getStepType = (step) => {
     [LearningStep.FEEDBACK_COMPLETED]: 'success',
     [LearningStep.END]: 'success',
     [LearningTaskStatus.COMPLETED]: 'success',
+    // 节点完成 → 沿用其阶段的样式
+    [LearningStep.PLANNER_COMPLETED]: 'primary',
+    [LearningStep.GRADING_COMPLETED]: 'primary',
+    // 节点失败 → 危险态
+    [LearningStep.PLANNER_ERROR]: 'danger',
+    [LearningStep.QUIZ_ERROR]: 'danger',
+    [LearningStep.GRADING_ERROR]: 'danger',
+    [LearningStep.FEEDBACK_ERROR]: 'danger',
   }
   return typeMap[step] || 'info'
 }
@@ -377,6 +387,13 @@ const getStepText = (step) => {
     [LearningStep.FEEDBACK_COMPLETED]: '工作流已完成',
     [LearningStep.END]: '已结束',
     [LearningTaskStatus.COMPLETED]: '已完成',
+    // 节点完成 / 失败：后端实际写入值，必须有中文文案，否则界面显示裸英文标识符
+    [LearningStep.PLANNER_COMPLETED]: '学习计划已生成',
+    [LearningStep.GRADING_COMPLETED]: '评分已完成',
+    [LearningStep.PLANNER_ERROR]: '学习计划生成失败',
+    [LearningStep.QUIZ_ERROR]: '出题失败',
+    [LearningStep.GRADING_ERROR]: '评分失败',
+    [LearningStep.FEEDBACK_ERROR]: '反馈生成失败',
   }
   return textMap[step] || step
 }

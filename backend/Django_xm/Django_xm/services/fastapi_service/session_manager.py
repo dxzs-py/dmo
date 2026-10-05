@@ -58,6 +58,15 @@ class SessionManager:
         self._reconnect_initial_delay = SUBSCRIPTION_RECONNECT_INITIAL_DELAY
         self._reconnect_max_delay = SUBSCRIPTION_RECONNECT_MAX_DELAY
 
+    @property
+    def active_session_count(self) -> int:
+        """当前活跃会话数（只读）。
+
+        供 `/health` 等外部观测端点使用，避免调用方直接访问 `_sessions`
+        私有属性（跨模块访问私有成员在重构时会静默破坏）。
+        """
+        return len(self._sessions)
+
     # ------------------------------------------------------------------
     # 生命周期
     # ------------------------------------------------------------------
@@ -462,12 +471,15 @@ class SessionManager:
     async def recover_unfinished(self) -> None:
         """启动时扫描未完成研究任务并恢复（running / awaiting_approval）。"""
         try:
-            from Django_xm.apps.research.models import ResearchTask
+            from Django_xm.apps.research.models import ResearchTask, ResearchTaskStatus
 
             tasks = await sync_to_async(
                 lambda: list(
                     ResearchTask.objects.filter(
-                        status__in=["running", "awaiting_approval"],
+                        status__in=[
+                            ResearchTaskStatus.RUNNING,
+                            ResearchTaskStatus.AWAITING_APPROVAL,
+                        ],
                         is_deleted=False,
                     )
                 )

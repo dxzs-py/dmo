@@ -221,6 +221,7 @@ import { useSandboxAvailability } from '@/composables/useSandboxAvailability'
 import { useSSEStream } from '@/composables/useSSEStream'
 import { buildResearchStartPayload } from '@/utils/researchPayload'
 import { ResearchTaskStatus } from '@/types'
+import { EventType } from '@/types/realtimeEvents'
 
 // 根因 C 解耦：深度研究模块使用独立设置 store，
 // 与聊天模块的全局 modelStore（模型/深度思考/参数）完全独立
@@ -565,7 +566,7 @@ const handleSSEEvent = (sseData) => {
     case 'connected':
       progressMessage.value = '已连接，等待研究启动...'
       break
-    case 'status_change':
+    case EventType.TASK_STATUS_CHANGE: // 值 = 'status_change'
       if (currentTaskId.value) {
         const updateData = { status: sseData.status }
         if (sseData.finalReport) {

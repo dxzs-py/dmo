@@ -17,6 +17,7 @@ from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.common.event_schema import EventSource, EventType
 from Django_xm.common.realtime_events import publish_event_sync
 
+from ..models import WorkflowStep
 from ..nodes import feedback_node, grading_node, planner_node, quiz_generator_node, retrieval_node
 from .persistence_service import get_persistence_service
 from .resilience import ainvoke_with_resilience, invoke_with_resilience, stream_with_resilience
@@ -26,14 +27,19 @@ logger = get_logger(__name__)
 persistence_service = get_persistence_service()
 
 # 允许提交答案的步骤（等待答题 / 执行中的中间态）
+# 由 WorkflowStep 枚举派生，避免与节点实际写入值漂移。
+# ⚠️ 仅含"阶段中"取值 + waiting_for_answers；**不要**加入 *_error：
+# 节点失败态属于"已结束"，提交答案必须被守卫拦截（抛
+# WorkflowAlreadyFinishedError，见 tests/test_study_flow.py
+# test_disallowed_step_raises_with_phase）。白名单收紧是有意的。
 _ALLOWED_SUBMIT_STEPS = {
-    "start",
-    "planner",
-    "retrieval",
-    "quiz_generator",
-    "waiting_for_answers",
-    "grading",
-    "feedback",
+    WorkflowStep.START,
+    WorkflowStep.PLANNER,
+    WorkflowStep.RETRIEVAL,
+    WorkflowStep.QUIZ_GENERATOR,
+    WorkflowStep.WAITING_FOR_ANSWERS,
+    WorkflowStep.GRADING,
+    WorkflowStep.FEEDBACK,
 }
 
 
@@ -65,7 +71,7 @@ def should_continue(state: StudyFlowState) -> Literal["retry", "end"]:
 
 def human_review_node(state: StudyFlowState) -> dict[str, Any]:
     logger.info("[Human Review Node] 等待用户提交答案...")
-    return {"current_step": "waiting_for_answers", "updated_at": timezone.now().isoformat()}
+    return {"current_step": WorkflowStep.WAITING_FOR_ANSWERS, "updated_at": timezone.now().isoformat()}
 
 
 class StudyFlow:
@@ -385,14 +391,14 @@ def start_study_flow(
     logger.info(f"[Study Flow] 工作流暂停在: {current_step}")
 
     # 工作流暂停/完成事件
-    if current_step == "waiting_for_answers":
+    if current_step == WorkflowStep.WAITING_FOR_ANSWERS:
         _safe_publish(
             EventType.WORKFLOW_STATE_UPDATE,
             {
                 "source": EventSource.LEARNING.value,
                 "source_id": thread_id,
                 "step": current_step,
-                "state": "waiting_for_answers",
+                "state": WorkflowStep.WAITING_FOR_ANSWERS,
                 "message": "等待用户提交答案",
                 "thread_id": thread_id,
             },
@@ -492,7 +498,7 @@ def submit_answers(thread_id: str, user_answers: dict, user_id: int | None = Non
 
     result = get_workflow_state(thread_id)
 
-    final_step = result.get("current_step") if result else "unknown"
+    final_step = (result.get("current_step") if result else None) or WorkflowStep.UNKNOWN
     logger.info(f"[Study Flow] 工作流执行完成，最终状态: {final_step}")
 
     # 工作流完成事件

@@ -160,7 +160,14 @@ export function useWorkflowExecution({
       || (result.status === 'completed' && result.active)
     if (shouldFallback && execution.value) {
       const step = execution.value.currentStep
-      if (step !== LearningStep.WAITING_FOR_ANSWERS && step !== LearningStep.END && step !== LearningStep.COMPLETED) {
+      // 终态/等待态不排轮询。必须包含 FEEDBACK_COMPLETED —— 后端 feedback_node 成功时
+      // current_step 即 'feedback_completed'，漏判会导致工作流完成后仍被反复排轮询。
+      if (
+        step !== LearningStep.WAITING_FOR_ANSWERS &&
+        step !== LearningStep.FEEDBACK_COMPLETED &&
+        step !== LearningStep.END &&
+        step !== LearningStep.COMPLETED
+      ) {
         polling.schedulePolling()
       }
     }

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from Django_xm.apps.core.logging_utils import get_logger
 
+from ..models import WorkflowStep
 from ..services._model_helper import get_structured_model_from_state
 from ..services.state import StudyFlowState
 from .stream_events import emit_step
@@ -52,7 +53,7 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
             return {
                 "quiz": None,
                 "messages": [{"role": "assistant", "content": "\n\n⚠️ 学习计划生成失败，无法生成练习题。请稍后重试。"}],
-                "current_step": "quiz_error",
+                "current_step": WorkflowStep.QUIZ_ERROR,
                 "updated_at": timezone.now().isoformat(),
             }
 
@@ -114,7 +115,7 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
                 "quiz": None,
                 "error": error_msg,
                 "messages": [{"role": "assistant", "content": f"\n\n⚠️ {error_msg}，请稍后重试。"}],
-                "current_step": "quiz_error",
+                "current_step": WorkflowStep.QUIZ_ERROR,
                 "updated_at": timezone.now().isoformat(),
             }
 
@@ -170,7 +171,7 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
         return {
             "quiz": quiz,
             "messages": [{"role": "assistant", "content": quiz_display}],
-            "current_step": "waiting_for_answers",
+            "current_step": WorkflowStep.WAITING_FOR_ANSWERS,
             "updated_at": timezone.now().isoformat(),
         }
 
@@ -180,7 +181,7 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
             "quiz": None,
             "error": f"练习题生成失败: {e!s}",
             "messages": [{"role": "assistant", "content": f"\n\n⚠️ 练习题生成失败: {e!s}"}],
-            "current_step": "quiz_error",
+            "current_step": WorkflowStep.QUIZ_ERROR,
             "updated_at": timezone.now().isoformat(),
         }
 

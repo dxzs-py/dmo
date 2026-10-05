@@ -15,16 +15,49 @@ def chat_attachment_upload_path(instance, filename):
 class AttachmentStatus(models.TextChoices):
     ACTIVE = "active", "活跃"
     INDEXED = "indexed", "已入库"
+    # 预留（未启用）：回收站中间态。当前删除流程直接置 DELETED（配合 is_deleted
+    # 软删除标记 + restore_from_trash 恢复），无代码迁移到本状态。
     PENDING_DELETE = "pending_delete", "待删除"
     DELETED = "deleted", "已删除"
 
 
 class CleanupAction(models.TextChoices):
+    """附件清理/运维动作的**日志**词表（AttachmentCleanupLog.action 的取值）。
+
+    注意：本类是"已执行了什么"的审计词表，与"接口允许做什么"的
+    :class:`AttachmentAdminAction` 是**两套互不相干**的词表，不要混用：
+      - `update_retention` 是接口动作，但不是清理动作、不写日志，故不在本类；
+      - 反之 `cleanup`（定时清理）写日志，但不是人工触发的接口动作。
+
+    实测已落库的取值（360 条）：permanent_delete / index / cleanup /
+    manual_delete / restore_from_trash。
+    `UNINDEX` 当前无落库记录（unindex 操作未写审计日志，属审计缺口，非本类缺陷）。
+    已移除 `RESTORE = "restore"`：与 `RESTORE_FROM_TRASH` 语义重叠且从未落库（0 行）。
+    """
+
     CLEANUP = "cleanup", "定时清理"
     INDEX = "index", "入库"
     UNINDEX = "unindex", "移除入库"
     MANUAL_DELETE = "manual_delete", "手动删除"
-    RESTORE = "restore", "恢复"
+    PERMANENT_DELETE = "permanent_delete", "永久删除"
+    RESTORE_FROM_TRASH = "restore_from_trash", "从回收站恢复"
+
+
+class AttachmentAdminAction(models.TextChoices):
+    """附件管理接口（AttachmentAdminActionView）支持的动作词表——**契约单一真源**。
+
+    此前 views 用字符串字面量派发，导致与本类之外的 CleanupAction 双向不一致：
+      - `update_retention` 实际支持却不在任何枚举中；
+      - `CleanupAction.RESTORE` 在枚举中却不被支持（恢复走 restore_from_trash）。
+    现拆为两套词表并让派发统一引用本类。新增/下线接口动作必须同步修改本类。
+    """
+
+    INDEX = "index", "入库"
+    UNINDEX = "unindex", "移除入库"
+    UPDATE_RETENTION = "update_retention", "更新保留天数"
+    # 删除到回收站（软删除，可经 RESTORE_FROM_TRASH 恢复）；
+    # 与 PERMANENT_DELETE（不可恢复）区分，勿合并。
+    DELETE = "delete", "删除到回收站"
     PERMANENT_DELETE = "permanent_delete", "永久删除"
     RESTORE_FROM_TRASH = "restore_from_trash", "从回收站恢复"
 

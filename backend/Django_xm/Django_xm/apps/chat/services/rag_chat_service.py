@@ -63,7 +63,7 @@ class RAGChatService:
             if not manager.index_exists(user_index_name):
                 logger.warning(f"索引不存在: {user_index_name}")
                 return None
-            metadata = manager._load_metadata(user_index_name)
+            metadata = manager.load_metadata(user_index_name)
             num_documents = metadata.get("num_documents", 0) if metadata else 0
             if num_documents == 0:
                 logger.warning(f"索引中无文档: {user_index_name}")

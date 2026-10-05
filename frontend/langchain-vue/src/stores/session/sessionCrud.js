@@ -17,7 +17,6 @@ import { ElMessage } from 'element-plus'
 import { logger } from '../../utils/logger'
 import { getModeLabel } from '../../utils/format'
 import { isApiSuccess, transformBackendSessionToFrontend } from '../../utils/sessionTransformers'
-import { trackEvent } from '@/utils/analytics'
 
 export const createSessionCrudSlice = (sessionList, runtimeDeps) => {
   const { sessions, currentSessionId, loadSessionDetail, setSelectedKnowledgeBases } = sessionList
@@ -61,8 +60,14 @@ export const createSessionCrudSlice = (sessionList, runtimeDeps) => {
           return null
         }
         currentSessionId.value = newSession.id
-        // 埋点：会话创建成功（fire-and-forget，静默失败不影响主流程）
-        trackEvent('chat.session.create', { mode }, { category: 'chat' })
+        // 埋点说明：会话创建事件由后端信号 analytics/signals.py 的
+        // on_chat_session_created 统一记录（服务端权威，覆盖所有创建路径、
+        // 自带 request 上下文与 mode/title 元数据）。此处曾再发一次
+        // trackEvent('chat.session.create')，属重复写入同一事件、且会与信号事件
+        // 争抢"创建会话"计数，故不再由前端上报。
+        // 实测：该重复路径在历史库中仅留下 8 行（resource_type 为空），
+        // 而信号路径为 1656 行——即重复的真实影响远小于预期，删除主因是
+        // 消除冗余写入路径，而非修正显著偏差。
         // 乐观标记：触发浏览器标记已创建，WS session_created 到达时 consume 跳过重复处理
         optimisticSessionIds.value.add(newSession.id)
         triggerRef(optimisticSessionIds)  // 确保 Vue 响应式感知 Set 变更

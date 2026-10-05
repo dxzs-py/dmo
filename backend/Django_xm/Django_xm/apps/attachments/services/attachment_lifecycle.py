@@ -261,6 +261,14 @@ class AttachmentLifecycleService:
             logger.exception(f"从向量索引移除失败 (id={attachment.id})")
             return False
 
+    def delete_attachment(self, attachment: ChatAttachment, delete_files: bool = False):
+        """公开入口：删除单个附件（含索引清理与可选的磁盘文件清理）。
+
+        供跨模块/跨层调用（如 Django admin 的批量删除动作）。内部实现仍在
+        `_delete_attachment`，此处为薄封装，避免外部依赖私有成员。
+        """
+        return self._delete_attachment(attachment, delete_files=delete_files)
+
     def _delete_attachment(self, attachment: ChatAttachment, delete_files: bool = False):
         if delete_files:
             try:

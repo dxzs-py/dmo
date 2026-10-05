@@ -64,7 +64,7 @@ class SearchKnowledgeBaseTests(unittest.TestCase):
         manager_cls = mock.MagicMock(name="IndexManager")
         manager = manager_cls.return_value
         manager.index_exists.return_value = True
-        manager._load_metadata.return_value = {"embedding_dimension": 1024, "num_documents": 3}
+        manager.load_metadata.return_value = {"embedding_dimension": 1024, "num_documents": 3}
         manager.load_index.return_value = store
 
         embeddings = mock.MagicMock(name="embeddings")

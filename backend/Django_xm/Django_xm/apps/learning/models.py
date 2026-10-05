@@ -11,11 +11,72 @@ class WorkflowExecutionStatus(models.TextChoices):
 
 
 class WorkflowSessionStatus(models.TextChoices):
+    """学习工作流会话状态。
+
+    ⚠️ `WAITING_FOR_ANSWERS` 的**成员名**在后端 Python 中无引用，但**值**
+    `"waiting_for_answers"` 被前端直接使用：`types/index.js` 的
+    `LearningTaskStatus.WAITING_FOR_ANSWERS` / `LearningStep.WAITING_FOR_ANSWERS`，
+    并在 WorkflowView、useWorkflowExecution、useWorkflowPolling、researchTaskStatus
+    等多处消费。因此**不可**仅凭"成员名零引用"判定为孤儿并删除。
+    """
+
     RUNNING = "running", "执行中"
     WAITING_FOR_ANSWERS = "waiting_for_answers", "等待答案"
     RETRY = "retry", "重试"
     COMPLETED = "completed", "已完成"
     FAILED = "failed", "失败"
+
+
+class WorkflowStep(models.TextChoices):
+    """学习工作流**步骤**（`WorkflowSession.current_step` 与图 state 的取值）——跨端契约单一真源。
+
+    ⚠️ 与 `WorkflowSessionStatus` 是**两套不同的词表**，不要混用：
+      - 本类描述"走到哪一步"（节点级，含节点完成/失败明细）；
+      - `WorkflowSessionStatus` 描述"会话整体状态"（粗粒度，由本类映射而来，
+        见 `services/persistence_service.py` 的 `_build_session_defaults`）。
+
+    前端镜像：`frontend/langchain-vue/src/types/index.js` 的 `LearningStep`
+    **必须与本类逐值对齐**（含节点完成/失败值）。此前前端枚举缺 7 个后端实际
+    写入的值、又多出 5 个后端从不写入的值，导致进度条与终态判定失准。
+
+    分类：
+    - 阶段中：节点正在执行或已就绪（用于前端进度条排序）
+    - 节点完成 / 节点失败：节点各自写入的结果态
+    - 中断 / 重试：等待用户答题、重试分支
+    - 终态与兼容值：终态（feedback_completed 为实际终态），其余为历史/防御性兼容
+    """
+
+    # —— 阶段中（前端进度条展示顺序）——
+    START = "start", "启动"
+    PLANNER = "planner", "生成学习计划"
+    RETRIEVAL = "retrieval", "检索资料"
+    QUIZ_GENERATOR = "quiz_generator", "生成练习题"
+    GRADING = "grading", "评分"
+    FEEDBACK = "feedback", "生成反馈"
+
+    # —— 节点完成 ——
+    PLANNER_COMPLETED = "planner_completed", "计划完成"
+    GRADING_COMPLETED = "grading_completed", "评分完成"
+    FEEDBACK_COMPLETED = "feedback_completed", "反馈完成（工作流终态）"
+
+    # —— 节点失败 ——
+    PLANNER_ERROR = "planner_error", "计划失败"
+    QUIZ_ERROR = "quiz_error", "出题失败"
+    GRADING_ERROR = "grading_error", "评分失败"
+    FEEDBACK_ERROR = "feedback_error", "反馈失败"
+
+    # —— 中断 / 重试 ——
+    WAITING_FOR_ANSWERS = "waiting_for_answers", "等待答题"
+    RETRY = "retry", "重试"
+
+    # —— 终态与兼容值 ——
+    # 实际终态是 FEEDBACK_COMPLETED（study_flow 图的终态节点是 END，但 current_step
+    # 不取字面量 "end"）；以下三个仅用于兼容历史数据与防御性判断。
+    COMPLETED = "completed", "已完成"
+    FAILED = "failed", "失败"
+    END = "end", "已结束"
+    # 视图在 state 缺失 current_step 时的兜底读数（views.py），非真实步骤。
+    UNKNOWN = "unknown", "未知"
 
 
 class WorkflowQuestionStatus(models.TextChoices):

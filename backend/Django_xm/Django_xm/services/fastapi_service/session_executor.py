@@ -20,6 +20,7 @@ from typing import Any
 from asgiref.sync import sync_to_async
 
 from Django_xm.apps.approvals.models import Approval
+from Django_xm.apps.research.models import ResearchTaskStatus
 from Django_xm.apps.approvals.services.approval_batch import (
     await_wait_for_batch_decision,
     collect_batch_decisions,
@@ -171,8 +172,11 @@ class SessionExecutor:
     async def _run_research(self) -> None:
         """深度研究执行核心（单协程，原 run 逻辑）。"""
         thread_id = self.thread_id
-        await _update_task_status(thread_id, {"status": "running", "current_step": "research_started"})
-        await self._publish_status_change("running", current_step="research_started")
+        await _update_task_status(
+            thread_id,
+            {"status": ResearchTaskStatus.RUNNING, "current_step": "research_started"},
+        )
+        await self._publish_status_change(ResearchTaskStatus.RUNNING, current_step="research_started")
         agent = await self._build_agent()
         # 保存 graph 引用供调度器唤醒时复用（业务等待挂起 → Command(resume) 续跑）
         self._agent = agent
@@ -398,9 +402,9 @@ class SessionExecutor:
         )
 
         await _update_task_status(
-            self.thread_id, {"status": "running", "current_step": "waiting_subagent"}
+            self.thread_id, {"status": ResearchTaskStatus.RUNNING, "current_step": "waiting_subagent"}
         )
-        await self._publish_status_change("running", current_step="waiting_subagent")
+        await self._publish_status_change(ResearchTaskStatus.RUNNING, current_step="waiting_subagent")
         logger.info(
             f"[SessionExecutor] 业务等待挂起: thread_id={self.thread_id}, "
             f"subagents={self._wait_subagent_thread_ids}, interrupt_id={result.interrupt_id}"
@@ -756,8 +760,16 @@ class SessionExecutor:
                 getattr(agent, "_main_content", "") or None,
             )
         # 状态标签实时同步：进入"等待审批"
-        await _update_task_status(self.thread_id, {"status": "awaiting_approval", "current_step": "awaiting_approval"})
-        await self._publish_status_change("awaiting_approval", current_step="awaiting_approval")
+        await _update_task_status(
+            self.thread_id,
+            {
+                "status": ResearchTaskStatus.AWAITING_APPROVAL,
+                "current_step": ResearchTaskStatus.AWAITING_APPROVAL,
+            },
+        )
+        await self._publish_status_change(
+            ResearchTaskStatus.AWAITING_APPROVAL, current_step=ResearchTaskStatus.AWAITING_APPROVAL
+        )
         return await self._wait_for_batch_decision(graph_interrupt_id)
 
     async def _wait_for_batch_decision(self, graph_interrupt_id: str) -> dict:
@@ -850,8 +862,10 @@ class SessionExecutor:
         thread_id = self.thread_id
         logger.warning(f"[SessionExecutor] 研究失败: thread_id={thread_id}, error={error_message}")
         try:
-            await _update_task_status(thread_id, {"status": "failed", "error": error_message})
-            await self._publish_status_change("failed", error=error_message)
+            await _update_task_status(
+                thread_id, {"status": ResearchTaskStatus.FAILED, "error": error_message}
+            )
+            await self._publish_status_change(ResearchTaskStatus.FAILED, error=error_message)
         except Exception:
             logger.exception(f"[SessionExecutor] 更新任务失败状态异常: {thread_id}")
         await self._writeback_and_broadcast(error_message, success=False)

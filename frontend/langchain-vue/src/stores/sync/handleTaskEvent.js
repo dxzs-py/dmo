@@ -127,7 +127,7 @@ export const createHandleTaskEvent = (ctx) => {
           `success=${payload.success !== false}, source=${source}`
         )
         break
-      case 'status_change':
+      case EventType.TASK_STATUS_CHANGE: // 值 = 'status_change'
         // 任务状态实时推送（执行器运行中细粒度状态，Task 4）：
         // running/awaiting_approval/completed/failed + currentStep/finalReport/error，
         // 驱动 DeepResearchView / ResearchTaskDetail 状态标签实时刷新。
@@ -178,7 +178,7 @@ export const createHandleTaskEvent = (ctx) => {
       }
       // 子代理图层正文/中间思考（task 通道，独立深度研究模式）
       // spec D10：按 subagentThreadId 路由写入 task.subagentContents[threadId]
-      case 'stream_subagent_content': {
+      case EventType.STREAM_SUBAGENT_CONTENT: {
         const data = payload.data || payload
         const subagentThreadId = payload.subagentThreadId || data.subagentThreadId || ''
         if (subagentThreadId) {
@@ -190,7 +190,7 @@ export const createHandleTaskEvent = (ctx) => {
       // 与 handleSessionEvent 的 subagent_status_change 分支对称（session 频道
       // 仅覆盖 chat/learning/关联深研；独立深研只走 task 频道，缺失会导致子代理卡
       // 状态停留旧值）。父线程 id 取 payload.sourceId（深研=task_id）回退 taskId。
-      case 'subagent_status_change':
+      case EventType.SUBAGENT_STATUS_CHANGE:
         if (payload.subagentThreadId || event.subagent_thread_id) {
           logger.info(
             `[Sync] 子代理状态变更(task): task=${taskId}, subagent=${payload.subagentThreadId || event.subagent_thread_id}, ` +

@@ -67,7 +67,7 @@ class ChatAttachmentAdmin(admin.ModelAdmin):
         count = 0
         for att in queryset:
             try:
-                service._delete_attachment(att)
+                service.delete_attachment(att)
                 count += 1
             except Exception:
                 # 单个附件删除失败不阻断批量操作

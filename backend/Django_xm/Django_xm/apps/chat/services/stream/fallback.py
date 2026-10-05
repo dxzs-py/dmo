@@ -18,6 +18,7 @@ from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from Django_xm.apps.ai_engine.models import SystemConfig
 from Django_xm.apps.ai_engine.services.cost_tracker import TokenDetailTracker
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
+from Django_xm.apps.chat.models import ChatMode
 from Django_xm.apps.chat.services.stream_helpers import (
     extract_thinking_content,
     update_usage_and_tokens,
@@ -32,7 +33,7 @@ class FallbackStreamService:
     def __init__(self, chat_service):
         """
         Args:
-            chat_service: ChatService 实例，提供 _apply_context_engineering / _acreate_human_message
+            chat_service: ChatService 实例，提供 apply_context_engineering / acreate_human_message
         """
         self._chat_service = chat_service
 
@@ -86,10 +87,12 @@ class FallbackStreamService:
         from Django_xm.apps.chat.services.chat_service import convert_chat_history
 
         chat_history = data.get("chat_history", [])
-        chat_history, _ce_metadata = self._chat_service._apply_context_engineering(
+        # 走 ChatService 的公开 API（原为 _apply_context_engineering 私有方法，
+        # 跨对象依赖私有成员会在重构时静默破坏，已统一改为公开入口）
+        chat_history, _ce_metadata = self._chat_service.apply_context_engineering(
             chat_history,
             data.get("message", ""),
-            mode=data.get("mode", "agent"),
+            mode=data.get("mode", ChatMode.AGENT),
             model_name=data.get("model_name"),
         )
         langchain_chat_history = convert_chat_history(chat_history)
@@ -100,7 +103,7 @@ class FallbackStreamService:
 
         messages = self.clean_tool_call_messages(messages)
 
-        human_msg = await self._chat_service._acreate_human_message(data)
+        human_msg = await self._chat_service.acreate_human_message(data)
         messages.append(human_msg)
 
         current_message_content = ""

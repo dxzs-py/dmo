@@ -122,7 +122,7 @@ class Command(BaseCommand):
         if not manager.index_exists(index_name):
             raise CommandError(f"索引不存在: {index_name}")
 
-        metadata = manager._load_metadata(index_name) or {}
+        metadata = manager.load_metadata(index_name) or {}
         old_model = metadata.get("embedding_model", "未知")
         old_dim = metadata.get("embedding_dimension", "未知")
         num_docs = metadata.get("num_documents", 0)
@@ -266,8 +266,8 @@ class Command(BaseCommand):
         self.stdout.write(f"  读取到 {len(documents)} 条文档")
 
         # 2. 用新 embedding 创建索引（overwrite=True 自动处理旧索引）
-        store_type = manager._get_store_type(index_name)
-        description = (manager._load_metadata(index_name) or {}).get("description", "")
+        store_type = manager.get_store_type(index_name)
+        description = (manager.load_metadata(index_name) or {}).get("description", "")
 
         start_time = time.time()
         manager.create_index(

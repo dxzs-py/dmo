@@ -1,7 +1,7 @@
 import { logger } from '@/utils/logger'
 import { getEventSessionId } from '@/utils/eventRouting'
 import { StreamState, PROTECTED_STREAM_STATES } from '@/types'
-import { TOOL_CALL_EVENT_TYPES, APPROVAL_EVENT_TYPES } from '@/types/realtimeEvents'
+import { APPROVAL_EVENT_TYPES, EventType, TOOL_CALL_EVENT_TYPES } from '@/types/realtimeEvents'
 import { createHandleToolCallEvent } from './toolCallHandler'
 import { createHandleApprovalEvent } from './approvalHandler'
 import { createSubagentHandlers } from './subagentHandlers'
@@ -238,11 +238,11 @@ export const createHandleSessionEvent = (ctx) => {
         ctx.applyStreamReasoning(sessionId, payload)
         break
       // 子代理图层正文/中间思考（写入 message.subagentContents[threadId]，见 subagentHandlers）
-      case 'stream_subagent_content':
+      case EventType.STREAM_SUBAGENT_CONTENT:
         applySubagentContent(sessionId, payload)
         break
       // 子代理状态变更（刷新子代理元数据，见 subagentHandlers）
-      case 'subagent_status_change':
+      case EventType.SUBAGENT_STATUS_CHANGE:
         handleSubagentStatusChange(sessionId, payload)
         break
       case 'messages_deleted':
@@ -255,7 +255,7 @@ export const createHandleSessionEvent = (ctx) => {
         ctx.handleStreamCompleted(sessionId, payload)
         break
       // 聊天关联深度研究任务状态（session 频道冗余路径，见 subagentHandlers）
-      case 'status_change':
+      case EventType.TASK_STATUS_CHANGE: // 值 = 'status_change'（勿与 TASK_STATUS_CHANGED 混淆）
         handleResearchStatusChange(sessionId, payload)
         break
       case 'stream_finalized':
@@ -272,7 +272,7 @@ export const createHandleSessionEvent = (ctx) => {
       case 'message_regenerate_reverted':
         ctx.handleMessageRegenerateReverted(sessionId, payload)
         break
-      case 'message_finalized':
+      case EventType.MESSAGE_FINALIZED:
         ctx.handleMessageFinalized(sessionId, payload)
         break
       default:

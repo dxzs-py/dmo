@@ -47,19 +47,67 @@ export const LearningTaskStatus = {
   FAILED: 'failed',
 }
 
-/** 学习工作流阶段（后端 current_step，snake_case 协议值） */
+/**
+ * 学习工作流步骤（镜像后端 `learning/models.py` 的 `WorkflowStep`，snake_case 协议值）。
+ *
+ * ⚠️ 必须与后端枚举**逐值对齐**：此前本枚举缺 7 个后端实际写入的值
+ * （planner_completed / planner_error / quiz_error / grading_completed /
+ * grading_error / feedback_error / unknown），又多出后端从不写入的值，
+ * 导致进度条与终态判定失准、用户看到裸英文标识符。
+ * 新增/删除步骤时前后端必须同步修改。
+ *
+ * 分组：阶段中 / 节点完成 / 节点失败 / 中断重试 / 终态与兼容值。
+ */
 export const LearningStep = {
+  // —— 阶段中（进度条展示顺序）——
   START: 'start',
   PLANNER: 'planner',
   RETRIEVAL: 'retrieval',
   QUIZ_GENERATOR: 'quiz_generator',
-  WAITING_FOR_ANSWERS: 'waiting_for_answers',
   GRADING: 'grading',
   FEEDBACK: 'feedback',
+
+  // —— 节点完成 ——
+  PLANNER_COMPLETED: 'planner_completed',
+  GRADING_COMPLETED: 'grading_completed',
   FEEDBACK_COMPLETED: 'feedback_completed',
-  END: 'end',
+
+  // —— 节点失败 ——
+  PLANNER_ERROR: 'planner_error',
+  QUIZ_ERROR: 'quiz_error',
+  GRADING_ERROR: 'grading_error',
+  FEEDBACK_ERROR: 'feedback_error',
+
+  // —— 中断 / 重试 ——
+  WAITING_FOR_ANSWERS: 'waiting_for_answers',
+  RETRY: 'retry',
+
+  // —— 终态与兼容值（后端仅作防御性判断，实际终态是 FEEDBACK_COMPLETED）——
   COMPLETED: 'completed',
   FAILED: 'failed',
+  END: 'end',
+  UNKNOWN: 'unknown',
+}
+
+/**
+ * 步骤 → 所属"阶段"的归并（用于进度条）。
+ *
+ * 后端节点写入的是**节点结果**（如 quiz_error / feedback_completed），
+ * 而进度条按**阶段**（quiz_generator / feedback）排序，故需归并：
+ * 未归并时 `stepOrder.indexOf('quiz_error') === -1` → 进度条显示"无已完成步骤"。
+ */
+const STEP_STAGE_ALIASES = {
+  [LearningStep.PLANNER_COMPLETED]: LearningStep.PLANNER,
+  [LearningStep.PLANNER_ERROR]: LearningStep.PLANNER,
+  [LearningStep.GRADING_COMPLETED]: LearningStep.GRADING,
+  [LearningStep.GRADING_ERROR]: LearningStep.GRADING,
+  [LearningStep.FEEDBACK_ERROR]: LearningStep.FEEDBACK,
+  [LearningStep.QUIZ_ERROR]: LearningStep.QUIZ_GENERATOR,
+}
+
+/** 把节点结果值归并到其所属阶段值；无对应阶段则原样返回。 */
+export function toWorkflowStage(step) {
+  return STEP_STAGE_ALIASES[step] || step
 }
 
 /** 学习工作流题型（后端 question.type，snake_case 协议值） */

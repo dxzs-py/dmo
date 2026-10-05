@@ -21,7 +21,13 @@ from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.responses import success_response
 from Django_xm.common.serializers import EmptySerializer
 
-from .models import AttachmentStatus, ChatAttachment, StorageAlert
+from .models import (
+    AttachmentAdminAction,
+    AttachmentStatus,
+    ChatAttachment,
+    CleanupAction,
+    StorageAlert,
+)
 from .services.attachment_validation import (
     build_admin_list,
     check_user_storage_quota,
@@ -200,11 +206,16 @@ class AttachmentAdminActionView(APIView):
         if not att:
             raise NotFound("附件不存在")
 
-        if action in ("index", "unindex", "update_retention"):
+        # 派发统一引用 AttachmentAdminAction（契约单一真源），勿改回字面量
+        if action in (
+            AttachmentAdminAction.INDEX,
+            AttachmentAdminAction.UNINDEX,
+            AttachmentAdminAction.UPDATE_RETENTION,
+        ):
             if att.is_deleted or att.status == AttachmentStatus.DELETED:
                 raise NotFound("附件已删除，请在回收站中操作")
 
-        if action == "index":
+        if action == AttachmentAdminAction.INDEX:
             success, message = service.index_attachment_by_id(
                 attachment_id, triggered_by=f"admin:{request.user.username}"
             )
@@ -212,7 +223,7 @@ class AttachmentAdminActionView(APIView):
                 return success_response(message=message)
             raise BaseAppError(message, business_code=ErrorCode.INVALID_PARAMS)
 
-        elif action == "unindex":
+        elif action == AttachmentAdminAction.UNINDEX:
             success, message = service.unindex_attachment_by_id(
                 attachment_id, triggered_by=f"admin:{request.user.username}"
             )
@@ -220,14 +231,14 @@ class AttachmentAdminActionView(APIView):
                 return success_response(message=message)
             raise BaseAppError(message, business_code=ErrorCode.INVALID_PARAMS)
 
-        elif action == "update_retention":
+        elif action == AttachmentAdminAction.UPDATE_RETENTION:
             days = request.data.get("retention_days")
             if days is None or days < 1:
                 raise BaseAppError("保留天数必须大于0", business_code=ErrorCode.INVALID_PARAMS)
             ChatAttachment.objects.filter(pk=attachment_id, is_deleted=False).update(retention_days=days)
             return success_response(message=f"保留天数已更新为 {days} 天")
 
-        elif action == "permanent_delete":
+        elif action == AttachmentAdminAction.PERMANENT_DELETE:
             success, message = service.permanent_delete(
                 attachment_id, triggered_by=f"admin:{request.user.username}"
             )
@@ -235,7 +246,7 @@ class AttachmentAdminActionView(APIView):
                 return success_response(message=message)
             raise BaseAppError(message, business_code=ErrorCode.SERVER_ERROR)
 
-        elif action == "restore_from_trash":
+        elif action == AttachmentAdminAction.RESTORE_FROM_TRASH:
             success, message = service.restore_from_trash(attachment_id)
             if success:
                 return success_response(message=message)
@@ -257,9 +268,11 @@ class AttachmentAdminCleanupView(APIView):
 
         service = AttachmentLifecycleService()
 
-        if action == "cleanup":
+        # 本视图触发的是**会写审计日志**的批量运维操作，故引用 CleanupAction
+        # （日志词表）而非 AttachmentAdminAction（接口动作词表）。
+        if action == CleanupAction.CLEANUP:
             log = service.cleanup_expired(dry_run=dry_run, triggered_by=f"admin:{request.user.username}")
-        elif action == "index":
+        elif action == CleanupAction.INDEX:
             log = service.index_old_attachments(dry_run=dry_run, triggered_by=f"admin:{request.user.username}")
         else:
             raise BaseAppError(f"不支持的操作: {action}", business_code=ErrorCode.INVALID_PARAMS)
@@ -303,11 +316,11 @@ class AttachmentAdminBatchView(APIView):
 
         service = AttachmentLifecycleService()
 
-        if action == "index":
+        if action == AttachmentAdminAction.INDEX:
             results = service.batch_index(attachment_ids, triggered_by=f"admin:{request.user.username}")
-        elif action == "unindex":
+        elif action == AttachmentAdminAction.UNINDEX:
             results = service.batch_unindex(attachment_ids, triggered_by=f"admin:{request.user.username}")
-        elif action == "delete":
+        elif action == AttachmentAdminAction.DELETE:
             results = service.batch_delete(attachment_ids, triggered_by=f"admin:{request.user.username}")
         else:
             raise BaseAppError(f"不支持的操作: {action}", business_code=ErrorCode.INVALID_PARAMS)

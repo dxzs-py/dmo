@@ -58,7 +58,25 @@ const EventType = {
   WORKFLOW_STATE_UPDATE: 'workflow_state_update',
   WORKFLOW_COMPLETED: 'workflow_completed',
   WORKFLOW_FAILED: 'workflow_failed',
+
+  // —— 以下 8 项为补齐项：后端 common/event_schema.py 已定义、前端也已有处理逻辑，
+  // 但此前未登记进本枚举，导致派发处只能写字符串字面量（契约散落、无法校验）。
+  // 值一律以后端 EventType.value 为准，勿凭成员名臆测（见 TASK_STATUS_CHANGE 说明）。
+  STREAM_SUBAGENT_CONTENT: 'stream_subagent_content', // 子代理图层正文/中间思考流式更新
+  SUBAGENT_STATUS_CHANGE: 'subagent_status_change', // 子代理状态变更
+  MESSAGE_FINALIZED: 'message_finalized', // 消息版本固化（多 Tab 同步）
+  TASK_CREATED: 'task_created', // 新任务创建（深度研究/工作流）
+  TASK_DELETED: 'task_deleted', // 任务删除
+  TASK_STATUS_CHANGED: 'task_status_changed', // 任务进入**终态** → 列表刷新
+  TASK_PROGRESS: 'task_progress', // 后台任务进度（RAG 文档上传等）
+  // ⚠️ 与上面 TASK_STATUS_CHANGED 极易混淆：成员名只差一个 D，且**值是 'status_change'
+  // 而非 'task_status_changed'**，语义也不同——它是执行器运行中的**细粒度**状态推送
+  // （running/awaiting_approval/completed/failed + current_step/final_report/error），
+  // 供任务详情页状态标签使用。引用时务必核对值，不要按成员名推断。
+  TASK_STATUS_CHANGE: 'status_change',
 }
+
+export { EventType }
 
 /**
  * 触发快照校对的关键事件集合

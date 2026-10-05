@@ -28,6 +28,7 @@ from Django_xm.apps.ai_engine.services.agent_resilience import (
     get_degraded_tools,
 )
 from Django_xm.apps.ai_engine.services.cost_tracker import TokenDetailTracker
+from Django_xm.apps.chat.models import ChatMode
 from Django_xm.apps.chat.services.slash_commands import execute_command, parse_command
 from Django_xm.apps.chat.services.stream import (
     DeepThinkingStreamStrategy,
@@ -185,7 +186,8 @@ class ChatService:
     def _build_user_content(self, data: dict[str, Any]) -> dict[str, Any]:
         return self._message_builder.build_user_content(data)
 
-    async def _acreate_human_message(self, data: dict[str, Any]) -> HumanMessage:
+    async def acreate_human_message(self, data: dict[str, Any]) -> HumanMessage:
+        """构建用户消息（**公共 API**：供 stream/fallback.py 等协作对象调用）。"""
         return await self._message_builder.acreate_human_message(data)
 
     def _load_research_context(
@@ -193,13 +195,18 @@ class ChatService:
     ) -> str | None:
         return self._context_service.load_research_context(research_task_id, user_id, session_id)
 
-    def _apply_context_engineering(
+    def apply_context_engineering(
         self,
         chat_history: list[dict[str, Any]],
         query: str,
-        mode: str = "agent",
+        mode: str = ChatMode.AGENT,
         model_name: str | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """应用上下文工程（**公共 API**：供 stream/fallback.py 等协作对象调用）。
+
+        注意：checkpointer 专用变体仍在 `_apply_context_engineering_for_checkpointer`
+        （仅类内使用，保持私有）。
+        """
         return self._context_service.apply_context_engineering(
             chat_history,
             query,
@@ -211,7 +218,7 @@ class ChatService:
         self,
         user_message: str,
         model_name: str | None = None,
-        mode: str = "agent",
+        mode: str = ChatMode.AGENT,
     ) -> dict[str, Any]:
         return self._context_service.apply_context_engineering_for_checkpointer(
             user_message,
@@ -335,7 +342,7 @@ class ChatService:
             invoke_config = thread_config
         else:
             chat_history = data.get("chat_history", [])
-            chat_history, _ = self._apply_context_engineering(
+            chat_history, _ = self.apply_context_engineering(
                 chat_history,
                 data.get("message", ""),
                 mode=data.get("mode", "agent"),
@@ -1004,7 +1011,7 @@ class ChatService:
             tools=tools,
         )
 
-        human_msg = await self._acreate_human_message(data)
+        human_msg = await self.acreate_human_message(data)
 
         if use_checkpointer:
             # Checkpointer 模式下仍执行注入检测和预算分配
@@ -1046,7 +1053,7 @@ class ChatService:
             if self._context_service.check_injection(user_message):
                 logger.warning("检测到指令注入尝试，用户输入将被隔离")
 
-            chat_history, _ = self._apply_context_engineering(
+            chat_history, _ = self.apply_context_engineering(
                 chat_history,
                 user_message,
                 mode=data.get("mode", "agent"),

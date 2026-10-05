@@ -80,7 +80,7 @@ class RAGQueryView(APIView):
         if not manager.index_exists(user_index_name):
             raise NotFound(f"索引不存在: {index_name}")
 
-        metadata = manager._load_metadata(user_index_name)
+        metadata = manager.load_metadata(user_index_name)
         num_documents = metadata.get("num_documents", 0) if metadata else 0
         if num_documents == 0:
             raise ValidationError("索引中暂无文档，请先上传文档后再查询")
@@ -278,7 +278,7 @@ def rag_query_stream(request):
     if not manager.index_exists(user_index_name):
         raise NotFound(f"索引不存在: {index_name}")
 
-    metadata = manager._load_metadata(user_index_name)
+    metadata = manager.load_metadata(user_index_name)
     required_dim = metadata.get("embedding_dimension") if metadata else None
     embeddings = get_embeddings(required_dimension=required_dim)
     vector_store = manager.load_index(user_index_name, embeddings)

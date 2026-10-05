@@ -15,6 +15,7 @@ from Django_xm.apps.core.logging_utils import get_logger
 
 from ..services._model_helper import get_structured_model_from_state
 from ..services.state import StudyFlowState
+from ..models import WorkflowStep
 from .stream_events import emit_step
 
 logger = get_logger(__name__)
@@ -50,7 +51,7 @@ def planner_node(state: StudyFlowState) -> dict[str, Any]:
             logger.info("[Planner Node] 检测到已有学习计划，跳过规划")
             return {
                 "learning_plan": existing_plan,
-                "current_step": "planner_completed",
+                "current_step": WorkflowStep.PLANNER_COMPLETED,
                 "messages": [AIMessage(content="\n\n📋 复用已有学习计划，继续生成新练习题...")],
                 "updated_at": timezone.now().isoformat(),
             }
@@ -86,7 +87,7 @@ def planner_node(state: StudyFlowState) -> dict[str, Any]:
             return {
                 "error": error_msg,
                 "error_node": "planner",
-                "current_step": "planner_error",
+                "current_step": WorkflowStep.PLANNER_ERROR,
                 "messages": [AIMessage(content=f"\n\n⚠️ {error_msg}，请稍后重试。")],
                 "updated_at": timezone.now().isoformat(),
             }
@@ -118,7 +119,7 @@ def planner_node(state: StudyFlowState) -> dict[str, Any]:
         return {
             "learning_plan": learning_plan,
             "messages": [AIMessage(content=plan_summary)],
-            "current_step": "planner",
+            "current_step": WorkflowStep.PLANNER,
             "updated_at": timezone.now().isoformat(),
         }
 
@@ -127,6 +128,6 @@ def planner_node(state: StudyFlowState) -> dict[str, Any]:
         return {
             "error": f"学习计划生成失败: {e!s}",
             "error_node": "planner",
-            "current_step": "planner_error",
+            "current_step": WorkflowStep.PLANNER_ERROR,
             "updated_at": timezone.now().isoformat(),
         }

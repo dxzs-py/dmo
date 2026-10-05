@@ -13,6 +13,19 @@ from django.conf import settings
 from Django_xm.apps.core.services.file_manager import get_file_manager
 
 logger = logging.getLogger(__name__)
+
+# WorkflowStep 的完整合法取值集合（延迟构建，避免模块级导入 models 触发 app 加载顺序问题）。
+# 用于区分"已登记的步骤"与"未知/拼写错误的步骤"，后者会打 warning 而非静默降级。
+_KNOWN_STEPS: frozenset[str] | None = None
+
+
+def _known_steps() -> frozenset[str]:
+    global _KNOWN_STEPS
+    if _KNOWN_STEPS is None:
+        from Django_xm.apps.learning.models import WorkflowStep
+
+        _KNOWN_STEPS = frozenset(WorkflowStep.values)
+    return _KNOWN_STEPS
 file_manager = get_file_manager()
 
 
@@ -175,16 +188,33 @@ class WorkflowPersistenceService:
         显式提供时覆盖——避免图状态缺失该键时，把预创建 session 的继承配置
         覆盖为空/None（首次启动的 root_thread_id、继续练习继承的知识库等）。
         """
-        current_step = state.get("current_step", "start")
+        from Django_xm.apps.learning.models import WorkflowStep, WorkflowSessionStatus
 
-        if current_step in ["completed", "failed", "end", "feedback_completed"]:
-            status = "completed" if current_step in ["completed", "end", "feedback_completed"] else "failed"
-        elif current_step == "waiting_for_answers":
-            status = "waiting_for_answers"
-        elif current_step == "retry":
-            status = "retry"
+        raw_step = state.get("current_step", "")
+        current_step = raw_step or WorkflowStep.START
+
+        # current_step（节点级）→ status（会话级）映射。
+        # 未知取值不再**静默**落到 running：拼写错误或前端/后端新增步骤时，
+        # 静默兜底会让任务永远显示"运行中"，且无任何痕迹可查。
+        if current_step in (WorkflowStep.COMPLETED, WorkflowStep.FAILED, WorkflowStep.END, WorkflowStep.FEEDBACK_COMPLETED):
+            status = (
+                WorkflowSessionStatus.COMPLETED
+                if current_step != WorkflowStep.FAILED
+                else WorkflowSessionStatus.FAILED
+            )
+        elif current_step == WorkflowStep.WAITING_FOR_ANSWERS:
+            status = WorkflowSessionStatus.WAITING_FOR_ANSWERS
+        elif current_step == WorkflowStep.RETRY:
+            status = WorkflowSessionStatus.RETRY
+        elif current_step in _known_steps():
+            status = WorkflowSessionStatus.RUNNING
         else:
-            status = "running"
+            logger.warning(
+                "[WorkflowPersistence] 未知 current_step=%r，按 running 处理；"
+                "若为新步骤请先登记到 models.WorkflowStep",
+                current_step,
+            )
+            status = WorkflowSessionStatus.RUNNING
 
         defaults: dict[str, Any] = {
             "status": status,

@@ -15,6 +15,19 @@ class CeleryTaskRecord(AuditModel):
     """
 
     class TaskStatus(models.TextChoices):
+        """Celery 后台任务的执行状态（CeleryTaskRecord.status）。
+
+        ⚠️ 词表边界：本类描述的是 **Celery 异步任务** 的执行状态，采用
+        Celery/flower 惯用词（started / progress / success / failure / revoked / retry）。
+        它与**业务任务**状态是两套**互不相干**的词表，不可混用或互相映射：
+          - 深度研究：`apps/research/models.py` 的 `ResearchTaskStatus`
+            （pending / awaiting_approval / running / completed / failed）
+          - 学习工作流：`apps/learning/models.py` 的 `WorkflowExecutionStatus` /
+            `WorkflowSessionStatus`（pending / running / completed / failed / ...）
+        差异示例：业务侧用 `completed`/`failed`，本类用 `success`/`failure`。
+        跨词表比较前必须先确认来源域。
+        """
+
         PENDING = "pending", "等待中"
         STARTED = "started", "已开始"
         PROGRESS = "progress", "执行中"

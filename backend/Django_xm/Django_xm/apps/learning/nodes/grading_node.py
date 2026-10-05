@@ -17,6 +17,7 @@ from django.utils import timezone
 from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.common.messages import content_to_str
 
+from ..models import WorkflowStep
 from ..services._model_helper import get_chat_model_from_state
 from ..services.state import ScoreDetail, StudyFlowState
 from .stream_events import emit_step
@@ -128,7 +129,7 @@ def grading_node(state: StudyFlowState) -> dict[str, Any]:
             return {
                 "score": 0,
                 "score_details": {"total_count": 0, "correct_count": 0, "question_scores": []},
-                "current_step": "grading_error",
+                "current_step": WorkflowStep.GRADING_ERROR,
                 "updated_at": datetime.now(UTC).isoformat(),
             }
 
@@ -228,7 +229,7 @@ def grading_node(state: StudyFlowState) -> dict[str, Any]:
                 "correct_count": correct_count,
                 "question_scores": score_details,
             },
-            "current_step": "grading_completed",
+            "current_step": WorkflowStep.GRADING_COMPLETED,
         }
 
     except Exception as e:
@@ -237,7 +238,7 @@ def grading_node(state: StudyFlowState) -> dict[str, Any]:
             "score": 0,
             "score_details": {"total_count": 0, "correct_count": 0, "question_scores": []},
             "error": f"评分失败: {e!s}",
-            "current_step": "grading_error",
+            "current_step": WorkflowStep.GRADING_ERROR,
             "updated_at": datetime.now(UTC).isoformat(),
         }
 

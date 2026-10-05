@@ -70,5 +70,5 @@ app = FastAPI(title="Agent 执行服务", lifespan=lifespan)
 
 @app.get("/health")
 async def health():
-    active = len(_manager._sessions) if _manager else 0
+    active = _manager.active_session_count if _manager else 0
     return {"status": "ok", "active_sessions": active}

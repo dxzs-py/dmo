@@ -32,7 +32,14 @@ from Django_xm.common.pagination import paginate_to_dict
 from Django_xm.common.serializers import EmptySerializer
 from Django_xm.common.sse_utils import SSERenderer, sse_error_event, sse_response
 
-from .models import WorkflowAttempt, WorkflowQuestion, WorkflowQuestionStatus, WorkflowQuestionType, WorkflowSession
+from .models import (
+    WorkflowAttempt,
+    WorkflowQuestion,
+    WorkflowQuestionStatus,
+    WorkflowQuestionType,
+    WorkflowSession,
+    WorkflowStep,
+)
 from .serializers import (
     WorkflowAttemptSerializer,
     WorkflowQuestionSerializer,
@@ -192,7 +199,7 @@ class WorkflowStartStreamView(APIView):
                     "feedback": None,
                     "retry_count": 0,
                     "should_retry": False,
-                    "current_step": "start",
+                    "current_step": WorkflowStep.START,
                     "thread_id": thread_id,
                     "provider_id": serializer.validated_data.get("provider_id"),
                     "model_name": serializer.validated_data.get("model_name"),
@@ -993,15 +1000,19 @@ def workflow_stream(request, thread_id):
                     yield sse_error_event(code="40401", message="工作流不存在")
                     return
 
-                current_step = state.get("current_step", "unknown")
+                current_step = state.get("current_step") or WorkflowStep.UNKNOWN
                 # 首个步骤事件按真实状态生成：waiting/完成态不得被"start 启动中"覆盖，
                 # 否则前端步骤条回退到 start、stepMessage 残留"工作流启动中..."
-                if current_step == "waiting_for_answers":
+                if current_step == WorkflowStep.WAITING_FOR_ANSWERS:
                     initial_step, initial_message = current_step, "等待您提交答案..."
-                elif current_step in ("completed", "end", "feedback_completed"):
-                    initial_step, initial_message = "feedback_completed", "工作流已完成"
+                elif current_step in (
+                    WorkflowStep.COMPLETED,
+                    WorkflowStep.END,
+                    WorkflowStep.FEEDBACK_COMPLETED,
+                ):
+                    initial_step, initial_message = WorkflowStep.FEEDBACK_COMPLETED, "工作流已完成"
                 else:
-                    initial_step, initial_message = "start", "工作流启动中..."
+                    initial_step, initial_message = WorkflowStep.START, "工作流启动中..."
 
                 workflow_step_evt = {
                     "type": "workflow_step",
@@ -1019,12 +1030,12 @@ def workflow_stream(request, thread_id):
                     user_id=user.id,
                 )
 
-                if current_step == "waiting_for_answers":
+                if current_step == WorkflowStep.WAITING_FOR_ANSWERS:
                     waiting_state_evt = {
                         "type": "workflow_state_update",
                         "data": {
                             "step": current_step,
-                            "state": "waiting_for_answers",
+                            "state": WorkflowStep.WAITING_FOR_ANSWERS,
                             "message": "等待您提交答案...",
                             "learning_plan": state.get("learning_plan"),
                             "quiz": state.get("quiz"),
@@ -1038,7 +1049,7 @@ def workflow_stream(request, thread_id):
                         thread_id,
                         {
                             "step": current_step,
-                            "state": "waiting_for_answers",
+                            "state": WorkflowStep.WAITING_FOR_ANSWERS,
                             "message": "等待用户提交答案",
                         },
                         user_id=user.id,
@@ -1046,7 +1057,11 @@ def workflow_stream(request, thread_id):
                     # 等待答题是中断而非完成：不发 workflow_completed，避免前端误标 completed
                     return
 
-                if current_step in ("completed", "end", "feedback_completed"):
+                if current_step in (
+                    WorkflowStep.COMPLETED,
+                    WorkflowStep.END,
+                    WorkflowStep.FEEDBACK_COMPLETED,
+                ):
                     completed_state_evt = {
                         "type": "workflow_state_update",
                         "data": {

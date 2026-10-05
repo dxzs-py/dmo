@@ -362,7 +362,7 @@ def process_uploaded_documents(
         progress_callback(60, f"分块完成：{len(chunks)} 个文本块")
 
     # 上传文档时使用索引原有维度约束（如有），确保维度一致
-    index_metadata = manager._load_metadata(user_index_name)
+    index_metadata = manager.load_metadata(user_index_name)
     required_dim = index_metadata.get("embedding_dimension") if index_metadata else None
     embeddings = get_embeddings(required_dimension=required_dim)
 
@@ -468,7 +468,7 @@ def delete_document(user, kb_id: str, filename: str) -> dict[str, Any]:
     logger.info(f"删除文档: {filename} 从 {user_index_name}")
 
     try:
-        index_metadata = manager._load_metadata(user_index_name)
+        index_metadata = manager.load_metadata(user_index_name)
         required_dim = index_metadata.get("embedding_dimension") if index_metadata else None
         embeddings = get_embeddings(required_dimension=required_dim)
         removed = manager.remove_documents_by_filename(user_index_name, embeddings, filename)
@@ -509,7 +509,7 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[
     if not manager.index_exists(user_index_name):
         raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
-    index_metadata = manager._load_metadata(user_index_name)
+    index_metadata = manager.load_metadata(user_index_name)
     required_dim = index_metadata.get("embedding_dimension") if index_metadata else None
     embeddings = get_embeddings(required_dimension=required_dim)
     vector_store = manager.load_index(user_index_name, embeddings)

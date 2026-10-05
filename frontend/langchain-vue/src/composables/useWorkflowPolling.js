@@ -45,7 +45,20 @@ export function useWorkflowPolling({ execution, answersForm, onTerminal }) {
   const pollExecutionStatus = async () => {
     const currentStep = execution.value.currentStep
 
-    if (currentStep === LearningStep.WAITING_FOR_ANSWERS || currentStep === LearningStep.END || currentStep === LearningStep.COMPLETED) {
+    // 终态判定：必须包含 FEEDBACK_COMPLETED —— 后端 feedback_node 成功时写入的
+    // current_step 就是 'feedback_completed'（study_flow 图的终态节点是 END，
+    // 但 current_step 不会取字面量 'end'/'completed'）。此前此处漏判，导致：
+    //   1) 轮询不停止，持续无谓请求；
+    //   2) SSE 不可用时（轮询即降级路径）onTerminal 不触发，收尾逻辑（如答案文件
+    //      自动加载）不执行。
+    // 与 WorkflowView.canContinue / WorkflowView 步骤展示 / FileBrowser
+    // TERMINAL_TASK_STATUSES 的口径保持一致（那三处都已包含 feedback_completed）。
+    if (
+      currentStep === LearningStep.WAITING_FOR_ANSWERS ||
+      currentStep === LearningStep.FEEDBACK_COMPLETED ||
+      currentStep === LearningStep.END ||
+      currentStep === LearningStep.COMPLETED
+    ) {
       stopPolling()
       if (currentStep !== LearningStep.WAITING_FOR_ANSWERS) {
         onTerminal()

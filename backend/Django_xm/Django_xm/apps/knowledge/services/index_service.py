@@ -139,7 +139,27 @@ class IndexManager:
         self._backends: dict[str, VectorStoreBackend] = {}
         logger.debug(f"索引管理器初始化: {self.base_path}")
 
-    def _get_backend(self, store_type: str) -> VectorStoreBackend:
+    @classmethod
+    def clear_cache(cls) -> list:
+        """清空 VectorStore 实例缓存，返回清空前的实例快照（**公共 API**）。
+
+        调用方需要在清空后释放底层资源，例如 `vector_store/pgvector_backend.py`
+        在调整 embedding 列维度后，须对旧实例执行 `engine.dispose()` 释放连接池，
+        否则会残留指向旧列定义的连接。
+
+        此前该逻辑直接操作 `IndexManager._cache` 私有类属性（跨 2 个模块），
+        已收口到此方法。修改缓存结构时只需改这一处。
+        """
+        snapshot = cls._cache.values()
+        cls._cache.clear()
+        return snapshot
+
+    def get_backend(self, store_type: str) -> VectorStoreBackend:
+        """获取指定存储类型的后端实例（**公共 API，跨模块契约**）。
+
+        ⚠️ 被 **ai_engine**（`ai_engine/settings_views.py`）跨模块调用；
+        修改前必须同步调用点。
+        """
         """获取或创建 Backend 实例（带缓存）"""
         if store_type not in self._backends:
             self._backends[store_type] = _create_backend(store_type)
@@ -190,11 +210,16 @@ class IndexManager:
         except Exception as e:
             logger.warning(f"元数据写入数据库失败（不影响主流程）: {e}")
 
-    def _load_metadata(self, name: str) -> dict[str, Any] | None:
-        """加载元数据
+    def load_metadata(self, name: str) -> dict[str, Any] | None:
+        """加载元数据（**公共 API，跨模块契约**）。
 
         PGVector 模式：仅从数据库读取（IndexMetadata）
         FAISS/Chroma 模式：仅从文件系统读取（metadata.json）
+
+        ⚠️ 本方法是被 **chat**（`chat/services/rag_chat_service.py`）与
+        **ai_engine**（`ai_engine/settings_views.py`）跨模块调用的公共契约，
+        同时被 knowledge 内 kb_service / views_rag / rebuild_index 使用（共 9 处）。
+        重命名或改签名前**必须**同步所有调用点，否则会静默破坏其他 app。
         """
         # 判断 store_type
         store_type = self._detect_store_type(name)
@@ -273,8 +298,13 @@ class IndexManager:
             logger.warning(f"探测 Embedding 维度失败: {e}")
             return None
 
-    def _get_store_type(self, name: str) -> str:
-        """获取索引的存储类型"""
+    def get_store_type(self, name: str) -> str:
+        """获取索引的存储类型（**公共 API，跨模块契约**）。
+
+        ⚠️ 与 load_metadata 同为跨模块公共契约，被 ai_engine
+        （`ai_engine/settings_views.py`）与 knowledge 内 rebuild_index 调用。
+        修改前必须同步所有调用点。
+        """
         return self._detect_store_type(name)
 
     def _set_index_status(self, name: str, store_type: str, status: str, error_message: str = "") -> None:
@@ -312,7 +342,7 @@ class IndexManager:
 
             record = IndexMetadata.objects.filter(name=name).first()
             if record:
-                backend = self._get_backend(store_type)
+                backend = self.get_backend(store_type)
                 stats = backend.get_stats(name)
                 if stats.get("exists"):
                     record.num_documents = stats.get("num_documents", record.num_documents)
@@ -342,7 +372,7 @@ class IndexManager:
         5. 失败 → 尝试用备份文档恢复旧索引，恢复失败则状态设为 ERROR
         """
         effective_store_type = store_type or settings.vector_store_type
-        backend = self._get_backend(effective_store_type)
+        backend = self.get_backend(effective_store_type)
 
         # 备份旧索引文档（用于 overwrite 失败时恢复）
         backup_documents: list[Document] = []
@@ -477,13 +507,13 @@ class IndexManager:
             logger.debug(f"索引缓存命中: {name}")
             return cached
 
-        store_type = self._get_store_type(name)
-        backend = self._get_backend(store_type)
+        store_type = self.get_store_type(name)
+        backend = self.get_backend(store_type)
 
         logger.info(f"加载索引: {name} (store_type={store_type})")
 
         try:
-            metadata = self._load_metadata(name)
+            metadata = self.load_metadata(name)
             if metadata:
                 logger.info(f"描述: {metadata.get('description', 'N/A')}")
                 logger.info(f"文档数: {metadata.get('num_documents', 'N/A')}")
@@ -531,7 +561,7 @@ class IndexManager:
         if self.base_path.exists():
             for item in self.base_path.iterdir():
                 if item.is_dir() and item.name not in seen_names:
-                    metadata = self._load_metadata(item.name)
+                    metadata = self.load_metadata(item.name)
                     if metadata:
                         indexes.append(metadata)
                     else:
@@ -551,7 +581,7 @@ class IndexManager:
         # 3. 从 Backend 补充（PGVector 等数据库类型可能不在文件系统中）
         default_store_type = settings.vector_store_type
         try:
-            backend = self._get_backend(default_store_type)
+            backend = self.get_backend(default_store_type)
             collections = backend.list_collections()
             for collection_name in collections:
                 if collection_name not in seen_names:
@@ -578,8 +608,8 @@ class IndexManager:
         （知识库删除走软删墓碑，全局索引管理删除实体由调用方负责）。
         """
         self._cache.remove(name)
-        store_type = self._get_store_type(name)
-        backend = self._get_backend(store_type)
+        store_type = self.get_store_type(name)
+        backend = self.get_backend(store_type)
         index_path = self._get_index_path(name)
 
         try:
@@ -614,9 +644,9 @@ class IndexManager:
             return True
 
         # 3. 检查 Backend
-        store_type = self._get_store_type(name)
+        store_type = self.get_store_type(name)
         try:
-            backend = self._get_backend(store_type)
+            backend = self.get_backend(store_type)
             result = backend.exists(name)
             if not result:
                 logger.warning(f"index_exists 三级检查均未通过: name={name}, store_type={store_type}")
@@ -627,13 +657,13 @@ class IndexManager:
 
     def get_index_stats(self, name: str, embeddings: Embeddings = None) -> dict[str, Any]:
         """获取索引统计信息"""
-        store_type = self._get_store_type(name)
+        store_type = self.get_store_type(name)
 
         # 检查索引是否存在
         if not self.index_exists(name):
             raise FileNotFoundError(f"索引不存在：{name}")
 
-        metadata = self._load_metadata(name)
+        metadata = self.load_metadata(name)
 
         stats = {
             "name": name,
@@ -649,7 +679,7 @@ class IndexManager:
 
         # 尝试从 Backend 获取更详细的统计
         try:
-            backend = self._get_backend(store_type)
+            backend = self.get_backend(store_type)
             backend_stats = backend.get_stats(name)
             if backend_stats.get("exists"):
                 stats.update({k: v for k, v in backend_stats.items() if k not in ("name", "exists")})
@@ -687,7 +717,7 @@ class IndexManager:
             Document 列表，读取失败或索引无文档时返回空列表
         """
         store_type = store_type or self._detect_store_type(name)
-        backend = self._get_backend(store_type)
+        backend = self.get_backend(store_type)
 
         # PGVector: 使用 backend 的 read_all_documents
         if hasattr(backend, "read_all_documents"):
@@ -781,8 +811,8 @@ class IndexManager:
         - PGVector 通过 ON CONFLICT DO NOTHING 跳过已存在 ID
         - Celery 任务重试场景下相同文档不会产生重复向量记录
         """
-        store_type = self._get_store_type(name)
-        backend = self._get_backend(store_type)
+        store_type = self.get_store_type(name)
+        backend = self.get_backend(store_type)
         self._cache.remove(name)
 
         if not self.index_exists(name):
@@ -797,7 +827,7 @@ class IndexManager:
         logger.info(f"向索引 {name} 添加 {len(documents)} 个文档（携带稳定 ID）")
 
         try:
-            metadata = self._load_metadata(name)
+            metadata = self.load_metadata(name)
             is_empty_index = metadata and metadata.get("num_documents", 0) == 0
 
             if is_empty_index:
@@ -861,8 +891,8 @@ class IndexManager:
         document_ids: list[str] | None = None,
     ) -> int:
         """从索引中删除文档"""
-        store_type = self._get_store_type(name)
-        backend = self._get_backend(store_type)
+        store_type = self.get_store_type(name)
+        backend = self.get_backend(store_type)
         self._cache.remove(name)
 
         if not self.index_exists(name):
@@ -905,8 +935,8 @@ class IndexManager:
         filename: str,
     ) -> int:
         """根据文件名从索引中删除所有相关文档"""
-        store_type = self._get_store_type(name)
-        backend = self._get_backend(store_type)
+        store_type = self.get_store_type(name)
+        backend = self.get_backend(store_type)
         self._cache.remove(name)
 
         if not self.index_exists(name):
@@ -946,7 +976,7 @@ class IndexManager:
                 deleted_count = len(ids_to_delete)
 
             # 更新元数据
-            metadata = self._load_metadata(name)
+            metadata = self.load_metadata(name)
             if metadata:
                 old_count = metadata.get("num_documents", 0)
                 metadata["num_documents"] = max(0, old_count - deleted_count)

@@ -7,6 +7,7 @@ from typing import Any
 
 from Django_xm.apps.core.logging_utils import get_logger
 
+from ..models import WorkflowStep
 from ..services._model_helper import get_chat_model_from_state
 from ..services.state import StudyFlowState
 from .stream_events import emit_step
@@ -90,7 +91,7 @@ def feedback_node(state: StudyFlowState) -> dict[str, Any]:
             "feedback": feedback_message,
             "should_retry": should_retry,
             "retry_count": new_retry_count,
-            "current_step": "feedback_completed",
+            "current_step": WorkflowStep.FEEDBACK_COMPLETED,
             "updated_at": datetime.now(UTC).isoformat(),
         }
 
@@ -100,6 +101,6 @@ def feedback_node(state: StudyFlowState) -> dict[str, Any]:
             "feedback": f"\n\n⚠️ 反馈生成失败: {e!s}",
             "should_retry": False,
             "retry_count": state.get("retry_count", 0),
-            "current_step": "feedback_error",
+            "current_step": WorkflowStep.FEEDBACK_ERROR,
             "updated_at": datetime.now(UTC).isoformat(),
         }

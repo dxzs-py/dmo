@@ -150,9 +150,13 @@ class ChromaBackend(VectorStoreBackend):
             try:
                 client.get_collection(name=collection_name)
                 return True
-            except Exception:
+            except Exception as e:
+                # 集合不存在是正常路径（调用方据此决定是否新建），仅在 debug 级留痕
+                logger.debug(f"Chroma 集合不存在或不可读: {collection_name} ({e})")
                 return False
-        except Exception:
+        except Exception as e:
+            # 客户端初始化失败属异常（磁盘/依赖问题），需 warning 级可见
+            logger.warning(f"Chroma 客户端初始化失败，无法判断集合存在性: {e}")
             return False
 
     def add_documents(

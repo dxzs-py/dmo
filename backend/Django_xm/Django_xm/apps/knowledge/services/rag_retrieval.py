@@ -564,7 +564,7 @@ class UnifiedRagPipeline:
             # 清理 IndexManager 缓存
             from Django_xm.apps.knowledge.services.index_service import IndexManager
 
-            IndexManager._cache.clear()
+            IndexManager.clear_cache()
             rebuilt = reload_vector_store()
             return search_vector_store(
                 rebuilt, query, k=k, score_threshold=score_threshold, query_embedding=query_embedding

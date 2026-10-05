@@ -1,5 +1,6 @@
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { logger } from '@/utils/logger'
+import { EventType } from '@/types/realtimeEvents'
 
 /**
  * 任务列表实时同步 composable（学习工作流 / 深度研究公共能力）
@@ -23,7 +24,7 @@ export function useTaskListRealtimeSync(sourceType, getTaskListRef, options = {}
   let unsubscribe = null
 
   const handleTaskEvent = (event) => {
-    if (event.type === 'task_deleted') {
+    if (event.type === EventType.TASK_DELETED) {
       const deletedTaskId = event.payload?.taskId
       logger.info(`[${sourceType}] 收到 task_deleted 事件，自动刷新任务列表: taskId=${deletedTaskId}`)
       options.onTaskDeleted?.(event.payload)
@@ -31,7 +32,7 @@ export function useTaskListRealtimeSync(sourceType, getTaskListRef, options = {}
       if (listRef?.refreshTasks) listRef.refreshTasks()
       return
     }
-    if (event.type !== 'task_created' && event.type !== 'task_status_changed') return
+    if (event.type !== EventType.TASK_CREATED && event.type !== EventType.TASK_STATUS_CHANGED) return
     logger.info(`[${sourceType}] 收到 ${event.type} 事件，自动刷新任务列表`)
     const listRef = getTaskListRef()
     if (listRef?.refreshTasks) listRef.refreshTasks()

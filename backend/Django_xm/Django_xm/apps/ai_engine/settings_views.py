@@ -24,7 +24,7 @@ from Django_xm.apps.ai_engine.services.registry_service import (
     is_provider_valid,
 )
 from Django_xm.apps.core.throttling import MetaRateThrottle
-from Django_xm.apps.knowledge.services.index_service import IndexManager
+from Django_xm.apps.knowledge.services.cross_app import get_index_manager
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.responses import success_response
@@ -55,7 +55,7 @@ def _get_affected_indexes(user, new_dimension: int) -> list:
     """获取维度不匹配的索引列表"""
     from Django_xm.apps.knowledge.services.embedding_service import get_embedding_dimension
 
-    manager = IndexManager()
+    manager = get_index_manager()
     indexes = manager.list_indexes()
     affected = []
     for idx in indexes:
@@ -193,7 +193,7 @@ class AISettingsView(APIView):
         """获取所有索引的维度信息，供前端预检测"""
         from Django_xm.apps.knowledge.services.embedding_service import get_embedding_dimension
 
-        manager = IndexManager()
+        manager = get_index_manager()
         indexes = manager.list_indexes()
         result = []
         for idx in indexes:
@@ -451,7 +451,7 @@ class RebuildIndexesView(APIView):
                 break
 
         # 确定要重建的索引
-        manager = IndexManager()
+        manager = get_index_manager()
         all_indexes = manager.list_indexes()
 
         if index_names:
@@ -490,11 +490,11 @@ class RebuildIndexesView(APIView):
 
                 documents = []
 
-                store_type = idx.get("store_type") or manager._get_store_type(name) or "pgvector"
+                store_type = idx.get("store_type") or manager.get_store_type(name) or "pgvector"
 
                 if store_type == "pgvector":
                     # 通过 PGVectorBackend 封装层读取文档，避免直接写原生 SQL（Task 20.1）
-                    backend = manager._get_backend("pgvector")
+                    backend = manager.get_backend("pgvector")
                     documents = backend.read_all_documents(name)
                 else:
                     old_dim = idx.get("embedding_dimension")
@@ -509,7 +509,7 @@ class RebuildIndexesView(APIView):
                             if isinstance(doc, Document):
                                 documents.append(doc)
 
-                description = (manager._load_metadata(name) or {}).get("description", "")
+                description = (manager.load_metadata(name) or {}).get("description", "")
                 if documents:
                     index_docs[name] = (documents, store_type, description)
                     logger.info(f"索引文档读取成功: {name}, {len(documents)} 条")
