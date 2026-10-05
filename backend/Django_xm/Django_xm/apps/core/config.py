@@ -155,6 +155,19 @@ class ProjectSettings(BaseSettings):
 
     attachment_dedup_enabled: bool = Field(default=True, description="是否启用附件内容去重（content_hash）")
 
+    # ==================== 分析（analytics）数据量治理配置 ====================
+    # 背景：中间件曾对每个已认证 /api/ 请求落一行 UserEvent，实测该类型占全表
+    # 97.18%（217,481/223,782），Top 路径全是元数据/配置类 GET。现已把 API 指标
+    # 改由 ApiDailyStat 日聚合承载，明细仅保留「非 GET 或失败」请求（详见
+    # docs/other/UserEvent数据量治理-议题与排期.md）。以下两项为明细与聚合的保留上界。
+    analytics_event_retention_days: int = Field(
+        default=90, ge=1, description="UserEvent 明细保留天数（超期由 Celery 定时任务清理）"
+    )
+
+    analytics_api_stat_retention_days: int = Field(
+        default=365, ge=1, description="ApiDailyStat 聚合表保留天数（体量小，保留更久以便回溯）"
+    )
+
     attachment_max_total_size_mb: int = Field(default=5120, ge=1, description="全站附件总容量上限（MB，用户配额依据）")
 
     # ==================== MCP SSRF 豁免开关 ====================

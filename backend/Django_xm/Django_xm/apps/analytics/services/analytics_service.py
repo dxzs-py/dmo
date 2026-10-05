@@ -2,11 +2,11 @@ import logging
 from datetime import timedelta
 
 from django.apps import apps
-from django.db.models import Avg, Count, Q, Sum
+from django.db.models import Avg, Count, Sum
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 
-from Django_xm.apps.analytics.models import EventCategory, EventType, UserEvent
+from Django_xm.apps.analytics.models import ApiDailyStat, EventCategory, EventType, UserEvent
 from Django_xm.apps.cache_manager.services.cache_service import (
     CACHE_PREFIX_DASHBOARD,
     CacheService,
@@ -28,6 +28,15 @@ def _import_models():
 
 
 class AnalyticsService:
+    @classmethod
+    def get_overview_stats(cls, user) -> dict:
+        """公开入口：用户总览统计（会话/消息/Token/文档/工作流/研究/API 指标）。
+
+        供跨模块调用（如 users 的用量统计接口）。内部实现仍在 `_get_overview_stats`，
+        此处为薄封装，避免调用方依赖私有成员导致重构时静默破坏。
+        """
+        return cls._get_overview_stats(user)
+
     @classmethod
     def get_dashboard_stats(cls, user) -> dict:
         cache_key = f"{CACHE_PREFIX_DASHBOARD}:user_{user.id}"
@@ -99,9 +108,19 @@ class AnalyticsService:
         combined_avg_time = round(sum(all_times) / len(all_times), 2) if all_times else 0
 
         events = UserEvent.objects.filter(user=user, is_deleted=False)
+        # 注意：total_events 现在只统计**明细事件**。中间件收敛后成功的 API 请求
+        # 不再落明细（实测原本占全表 97%），故该值语义从"所有事件"变为
+        # "可追查的明细事件"，不应被误读为统计丢失。API 请求量见下方 api_requests。
         total_events = events.count()
-        api_requests = events.filter(event_type=EventType.API_REQUEST).count()
-        api_errors = events.filter(event_type=EventType.API_REQUEST, is_success=False).count()
+        # api.request 的指标改由 ApiDailyStat 承载（明细已收敛，见 docs/other/
+        # UserEvent数据量治理-议题与排期.md）。历史值已由迁移 0007 回填，此处按
+        # user 汇总全时段；读取聚合表而非明细，指标不会因明细收敛而失真。
+        api_stat = ApiDailyStat.objects.filter(user=user).aggregate(
+            requests_total=Sum("api_requests"),
+            errors_total=Sum("api_errors"),
+        )
+        api_requests = api_stat["requests_total"] or 0
+        api_errors = api_stat["errors_total"] or 0
 
         total_documents = Document.objects.filter(index__user=user, is_deleted=False).count()
         total_workflows = WorkflowSession.objects.filter(created_by=user, is_deleted=False).count()
@@ -174,92 +193,71 @@ class AnalyticsService:
 
     @classmethod
     def _get_category_distribution(cls, user) -> list:
-        ChatSession, _ChatMessage, Document, _IndexMetadata, WorkflowSession, ResearchTask = _import_models()
+        """分类分布 = 各业务分类的**使用事件次数**占比（单位统一为“次”，同类可比）。
 
-        items = []
-        chat_count = ChatSession.objects.filter(user=user, is_deleted=False).count()
-        if chat_count > 0:
-            items.append({"name": "智能聊天", "count": chat_count})
+        口径约定（改动本方法前先读，防止口径再次漂移）：
 
-        doc_count = Document.objects.filter(index__user=user, is_deleted=False).count()
-        if doc_count > 0:
-            items.append({"name": "RAG检索", "count": doc_count})
-
-        workflow_count = WorkflowSession.objects.filter(created_by=user, is_deleted=False).count()
-        if workflow_count > 0:
-            items.append({"name": "学习工作流", "count": workflow_count})
-
-        research_count = ResearchTask.objects.filter(created_by=user, is_deleted=False).count()
-        if research_count > 0:
-            items.append({"name": "深度研究", "count": research_count})
+        1. **只统计行为事件，不含 api.request**。api.request 由中间件对每个 HTTP
+           请求产生一条，实测占 UserEvent 全表 >97%；一旦计入，饼图会退化成
+           “API 流量按业务域分布”，完全盖过真实功能使用。API 请求数/错误率见
+           _get_overview_stats 的 api_requests / api_errors。
+        2. **不混入实体存量计数**（会话/文档/工作流/研究的总数）。存量是“有多少个”，
+           流量是“用了几次”，单位与语义都不同，混算无业务解释性（“100 个文档”与
+           “500 次消息”求占比说明不了任何问题）。实体总数属存量指标，已由
+           _get_overview_stats 的 total_sessions / total_documents /
+           total_workflows / total_research 以数字卡片呈现。
+        3. 本方法与 _get_feature_usage 是同一事件流的两种聚合粒度：本方法按
+           event_category 汇总（粗），_get_feature_usage 按 event_type 汇总（细，
+           且同样已排除 api.request）。
+        """
 
         event_dist = (
             UserEvent.objects.filter(user=user, is_deleted=False)
-            .exclude(event_category=EventCategory.API_CALL)
+            .exclude(event_type=EventType.API_REQUEST)
             .values("event_category")
             .annotate(count=Count("id"))
             .order_by("-count")
         )
 
         category_labels = {c.value: c.label for c in EventCategory}
-        event_category_map = {}
-        for item in event_dist:
-            label = category_labels.get(item["event_category"], item["event_category"])
-            if label not in [i["name"] for i in items]:
-                event_category_map[label] = item["count"]
-            else:
-                for i in items:
-                    if i["name"] == label:
-                        i["count"] += item["count"]
-                        break
-
-        for name, count in event_category_map.items():
-            if count > 0:
-                items.append({"name": name, "count": count})
+        items = []
+        for row in event_dist:
+            count = row["count"]
+            if count <= 0:
+                continue
+            items.append(
+                {
+                    "name": category_labels.get(row["event_category"], row["event_category"]),
+                    "count": count,
+                }
+            )
 
         total = sum(item["count"] for item in items) or 1
         for item in items:
             item["value"] = round(item["count"] / total * 100)
 
+        # 排序保持显式：event_dist 已 order_by("-count")，此处的 sort 是防御性的，
+        # 避免将来有人调整查询顺序时静默破坏图表的降序展示。
         items.sort(key=lambda x: x["count"], reverse=True)
         return items
 
     @classmethod
     def _get_feature_usage(cls, user) -> list:
-        ChatSession, ChatMessage, Document, IndexMetadata, WorkflowSession, ResearchTask = _import_models()
+        """功能使用 = 各事件类型的**使用次数**排名（单位统一为“次”，同类可比）。
 
-        items = []
+        口径与 _get_category_distribution 完全一致（改动前先读那边的口径注释）：
 
-        msg_count = ChatMessage.objects.filter(session__user=user, session__is_deleted=False, role="user").count()
-        if msg_count > 0:
-            items.append({"name": "发送聊天消息", "value": msg_count})
-
-        session_count = ChatSession.objects.filter(user=user, is_deleted=False).count()
-        if session_count > 0:
-            items.append({"name": "创建会话", "value": session_count})
-
-        doc_count = Document.objects.filter(index__user=user, is_deleted=False).count()
-        if doc_count > 0:
-            items.append({"name": "上传文档", "value": doc_count})
-
-        index_count = IndexMetadata.objects.filter(user=user, is_deleted=False).count()
-        if index_count > 0:
-            items.append({"name": "创建知识库", "value": index_count})
-
-        workflow_count = WorkflowSession.objects.filter(created_by=user, is_deleted=False).count()
-        if workflow_count > 0:
-            items.append({"name": "启动工作流", "value": workflow_count})
-
-        research_count = ResearchTask.objects.filter(created_by=user, is_deleted=False).count()
-        if research_count > 0:
-            items.append({"name": "启动研究", "value": research_count})
-
-        assistant_count = ChatMessage.objects.filter(
-            session__user=user, session__is_deleted=False, role="assistant"
-        ).count()
-        if assistant_count > 0:
-            items.append({"name": "接收AI回复", "value": assistant_count})
-
+        1. **纯事件聚合，不混入实体存量计数**。原先"发送聊天消息/创建会话/上传文档/
+           创建知识库/启动工作流/启动研究/接收AI回复"七项取的是 ChatMessage /
+           ChatSession / Document / IndexMetadata / WorkflowSession / ResearchTask
+           的**实体行数**，与事件次数不同量纲；同一张榜单里混排会让读者把"实体数"
+           误读为"发生次数"（实测旧口径下"发送聊天消息"显示 5，而事件表里
+           chat.message.send 实际有 1818 条）。实体总数已由 _get_overview_stats 的
+           total_* 字段以数字卡片呈现。
+        2. **排除 api.request**（中间件对每个 HTTP 请求产生一条，实测占全表 >97%）。
+        3. 本方法按 event_type 汇总（细粒度），_get_category_distribution 按
+           event_category 汇总（粗粒度），二者同源同口径、互为下钻关系。
+        """
         event_dist = (
             UserEvent.objects.filter(user=user, is_deleted=False)
             .exclude(event_type=EventType.API_REQUEST)
@@ -269,13 +267,17 @@ class AnalyticsService:
         )
 
         type_labels = {t.value: t.label for t in EventType}
-        existing_names = {i["name"] for i in items}
-        for item in event_dist:
-            label = type_labels.get(item["event_type"], item["event_type"])
-            if label not in existing_names:
-                items.append({"name": label, "value": item["count"]})
-                existing_names.add(label)
+        items = [
+            {
+                "name": type_labels.get(row["event_type"], row["event_type"]),
+                "value": row["count"],
+            }
+            for row in event_dist
+            if row["count"] > 0
+        ]
 
+        # 排序保持显式：event_dist 已 order_by("-count")，此处为防御性排序，
+        # 避免将来有人调整查询顺序时静默破坏榜单的降序展示。
         items.sort(key=lambda x: x["value"], reverse=True)
         return items[:10]
 
@@ -333,28 +335,30 @@ class AnalyticsService:
             count=Count("id"),
         )
 
-        api_events = UserEvent.objects.filter(
-            user=user,
-            is_deleted=False,
-            event_type=EventType.API_REQUEST,
-            created_at__gte=since,
+        # API 指标改读 ApiDailyStat（明细已收敛）。平均耗时不能对"和"直接取平均，
+        # 必须用 sum/count 还原；错误率分母改用聚合表的请求总数。
+        api_agg = ApiDailyStat.objects.filter(user=user, date__gte=since.date()).aggregate(
+            duration_sum=Sum("duration_sum_ms"),
+            duration_count=Sum("duration_count"),
+            error_count=Sum("api_errors"),
+            total_count=Sum("api_requests"),
         )
-        api_agg = api_events.aggregate(
-            avg_duration=Avg("duration_ms"),
-            error_count=Count("id", filter=Q(is_success=False)),
-            total_count=Count("id"),
-        )
+        avg_duration = None
+        if api_agg["duration_count"]:
+            avg_duration = api_agg["duration_sum"] / api_agg["duration_count"]
 
         avg_response_time_ms = 0
         if msg_agg["avg_time"]:
             avg_response_time_ms = round(float(msg_agg["avg_time"]) * 1000, 0)
-        elif api_agg["avg_duration"]:
-            avg_response_time_ms = round(float(api_agg["avg_duration"]), 0)
+        elif avg_duration:
+            avg_response_time_ms = round(float(avg_duration), 0)
 
         error_rate = 0
         if api_agg["total_count"] and api_agg["total_count"] > 0:
             error_rate = round(api_agg["error_count"] / api_agg["total_count"] * 100, 2)
 
+        # 仍读明细：业务事件（聊天消息等）也带 duration_ms，不走聚合表。
+        # 语义随之收窄为"可追查明细中带耗时的条数"（成功的 API GET 已不再落明细）。
         tracked = UserEvent.objects.filter(
             user=user,
             is_deleted=False,
