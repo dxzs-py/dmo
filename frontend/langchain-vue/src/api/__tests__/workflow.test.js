@@ -64,7 +64,9 @@ describe('workflowAPI rawSSEFetch', () => {
 
     await workflowAPI.streamFetchRaw('th1')
     ;[url, options] = fetchMock.mock.calls[2]
-    expect(url).toBe(`/api/v1/learning/stream/th1/?token=${encodeURIComponent('test-token')}`)
+    // 令牌走 Authorization 头，**不再**进查询串（避免进入浏览器历史 / Referer / 访问日志）
+    expect(url).toBe('/api/v1/learning/stream/th1/')
+    expect(url).not.toContain('token')
     expect(options.method).toBe('GET')
     expect(options.headers).toStrictEqual({
       Accept: 'text/event-stream',

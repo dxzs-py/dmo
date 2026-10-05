@@ -67,13 +67,10 @@ export const workflowAPI = {
   },
   /** 练习轮次历史 */
   getAttempts(threadId) { return apiClient.get(`/learning/${threadId}/attempts/`) },
-  /** 监听已有线程进度（无 signal 直连，token 走 query 参数，供 WorkflowView 使用） */
+  /** 监听已有线程进度（无 signal 直连，供 WorkflowView 使用） */
   streamFetchRaw(threadId) {
-    const userStore = useUserStore()
-    const tokenQuery = userStore.token
-      ? `?token=${encodeURIComponent(userStore.token)}`
-      : ''
-    return rawSSEFetch(`${settings.apiBaseUrl}/learning/stream/${threadId}/${tokenQuery}`, {
+    // 令牌走 Authorization 头（rawSSEFetch 已注入），不再用 ?token= 查询参数。
+    return rawSSEFetch(`${settings.apiBaseUrl}/learning/stream/${threadId}/`, {
       method: 'GET',
     })
   },

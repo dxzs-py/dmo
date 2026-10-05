@@ -29,10 +29,9 @@ export async function fetchSSE(url, options = {}) {
     if (!baseUrl.startsWith('http')) {
       baseUrl = `${settings.apiBaseUrl}${baseUrl}`
     }
-    if (options.injectTokenQuery && userStore.token) {
-      const separator = baseUrl.includes('?') ? '&' : '?'
-      return `${baseUrl}${separator}token=${encodeURIComponent(userStore.token)}`
-    }
+    // 不再支持 ?token= 注入：buildHeaders 已带 Authorization 头，令牌不应进 URL
+    // （会进入浏览器历史 / Referer / 访问日志）。确需查询串传令牌的场景仅剩
+    // <a href> 文件下载，已由后端在下载端点上显式挂 QueryParamTokenAuthentication。
     return baseUrl
   }
 
@@ -49,7 +48,6 @@ export async function fetchSSE(url, options = {}) {
   delete fetchOptions.maxRetries
   delete fetchOptions.onRetry
   delete fetchOptions.timeout
-  delete fetchOptions.injectTokenQuery
 
   // Task 6.3：幂等键感知——在 body 转 snake_case 之前解析原始 camelCase 字段。
   // 重试仅限"确认未受理"的场景：网络错误（请求未发出）必然未受理，可重试；

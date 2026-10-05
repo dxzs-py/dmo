@@ -386,7 +386,7 @@ langchain_xm/
 - **`keyword` 降级路径为顺序扫描**，无索引支持（P50 61.3 ms，高于向量检索的 14.6 ms），仅适合作为 embedding 服务不可用时的兜底。
 - **知识库上传通道未做文件类型 / 大小校验**，任意类型文件可上传并被索引。
 - **FastAPI 会话执行服务的 `/health` 端点无鉴权**且默认绑定 `0.0.0.0`。
-- **URL query 参数 token 认证**（`?token=xxx`）注册在全局默认认证类，token 可能泄露到网关日志 / 浏览器历史。
+- **文件下载仍使用 `?token=` 查询参数认证**：`<a href download>` 无法附加请求头，这是浏览器限制。QueryParamTokenAuthentication 已从**全局默认认证类**移除（此前 dev/prod 的 `DEFAULT_AUTHENTICATION_CLASSES` 覆盖里本就未包含它），仅 `IsAuthenticatedOrQueryParam` 权限端点保留该能力（2 个文件下载端点 + RAG 流式查询）。前端 SSE（chat / research / learning）已全部改走 `Authorization` 头，令牌不再出现在 URL 中。剩余暴露面：浏览器历史、Referer、网关访问日志。
 - **部分附件下载响应未强制 `Content-Disposition: attachment`**（白名单含 svg / html，存在存储型 XSS 可能）。
 - **工具调用具备真实执行能力**：智能体可执行 shell 命令与文件读写；Docker 沙箱（`SANDBOX_ENABLED`）默认关闭。
 

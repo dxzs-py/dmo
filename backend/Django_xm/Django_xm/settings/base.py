@@ -222,7 +222,12 @@ AUTHENTICATION_BACKENDS = [
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
-        "Django_xm.apps.core.authentication.QueryParamTokenAuthentication",
+        # 注：QueryParamTokenAuthentication（?token=<JWT>）**不再**作为默认认证类。
+        # 此前挂在全局默认里，意味着**任意**端点都能用 URL 查询串认证，JWT 会进入
+        # 浏览器历史 / Referer / 各类访问日志（OWASP 不建议敏感数据放查询串）。
+        # 前端 SSE 已全部改走 Authorization 头（fetchSSE / rawSSEFetch 本就注入
+        # Authorization），查询串传令牌只剩 `<a href>` 文件下载一种场景——由
+        # IsAuthenticatedOrQueryParam 权限类在下载端点自行处理，不依赖默认认证类。
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",

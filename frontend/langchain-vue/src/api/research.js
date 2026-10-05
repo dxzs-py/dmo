@@ -12,10 +12,9 @@ export const deepResearchAPI = {
   getFileContent(taskId, filename) { return apiClient.get(`/research/${taskId}/file/content/${filename}/`) },
   searchFiles(query) { return apiClient.get('/research/search/', { params: { keyword: query } }) },
   streamFetch(taskId, options = {}) {
-    return fetchSSE(`/research/stream/${taskId}/`, {
-      injectTokenQuery: true,
-      ...options,
-    })
+    // 不再注入 ?token=：fetchSSE 已带 Authorization 头（见 utils/sse.js buildHeaders），
+    // 查询串传令牌会让 JWT 进入浏览器历史 / Referer / 各类访问日志。
+    return fetchSSE(`/research/stream/${taskId}/`, { ...options })
   },
   continueResearch(taskId, data = {}) {
     return apiClient.post(`/research/${taskId}/continue/`, data)
