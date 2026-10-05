@@ -758,7 +758,12 @@ def _approval_created_timestamp(approval: Approval) -> float | None:
         return None
     try:
         return approval.created_at.timestamp()
-    except Exception:
+    except Exception as e:
+        # 失败时延迟指标退化为"未知"，不阻断审批流程，但必须留痕
+        logger.debug(
+            f"[ApprovalService] 解析 created_at 时间戳失败，延迟指标记为未知: "
+            f"interrupt_id={getattr(approval, 'interrupt_id', '?')}, err={e}"
+        )
         return None
 
 

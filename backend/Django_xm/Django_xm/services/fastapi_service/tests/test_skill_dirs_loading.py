@@ -22,6 +22,7 @@ import django
 django.setup()
 
 from django.contrib.auth import get_user_model
+from django.test import TestCase
 
 from Django_xm.apps.tools.models import SkillPackage, ToolCategory
 from Django_xm.services.fastapi_service.session_executor import SessionExecutor
@@ -40,7 +41,7 @@ def _make_executor(user_id: int) -> SessionExecutor:
     )
 
 
-class LoadSkillDirsTests(unittest.TestCase):
+class LoadSkillDirsTests(TestCase):
     """Skill 目录加载：active/属主/系统级/目录有效性过滤语义。
 
     注：依赖 Django TestCase 的每测试事务回滚，不做手动数据清理——

@@ -49,7 +49,10 @@ def _get_max_subagent_depth() -> int:
         from django.conf import settings
 
         return int(getattr(settings, "AGENT_MAX_DEPTH", MAX_SUBAGENT_DEPTH))
-    except Exception:
+    except Exception as e:
+        # 配置读取失败时深度上限静默变为默认值，会让过深的子代理嵌套通过；
+        # 留 debug 日志便于排查（与 tools/langchain/agent_context 同源模式）
+        logger.debug(f"[SubAgentRuntime] 读取 settings.AGENT_MAX_DEPTH 失败，回退默认值 {MAX_SUBAGENT_DEPTH}: {e}")
         return MAX_SUBAGENT_DEPTH
 
 
@@ -148,7 +151,10 @@ class SubAgentRuntime:
 
             spec = get_subagent_spec(agent_name)
             return spec.risk_ceiling if spec else None
-        except Exception:
+        except Exception as e:
+            # 失败时 ApprovalMiddleware 会走默认策略（风险上限不生效）。
+            # 该降级是有意设计，但必须留痕，否则"上限突然不生效"无从追查。
+            logger.debug(f"[SubAgentRuntime] 读取子代理 {agent_name} 风险上限失败，走默认策略: {e}")
             return None
 
     # ── 对外 API ────────────────────────────────────────────────────────

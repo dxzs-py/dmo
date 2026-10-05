@@ -14,6 +14,10 @@ LangGraph ``configurable`` 显式传递（主 agent 由 chat_service / research_
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # 默认最大子代理嵌套深度（0=主代理, 1=子代理, 2=孙代理, 3=曾孙代理）
 _DEFAULT_MAX_AGENT_DEPTH: int = 3
 
@@ -28,7 +32,10 @@ def get_max_agent_depth() -> int:
         from django.conf import settings
 
         return int(getattr(settings, "AGENT_MAX_DEPTH", _DEFAULT_MAX_AGENT_DEPTH))
-    except Exception:
+    except Exception as e:
+        logger.warning(
+            f"读取 settings.AGENT_MAX_DEPTH 失败，回退默认值 {_DEFAULT_MAX_AGENT_DEPTH}: {e}"
+        )
         return _DEFAULT_MAX_AGENT_DEPTH
 
 

@@ -393,6 +393,13 @@ ATTACHMENT_STORAGE_CRITICAL_THRESHOLD = project_cfg.attachment_storage_critical_
 ATTACHMENT_DEDUP_ENABLED = project_cfg.attachment_dedup_enabled
 ATTACHMENT_MAX_TOTAL_SIZE_MB = project_cfg.attachment_max_total_size_mb
 
+# 分析数据量治理配置：真相源同为 ProjectSettings（apps/core/config.py）。
+# ANALYTICS_EVENT_RETENTION_DAYS 约束 UserEvent 明细保留期（api.request 明细已收敛为
+# 「非 GET 或失败」，量级从 21.7 万降至约 4.3 万）；ANALYTICS_API_STAT_RETENTION_DAYS
+# 约束 ApiDailyStat 聚合表（体量小，保留更久以便回溯）。消费方：tasks/analytics_tasks.py。
+ANALYTICS_EVENT_RETENTION_DAYS = project_cfg.analytics_event_retention_days
+ANALYTICS_API_STAT_RETENTION_DAYS = project_cfg.analytics_api_stat_retention_days
+
 from celery.schedules import crontab
 
 CELERY_BEAT_SCHEDULE = {
@@ -423,6 +430,13 @@ CELERY_BEAT_SCHEDULE = {
     "process-approval-outbox-every-5s": {
         "task": "approvals.process_outbox",
         "schedule": 5.0,
+    },
+    # analytics 明细/聚合保留期清理。任务默认 dry_run=True，beat 调用必须显式传
+    # dry_run=False 才会真正删除（详见 tasks/analytics_tasks.py 注释）。
+    "cleanup-analytics-events-daily": {
+        "task": "analytics.cleanup_analytics_events",
+        "schedule": crontab(hour=5, minute=30),
+        "kwargs": {"dry_run": False},
     },
 }
 
@@ -491,17 +505,24 @@ LOGGING = {
         "require_debug_true": {
             "()": "django.utils.log.RequireDebugTrue",
         },
+        # 敏感值脱敏：QueryParamTokenAuthentication 允许 ?token=<JWT>，而
+        # django.request 在 4xx/5xx 会记录含查询串的完整路径。挂在 handler 上
+        # 兜底抹除 token/access_token/refresh_token 与 Bearer 值。
+        "redact_sensitive": {
+            "()": "Django_xm.common.logging_filters.RedactSensitiveFilter",
+        },
     },
     "handlers": {
         "console": {
             "level": "DEBUG",
-            "filters": ["require_debug_true"],
+            "filters": ["require_debug_true", "redact_sensitive"],
             "class": "logging.StreamHandler",
             "formatter": "simple",
             "stream": "ext://sys.stdout",
         },
         "file": {
             "level": "INFO",
+            "filters": ["redact_sensitive"],
             "class": "logging.handlers.RotatingFileHandler",
             "filename": str(BASE_DIR.parent / "logs" / LOG_FILE_NAME),
             "maxBytes": 10 * 1024 * 1024,

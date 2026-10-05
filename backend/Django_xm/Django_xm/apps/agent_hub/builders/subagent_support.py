@@ -96,10 +96,16 @@ class SubAgentNestingState(TypedDict, total=False):
 
 
 def _read_configurable() -> dict[str, Any]:
-    """读取当前执行的 RunnableConfig.configurable（含父 config 传播的字段）。"""
+    """读取当前执行的 RunnableConfig.configurable（含父 config 传播的字段）。
+
+    图外调用时 `get_config()` 抛异常属正常（返回空 dict）。但若**图内**调用失败，
+    说明 LangGraph 上下文传播断裂——`subagent_thread_id`/`depth`/`path` 等会静默缺失，
+    进而让子代理嵌套判定与 SSE 定向推送失效且无迹可寻，故留 debug 日志。
+    """
     try:
         config = get_config()
-    except Exception:
+    except Exception as e:
+        logger.debug("[SubAgentSupport] 读取 RunnableConfig 失败，按空 configurable 处理: %s", e)
         return {}
     if not isinstance(config, dict):
         return {}
@@ -114,7 +120,8 @@ def _read_agent_name() -> str:
         metadata = config.get("metadata") if isinstance(config, dict) else None
         name = metadata.get("lc_agent_name") if isinstance(metadata, dict) else None
         return name or ""
-    except Exception:
+    except Exception as e:
+        logger.debug("[SubAgentSupport] 读取 agent 名称失败，按空串处理: %s", e)
         return ""
 
 

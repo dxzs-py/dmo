@@ -279,7 +279,9 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
                     return True
 
             return False
-        except Exception:
+        except Exception as e:
+            # 条件求值失败时按"不匹配"降级（不阻断工具加载），但必须留痕便于排查
+            logger.warning(f"工具启用条件求值失败，按不匹配处理: {e}")
             return False
 
     # ------------------------------------------------------------------
