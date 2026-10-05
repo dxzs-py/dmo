@@ -33,6 +33,7 @@ class UsernameMobileAuthBackend(ModelBackend):
     """
     自定义用户认证后端，支持用户名或手机号码登录
     继承自Django的ModelBackend，重写了authenticate方法
+    本后端要"扩展"Django 认证协议，继承基类即可被 authenticate() 框架函数识别。
     """
 
     def authenticate(self, request, username=None, password=None, **kwargs):
@@ -48,3 +49,13 @@ class UsernameMobileAuthBackend(ModelBackend):
         if user is not None and user.check_password(password) and user.is_active:
             return user
         return None
+"""
+浏览器 POST /login
+  └─ MyObtainTokenPairView.post
+       └─ serializer.is_valid(raise_exception=True)   # simplejwt 的 TokenObtainPairSerializer
+            └─ django.contrib.auth.authenticate(username=..., password=...)   # ← 框架函数
+                 └─ 遍历 AUTHENTICATION_BACKENDS：
+                      1) UsernameMobileAuthBackend.authenticate()   ← 你注册的，先试
+                      2) ModelBackend.authenticate()               ← 兜底
+                      第一个返回非 None 的 user 即胜出
+"""

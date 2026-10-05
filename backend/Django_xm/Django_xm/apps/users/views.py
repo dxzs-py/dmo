@@ -415,7 +415,8 @@ class UserUsageStatsView(APIView):
             return success_response(data=cached)
 
         # 会话/消息/Token：复用 analytics 的实时聚合，避免维护 users 表冗余计数器
-        overview = AnalyticsService._get_overview_stats(user)
+        # （走公开入口 get_overview_stats，不依赖 analytics 的私有成员）
+        overview = AnalyticsService.get_overview_stats(user)
 
         # 活跃天数：该用户消息按创建日期去重计数
         ChatMessage = apps.get_model("chat", "ChatMessage")

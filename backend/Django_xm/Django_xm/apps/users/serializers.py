@@ -61,6 +61,18 @@ class UserRegisterSerializer(serializers.ModelSerializer):
 
     def validate_password(self, value: str) -> str:
         """校验密码复杂度。
+        validate_<字段名>(self, value) 形式的方法，DRF 在每次校验该字段时会自动触发
+        触发点在 DRF 的 Serializer.to_internal_value() 里：它先跑字段自身的约束（min_length 等），再调对应的 validate_<field>。
+        POST /register
+          └─ UserRegisterView.create(request)        # views.py:134
+               ├─ self.verify_captcha(request.data)
+               ├─ serializer = UserRegisterSerializer(data=request.data)
+               └─ serializer.is_valid(raise_exception=True)   # ← DRF 内部自动调用 validate_password
+                    └─ DRF 校验 password 字段：
+                         ① 先跑 extra_kwargs 里的 min_length=8
+                         ② 再调 validate_password(value)   ← 你这段复杂度校验
+                         ③ 全字段过完跑 validate() 比对 password_confirm
+
 
         Args:
             value: 待校验的密码。
