@@ -47,7 +47,27 @@ from Django_xm.common.approval_utils import derive_cross_module_id_from_source
 from Django_xm.common.observability.approval_metrics import approval_metrics
 from Django_xm.common.risk_levels import RiskLevel
 
+from .policies import UnregisteredToolApprovalPolicy  # noqa: F401  # 测试 patch 锚点；生产解析统一走 step_gate.resolve_tool_policy
+from .step_gate import resolve_tool_policy
+
 logger = logging.getLogger(__name__)
+
+
+class SyncApprovalNotSupportedError(RuntimeError):
+    """同步执行路径不支持审批拦截（fail-closed 拒绝执行）。
+
+    ApprovalMiddleware 的审批主链路为异步（aafter_model），同步 after_model
+    无法执行审批流程；抛出本异常终止同步链路的工具执行，防止绕过审批。
+    """
+
+
+# 系统编排工具（非审批类 interrupt，显式封闭清单——非 fail-open 逃生门）：
+# wait_for_subagent 的工具设计即"父 Agent 业务等待挂起（非审批 interrupt）"
+# （agent_hub/subagent_tools/wait.py），入审批流会打断 fan-out/fan-in 等待
+# （spawn_sub_agent 已承担派发侧审批）。该清单内的工具保持原"无策略"分支
+# 行为：注册 ToolCallContext（完整参数）+ 发布 TOOL_CALL_PENDING，不审批。
+# 清单外的一切未注册工具一律走 UnregisteredToolApprovalPolicy 兜底审批。
+SYSTEM_ORCHESTRATION_TOOLS = frozenset({"wait_for_subagent"})
 
 
 class ApprovalMiddleware(AgentMiddleware):
@@ -81,10 +101,13 @@ class ApprovalMiddleware(AgentMiddleware):
             GlobApprovalPolicy,
             GrepApprovalPolicy,
             LsApprovalPolicy,
+            READ_ONLY_TOOL_WHITELIST,
+            ReadOnlyApprovalPolicy,
             ReadFileApprovalPolicy,
             ShellExecApprovalPolicy,
             SpawnApprovalPolicy,
             TodoWriteApprovalPolicy,
+            TodoWriteFileApprovalPolicy,
             WebFetchApprovalPolicy,
             WebSearchApprovalPolicy,
             WriteFileApprovalPolicy,
@@ -100,8 +123,9 @@ class ApprovalMiddleware(AgentMiddleware):
             AttachmentReaderApprovalPolicy(),
             # 子代理派生工具策略（spawn_sub_agent）
             SpawnApprovalPolicy(),
-            # 其他副作用工具策略（write_todos）
+            # 其他副作用工具策略（deepagents write_todos + 项目自定义 todo_write）
             TodoWriteApprovalPolicy(),
+            TodoWriteFileApprovalPolicy(),
             # deepagents 框架工具策略
             # execute → 继承 ShellExecApprovalPolicy 黑白名单逻辑
             ExecuteApprovalPolicy(),
@@ -116,11 +140,50 @@ class ApprovalMiddleware(AgentMiddleware):
             GrepApprovalPolicy(),
             WebSearchApprovalPolicy(),
             WebFetchApprovalPolicy(),
+            # 只读工具白名单（2.1 fail-closed 配套）：对照 tools/__init__.py
+            # 装配全集逐个核定，SAFE 自动通过 + 审计；白名单外未注册工具
+            # 一律走 UnregisteredToolApprovalPolicy 兜底（CONTROLLED 需审批）
+            *(ReadOnlyApprovalPolicy(tool_name=name) for name in READ_ONLY_TOOL_WHITELIST),
         ]
 
     def after_model(self, state, runtime):
-        """同步 after_model 钩子（不实现实际逻辑，仅异步路径生效）"""
-        return None
+        """同步 after_model 钩子：fail-closed，拒绝执行（2.2）。
+
+        审批主链路为异步（aafter_model：批量 interrupt + async 事件发布 +
+        sync_to_async 包裹的 DB/cache 访问），同步 invoke 路径不具备审批
+        执行条件。若同步钩子静默放行（原实现 return None），同步链路的
+        工具调用将完全绕过审批（fail-open）。
+
+        处置（fail-closed 优先）：
+        - 本轮 AIMessage 携带 tool_calls → logger.error 并抛出
+          SyncApprovalNotSupportedError，终止本轮工具执行（宁可不执行，
+          不可不审批）；
+        - 无 tool_calls（纯文本回复轮）→ 无需审批，返回 None 正常放行。
+
+        修复同步链路的正确方式是改用异步执行（astream/ainvoke），而非
+        在同步钩子中补审批。
+        """
+        messages = state.get("messages", []) if isinstance(state, dict) else []
+        has_tool_calls = False
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage):
+                has_tool_calls = bool(getattr(msg, "tool_calls", None))
+                break
+
+        if not has_tool_calls:
+            # 纯文本回复轮：无工具执行，无需审批，放行
+            return None
+
+        logger.error(
+            "[ApprovalMiddleware] 同步 after_model 路径不支持审批（fail-closed）："
+            "同步 invoke 会绕过审批拦截，已拒绝本轮工具执行；"
+            "请改用异步链路（astream/ainvoke）运行带工具的 agent。"
+        )
+        raise SyncApprovalNotSupportedError(
+            "ApprovalMiddleware 同步 after_model 路径不支持审批（fail-closed）："
+            "本轮检测到待执行 tool_calls，为避免绕过审批已拒绝执行。"
+            "请使用异步链路（astream/ainvoke）运行 agent。"
+        )
 
     @staticmethod
     def _extract_subagent_context(state: dict | None = None, runtime=None) -> dict | None:
@@ -587,8 +650,11 @@ class ApprovalMiddleware(AgentMiddleware):
                 )
             return _approved_tc_ids, _decided_map
         except Exception as _idem_err:
-            logger.debug(f"[ApprovalMiddleware] 构建幂等集合失败(非致命): {_idem_err}")
-            return set(), {}
+            # 2.5 fail-closed：幂等集合构建失败不得按"空集"降级（空集会被当作
+            # "全部未决断"处理，SAFE 级工具仍自动直通）。返回 None 哨兵，
+            # 由 aafter_model 将本轮全部 tool_calls 强制送入审批。
+            logger.warning(f"[ApprovalMiddleware] 构建幂等集合失败(fail-closed): {_idem_err}")
+            return None, None
 
     async def aafter_model(self, state, runtime):
         """异步 after_model 钩子：批量拦截工具调用审批
@@ -683,6 +749,17 @@ class ApprovalMiddleware(AgentMiddleware):
         # 包装，否则 Django 抛 SynchronousOnlyOperation（日志实证"构建幂等集合失败
         # (非致命): You cannot call this from an async context"），幂等集合恒为空。
         _approved_tc_ids, _decided_map = await self._build_idempotent_tc_ids(last_ai_msg)
+        # 2.5 fail-closed：幂等集合构建失败（None 哨兵）时不可按"空集"降级——
+        # 空集会让 SAFE 级工具继续自动直通。处置：本轮全部 tool_calls 一律
+        # 进入审批（SAFE 级评估结果在扫描循环中升级为 CONTROLLED），
+        # 幂等跳过与已决断注入均不生效（宁可重复审批，不可未审批执行）。
+        _idempotency_failed = _approved_tc_ids is None
+        if _idempotency_failed:
+            _approved_tc_ids, _decided_map = set(), {}
+            logger.warning(
+                "[ApprovalMiddleware] 幂等集合构建失败，fail-closed 生效："
+                "本轮全部 tool_calls 强制进入审批（含 SAFE 级）"
+            )
 
         # 已决断（rejected/timeout）的 tool_call 与对应决策 ToolMessage：
         # 扫描循环内收集，最终合并到 last_ai_msg.tool_calls / result messages。
@@ -743,9 +820,13 @@ class ApprovalMiddleware(AgentMiddleware):
                 )
                 continue
 
-            policy = self.policies.get(tool_name)
+            # R3 1.2：策略解析统一走 step_gate.resolve_tool_policy（与 Skill
+            # 步骤门禁共用同一"工具名 → 策略"判定，同源保证）：系统编排工具
+            # 返回 None（非审批类），未注册工具返回 UnregisteredToolApprovalPolicy
+            # 兜底（fail-closed CONTROLLED）。
+            policy = resolve_tool_policy(tool_name, self.policies)
             if policy is None:
-                # 3.3 无策略工具：不审批不审计，但注册 ctx（完整参数），
+                # 系统编排工具（wait_for_subagent）：不审批，但注册 ctx（完整参数），
                 # 为 extractor 参数聚合失败的场景提供权威参数源。
                 # 不发布 RUNNING（避免与 extractor 的 PENDING 冲突），改为发布
                 # PENDING（publish_pending=True）：挂起类工具（wait_for_subagent）
@@ -769,18 +850,36 @@ class ApprovalMiddleware(AgentMiddleware):
                             publish_pending=True,
                         )
                         logger.info(
-                            f"[ApprovalMiddleware] 无策略工具已注册 ctx + 发布 PENDING: "
+                            f"[ApprovalMiddleware] 系统编排工具已注册 ctx + 发布 PENDING: "
                             f"tool={tool_name}, tc_id={tc_id}"
                         )
                     except Exception as register_err:
                         logger.warning(
-                            f"[ApprovalMiddleware] 无策略工具注册 ctx 失败: "
+                            f"[ApprovalMiddleware] 系统编排工具注册 ctx 失败: "
                             f"tool={tool_name}, tc_id={tc_id}, err={register_err}"
                         )
-                continue  # 无策略，不审批
+                continue  # 系统编排工具：非审批 interrupt，放行
+
+            if tool_name not in self.policies:
+                # 2.1 fail-closed：未注册工具（MCP 动态工具 / skill_{name} 管道工具 /
+                # 扩展注册表工具 / 用户自定义工具 / 未来新增工具）不再放行，
+                # 默认 CONTROLLED 进入审批（resolve_tool_policy 已兜底构造）。
+                logger.info(
+                    f"[ApprovalMiddleware] 未注册工具 fail-closed 兜底: "
+                    f"tool={tool_name}, tc_id={tc_id}, 默认 CONTROLLED 需审批"
+                )
 
             # 评估风险等级（携带 subagent_context 用于子 agent 加权）
             risk_level = policy.assess_risk(args, subagent_context=subagent_context)
+
+            if _idempotency_failed and risk_level == RiskLevel.SAFE:
+                # 2.5 fail-closed：幂等机制失效时不可信任自动直通，
+                # SAFE 级也升级为 CONTROLLED 送入审批批次。
+                risk_level = RiskLevel.CONTROLLED
+                logger.warning(
+                    f"[ApprovalMiddleware] 幂等失败 fail-closed 升级: "
+                    f"tool={tool_name}, tc_id={tc_id}, SAFE -> CONTROLLED"
+                )
 
             if risk_level == RiskLevel.SAFE:
                 # SAFE 级：自动通过，仅审计

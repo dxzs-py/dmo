@@ -289,7 +289,12 @@ class TestSubAgentNestedWaitAdapter(unittest.TestCase):
         self.assertIsNone(adapter._detect_subagent_wait_interrupt(state))
 
     def test_wait_suspend_race_all_terminal_resumes_directly(self):
-        """竞态兜底：孙代理在注册 awaiter 前已全部终态 → 直接恢复。"""
+        """TOCTOU 修复（round3 2.6）：孙代理已全部终态 → 注册后复核补投恢复。
+
+        新语义：awaiter 先注册（注册点之后的 lifecycle 回调必然送达），
+        再复核 DB 终态并经 awaiter 补投——恢复路径与 lifecycle 回调统一，
+        resume-once 守卫保证只恢复一次。
+        """
         runtime = mock.Mock()
         runtime._update_status = mock.AsyncMock()
         runtime.get_instance = mock.AsyncMock(
@@ -313,13 +318,20 @@ class TestSubAgentNestedWaitAdapter(unittest.TestCase):
             SubAgentStatus.RUNNING,
             pending_interrupt_info={"interrupt_id": "wait-1", "_subagent_wait": True},
         )
+        # 先注册（注册点之后的终态回调必然送达），复核补投经同一 awaiter
+        lm.register_parent_awaiter.assert_called_once()
         runtime.resume.assert_awaited_once()
         payload = runtime.resume.await_args.args[1]
         self.assertEqual(
             payload,
             {"subagent_results": [{"subagent_thread_id": "g1", "status": "completed", "result": "r1"}]},
         )
-        lm.register_parent_awaiter.assert_not_called()
+
+        # resume-once 守卫：重复投递（lifecycle 回调与复核补投竞态重叠）
+        # 不产生第二次恢复
+        awaiter = lm.register_parent_awaiter.call_args.args[1]
+        asyncio.run(awaiter("g1", SubAgentStatus.COMPLETED))
+        runtime.resume.assert_awaited_once()
 
     def test_wait_suspend_registers_awaiter_and_resumes(self):
         """孙代理未终态 → 注册 awaiter；终态后累积结果并恢复。"""
@@ -612,6 +624,8 @@ class TestSubAgentExecuteRoutingConfig(unittest.TestCase):
     def test_execute_uses_routing_config_from_metadata_fallback(self):
         runtime = mock.Mock()
         runtime._update_status = mock.AsyncMock()
+        # DB 终态复核（重启恢复场景）：查无记录（None）→ 不拦截，继续执行
+        runtime.get_instance = mock.AsyncMock(return_value=None)
         adapter = LangGraphAdapter(runtime, graph_factory=mock.AsyncMock())
 
         instance = SimpleNamespace(

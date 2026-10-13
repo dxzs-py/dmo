@@ -101,23 +101,9 @@ watch(hasActiveApproval, (active) => {
   }
 })
 
-// Skill 模式标签
-const skillModeLabel = computed(() => {
-  if (!isSkillCall.value) return ''
-  const inputObj = typeof props.input === 'string' ? (() => { try { return JSON.parse(props.input) } catch { return {} } })() : (props.input || {})
-  const mode = inputObj.mode || inputObj._mode
-  if (mode === 'hybrid') return '混合'
-  if (mode === 'advisor') return '顾问'
-  return '管线'
-})
-
-const hybridSections = computed(() => {
-  if (!isSkillCall.value || typeof props.output !== 'string') return null
-  if (skillModeLabel.value !== '混合') return null
-  return {
-    '执行结果': props.output,
-  }
-})
+// Skill 模式标签（Task 10 对齐：后端 SkillSpec.mode 仅剩 pipeline，
+// advisor/hybrid 已随迁移 0009 归一化删除，前端同步移除相关分支）
+const skillModeLabel = computed(() => (isSkillCall.value ? '管线' : ''))
 
 const statusIcon = computed(() => {
   switch (props.status) {
@@ -163,10 +149,6 @@ const statusText = computed(() => getToolStatusText(props.status))
 //   - props 接口不变，3 个调用方（ChatMessage/AiMessage/DeepResearchView）无需修改
 
 const inputDisplay = computed(() => {
-  // Skill hybrid 模式保留原 input 直传（hybridSections 分支处理输出）
-  if (isSkillCall.value && skillModeLabel.value === '混合') {
-    return { label: '输入', formatted: '', displayMode: 'skip' }
-  }
   const result = formatToolParameters(props.toolName, props.input)
   // input 为空时 displayMode 设为 skip，模板不渲染输入区
   if (!result.formatted) {
@@ -176,10 +158,6 @@ const inputDisplay = computed(() => {
 })
 
 const outputDisplay = computed(() => {
-  // Skill hybrid/advisor 模式由 hybridSections 分支处理
-  if (isSkillCall.value && skillModeLabel.value !== '管线') {
-    return { label: '输出', formatted: '', displayMode: 'skip', language: 'text' }
-  }
   const result = formatToolResult(props.toolName, props.output)
   // output 为空时 displayMode 设为 skip，模板不渲染输出区
   if (!result.formatted) {
@@ -406,7 +384,7 @@ const summaryLine = computed(() =>
               <el-tag v-if="isAutoApproved" size="small" type="success" effect="plain">自动通过</el-tag>
               <!-- 高危风险等级徽章（Phase G2） -->
               <el-tag v-if="isHighRisk" size="small" type="danger" effect="dark">高危</el-tag>
-              <el-tag v-if="isSkillCall && skillModeLabel" size="small" :type="skillModeLabel === '管线' ? 'primary' : skillModeLabel === '顾问' ? 'success' : 'warning'" effect="plain">{{ skillModeLabel }}</el-tag>
+              <el-tag v-if="isSkillCall && skillModeLabel" size="small" type="primary" effect="plain">{{ skillModeLabel }}</el-tag>
               <el-tag v-else-if="status === ToolCallStatus.REJECTED" size="small" type="danger">已拒绝</el-tag>
               <el-tag v-else :type="statusType" size="small">{{ statusText }}</el-tag>
             </div>
@@ -426,30 +404,16 @@ const summaryLine = computed(() =>
           <div class="section-title">输入参数</div>
           <pre :class="inputContentClass">{{ inputDisplay.formatted }}</pre>
         </div>
-        <!-- Skill hybrid 模式分区渲染 -->
-        <template v-if="hybridSections">
-          <div class="tool-call-section">
-            <div class="section-title">执行结果</div>
-            <pre class="section-content">{{ hybridSections['执行结果'] || '' }}</pre>
-          </div>
-        </template>
-        <template v-else-if="isSkillCall && output && skillModeLabel === '顾问'">
-          <div class="tool-call-section">
-            <div class="section-title">技能确认</div>
-            <div class="section-content">{{ output }}</div>
-          </div>
-        </template>
-        <!-- 普通输出：仅终态展示（防止审批阶段提前渲染 result 字段） -->
-        <template v-else>
-          <div v-if="shouldShowOutput" class="tool-call-section">
-            <div class="section-title">输出结果</div>
-            <pre v-if="outputDisplay.displayMode !== 'skip'" :class="outputContentClass">{{ outputDisplay.formatted }}</pre>
-            <!-- 拒绝/超时且无结果数据时给出占位反馈，保证输出结果区域不消失 -->
-            <pre v-else-if="status === ToolCallStatus.REJECTED || status === ToolCallStatus.TIMEOUT" class="section-content section-content--rejected-feedback">
+        <!-- Skill 输出（Task 10：advisor/hybrid 模式已删除，统一走通用输出渲染）：
+             仅终态展示（防止审批阶段提前渲染 result 字段） -->
+        <div v-if="shouldShowOutput" class="tool-call-section">
+          <div class="section-title">输出结果</div>
+          <pre v-if="outputDisplay.displayMode !== 'skip'" :class="outputContentClass">{{ outputDisplay.formatted }}</pre>
+          <!-- 拒绝/超时且无结果数据时给出占位反馈，保证输出结果区域不消失 -->
+          <pre v-else-if="status === ToolCallStatus.REJECTED || status === ToolCallStatus.TIMEOUT" class="section-content section-content--rejected-feedback">
 {{ status === ToolCallStatus.REJECTED ? '已拒绝执行该工具，Agent 将调整策略继续' : '该工具审批超时，未执行' }}
-            </pre>
-          </div>
-        </template>
+          </pre>
+        </div>
 
         <!-- 审批面板 -->
         <div v-if="isWaiting || isWaitingForSiblings" class="approval-panel" :class="{ 'approval-panel--high-risk': isHighRisk }">

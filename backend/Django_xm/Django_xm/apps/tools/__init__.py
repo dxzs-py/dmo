@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any
 
@@ -52,6 +53,118 @@ def _deduplicate_tools(tools: list[BaseTool]) -> list[BaseTool]:
             seen.add(tool.name)
             result.append(tool)
     return result
+
+
+def _resolve_mcp_tool_name_conflicts(mcp_tools: list[BaseTool], taken_names: set[str]) -> list[BaseTool]:
+    """MCP 工具与已知工具名冲突时加 server 前缀，确保全部可用且不静默排除。
+
+    修复前两条静默丢失路径：
+    1. 与内置/技能/自定义工具同名——``get_tools_for_request_async`` 中
+       ``mcp_selected = selected_set - known_names`` 将其永久排除；
+    2. 与其他 server 的工具同名——``_deduplicate_tools`` 按 server 顺序
+       静默保留首个。
+    现在重名 MCP 工具原地改名为 ``{server_name}__{tool.name}``（仍冲突则
+    追加 ``__N`` 序号），metadata 记录 ``mcp_original_name`` 供 selected
+    匹配做"原名 → 带前缀工具"映射，冲突经 warning 日志可见。
+
+    Args:
+        mcp_tools: 待装配的 MCP 工具（metadata.mcp_server_name 已由
+            get_mcp_tools 填充；缺失时回退 "mcp"）。
+        taken_names: 已占用工具名集合（内置/技能/自定义等）。
+
+    Returns:
+        重名消解后的列表（元素原地改名，顺序不变）。
+    """
+    resolved: list[BaseTool] = []
+    taken = set(taken_names)
+    for tool in mcp_tools:
+        original_name = tool.name
+        if original_name not in taken:
+            taken.add(original_name)
+            resolved.append(tool)
+            continue
+        server_name = (getattr(tool, "metadata", None) or {}).get("mcp_server_name") or "mcp"
+        new_name = f"{server_name}__{original_name}"
+        suffix = 1
+        while new_name in taken:
+            new_name = f"{server_name}__{original_name}__{suffix}"
+            suffix += 1
+        try:
+            tool.name = new_name
+        except Exception as e:
+            # name 属性不可写（罕见）：保留原名，回退由 _deduplicate_tools 兜底去重
+            logger.warning(f"MCP 工具改名失败，保留原名 '{original_name}': {e}")
+            resolved.append(tool)
+            continue
+        if not hasattr(tool, "metadata") or tool.metadata is None:
+            tool.metadata = {}
+        tool.metadata["mcp_original_name"] = original_name
+        tool.metadata["mcp_renamed"] = True
+        taken.add(new_name)
+        logger.warning(
+            f"MCP 工具重名冲突: '{original_name}' (server={server_name}) 已重命名为 '{new_name}'"
+        )
+        resolved.append(tool)
+    return resolved
+
+
+class _ExternalContentWrappedTool(BaseTool):
+    """把内部 BaseTool 的字符串输出经 wrap_external_content 信封包裹（CT-03/CT-04）。
+
+    MCP 工具（第三方 BaseTool）与搜索快照同属"进入模型上下文的外部内容"，
+    按 B4 注入隔离规则包裹。组合委托而非继承第三方工具类：name/description/
+    args_schema 从 inner 复制，_run/_arun 转发 invoke 并包裹字符串结果。
+    """
+
+    inner: Any
+    source_label: str = "外部工具"
+
+    def _wrap_result(self, result):
+        from .langchain.external_content import wrap_external_content
+
+        if isinstance(result, str):
+            return wrap_external_content(self.source_label, result)
+        return result
+
+    def _run(self, *args, **kwargs):
+        tool_input = kwargs if kwargs else (args[0] if args else "")
+        return self._wrap_result(self.inner.invoke(tool_input))
+
+    async def _arun(self, *args, **kwargs):
+        tool_input = kwargs if kwargs else (args[0] if args else "")
+        return self._wrap_result(await self.inner.ainvoke(tool_input))
+
+
+def _wrap_tools_with_external_content(tools: list[BaseTool], source_label: str) -> list[BaseTool]:
+    """对一组工具逐个套 _ExternalContentWrappedTool（保持顺序与 name 不变）。"""
+    wrapped = []
+    for tool in tools:
+        try:
+            wrapper = _ExternalContentWrappedTool(
+                name=tool.name,
+                description=tool.description or tool.name,
+                args_schema=getattr(tool, "args_schema", None),
+                inner=tool,
+                source_label=source_label,
+            )
+            # 透传元数据（tier/visibility/mcp_server_name 等供注册与审批链消费）
+            if getattr(tool, "metadata", None):
+                wrapper.metadata = dict(tool.metadata)
+            wrapped.append(wrapper)
+        except Exception as e:
+            logger.warning(f"外部内容信封包裹失败，保留原工具（降级不阻断）: {tool.name} - {e}")
+            wrapped.append(tool)
+    return wrapped
+
+
+def _wrap_mcp_tools_external_content(mcp_tools: list[BaseTool]) -> list[BaseTool]:
+    """CT-03：MCP 工具结果统一接注入信封。
+
+    MCP server 返回内容为无界外部文本（用户可自配 McpServerConfig），
+    直接进模型上下文是 B4 防线的类别盲区；包裹在工具边界完成，
+    结果文本经 wrap_external_content 框定为"待分析数据"。
+    """
+    return _wrap_tools_with_external_content(mcp_tools, "MCP 工具")
 
 
 
@@ -132,7 +245,7 @@ def __getattr__(name):
 
 
 async def _load_mcp_tools_async(
-    selected_servers: list[str] | None = None, user_id: int | None = None, selected_tools: list[str] | None = None
+    selected_servers: list[str] | None = None, user_id: int | None = None
 ) -> list[BaseTool]:
     try:
         from asgiref.sync import sync_to_async
@@ -157,16 +270,28 @@ async def _load_mcp_tools_async(
         if selected_servers:
             servers = [s for s in servers if s.get("name") in selected_servers]
             logger.info(f"MCP 过滤: 选中 {len(servers)} 个服务器: {selected_servers}")
+        # 2.7 多 server 并行建连：fetch_tools_for_server 为纯异步网络 IO
+        # （现场建连 + 枚举工具，不触 DB——DB 查询已由上方 resolve_mcp_servers
+        # 经 sync_to_async 完成），单事件循环内 asyncio.gather 并发即可，
+        # 无需同步场景的 ThreadPoolExecutor + connections.close_all 模式
+        #（对齐知识库 SearchAllView 的语义目标：多源并行、单源失败不拖垮整体）。
+        # 单 server 超时由 get_mcp_tools 内 asyncio.wait_for 承担（可配置）；
+        # 既有语义保留：每次现场建连、失败不重试，坏 server 仅自身工具缺失。
+        _results = await asyncio.gather(
+            *(fetch_tools_for_server(srv) for srv in servers),
+            return_exceptions=True,
+        )
         all_mcp_tools: list[BaseTool] = []
-        for srv in servers:
-            try:
-                logger.info(f"正在加载 MCP Server: {srv.get('name')} (transport={srv.get('transport', 'sse')})")
-                # transport 分派（stdio/url）统一走 fetch_tools_for_server（5-1.2 收敛）
-                tools = await fetch_tools_for_server(srv)
-                logger.info(f"MCP Server '{srv.get('name')}' 返回 {len(tools)} 个工具")
-                all_mcp_tools.extend(tools)
-            except Exception as e:
-                logger.warning(f"MCP Server ({srv.get('name', 'unknown')}) 工具获取失败: {e}", exc_info=True)
+        for srv, result in zip(servers, _results):
+            srv_name = srv.get("name", "unknown")
+            if isinstance(result, BaseException):
+                logger.warning(
+                    f"MCP Server ({srv_name}) 工具获取失败: {result}",
+                    exc_info=result if isinstance(result, Exception) else None,
+                )
+                continue
+            logger.info(f"MCP Server '{srv_name}' 返回 {len(result)} 个工具")
+            all_mcp_tools.extend(result)
         for tool in all_mcp_tools:
             if not hasattr(tool, "metadata") or tool.metadata is None:
                 tool.metadata = {}
@@ -270,6 +395,17 @@ async def get_tools_for_request_async(
 
         tools = [t for t in get_all_tools() if t.name in builtin_selected]
 
+        # visibility=core 工具自动注入（前后端契约）：前端将 core 组展示为
+        # "自动注入、无需选择"（LangchainToolList 只把 selectable 组交给
+        # 勾选/全选），后端精确选择路径必须同步追加 core 组，否则出现
+        # "用户看到自动注入、实际未装配"的断裂（如 web_fetch 依赖校验失败）。
+        selected_names = {t.name for t in tools}
+        tools.extend(
+            t
+            for t in get_all_tools()
+            if (t.metadata or {}).get("visibility") == "core" and t.name not in selected_names
+        )
+
         # 自定义工具在 selected_tools 中
         if user_id and custom_names:
             selected_custom = selected_set & custom_names
@@ -284,10 +420,17 @@ async def get_tools_for_request_async(
 
         if mcp_selected:
             should_load_mcp = True
-            all_mcp = await _load_mcp_tools_async(
-                selected_servers=selected_mcp_servers, user_id=user_id, selected_tools=selected_tools
-            )
-            mcp_tools = [t for t in all_mcp if t.name in mcp_selected]
+            all_mcp = await _load_mcp_tools_async(selected_servers=selected_mcp_servers, user_id=user_id)
+            # C6 重名消解：先按 known_names 加 server 前缀，再按"工具名或
+            # mcp_original_name"映射 selected——用户选中的原名能命中带前缀
+            # 工具（跨 server 同名场景），不再静默排除
+            all_mcp = _resolve_mcp_tool_name_conflicts(all_mcp, known_names)
+            mcp_tools = [
+                t
+                for t in all_mcp
+                if t.name in mcp_selected
+                or (getattr(t, "metadata", None) or {}).get("mcp_original_name") in selected_set
+            ]
             if mcp_tools:
                 logger.info(f"选中 MCP 工具 ({len(mcp_tools)} 个): {mcp_selected}")
             else:
@@ -319,16 +462,18 @@ async def get_tools_for_request_async(
             tools.extend(_get_web_search_tools())
 
     if should_load_mcp and not mcp_tools:
-        mcp_tools = await _load_mcp_tools_async(
-            selected_servers=selected_mcp_servers, user_id=user_id, selected_tools=selected_tools
-        )
+        all_mcp = await _load_mcp_tools_async(selected_servers=selected_mcp_servers, user_id=user_id)
+        # C6 重名消解（无精确选中名路径）：与内置工具名及其他 server 工具名
+        # 冲突时加前缀，避免末尾 _deduplicate_tools 静默保留首个
+        mcp_tools = _resolve_mcp_tool_name_conflicts(all_mcp, {t.name for t in get_all_tools()})
         if mcp_tools:
             logger.info(f"MCP 工具已加载 ({len(mcp_tools)} 个)")
         else:
             logger.debug("未获取到 MCP 工具（可能未配置 MCP Server 或连接失败）")
 
     if mcp_tools:
-        tools.extend(mcp_tools)
+        # CT-03：MCP 无界外部文本进上下文前统一接注入信封（B4 防线）
+        tools.extend(_wrap_mcp_tools_external_content(mcp_tools))
 
     # 仅在用户精确选择了工具时加载技能工具
     # selected_tools=None 表示用户未在 ToolSelector 中选择具体工具，
@@ -349,6 +494,8 @@ async def get_tools_for_request_async(
 
 from .skills import (
     PRESET_SKILLS,
+    ActivateSkillTool,
+    ReadSkillResourceTool,
     SkillAdapter,
     SkillBaseTool,
     SkillLoader,
@@ -357,6 +504,9 @@ from .skills import (
     SkillSpec,
     SkillStep,
     create_skill_base_tools,
+    create_skill_disclosure_tools,
+    wrap_skill_instructions,
+    wrap_skill_resource,
 )
 
 
@@ -404,7 +554,9 @@ _ALLOWED_IMPORTS = {
     "hashlib",
     "base64",
     "typing",
-    "pathlib",
+    # R3 1.7：pathlib 已剔除——白名单原含 pathlib，AST 检查拦不住
+    # `Path(x).read_text()/write_text()/unlink()` 等方法调用形式的任意文件
+    # 读写（方法级白名单成本高且易漏），直接整体移出走"导入即拒绝"。
     "urllib.parse",
     "uuid",
     "decimal",
@@ -418,7 +570,6 @@ _ALLOWED_IMPORTS = {
     "html",
     "langchain_core.tools",
 }
-_ALLOWED_IMPORT_ROOTS = {m.split(".")[0] for m in _ALLOWED_IMPORTS}
 
 
 def _validate_tool_code_safety(code: str) -> tuple[bool, str]:
@@ -448,14 +599,16 @@ def _validate_tool_code_safety(code: str) -> tuple[bool, str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                root_mod = alias.name.split(".")[0]
-                if root_mod not in _ALLOWED_IMPORT_ROOTS:
+                # R3 1.7：精确模块匹配（原"根模块放行"存在同根逃逸——
+                # "urllib.parse" 白名单使 `import urllib.request.urlopen`
+                # 等任意 urllib 子模块通过根校验，urllib.request.urlopen
+                # 即任意网络请求）。精确匹配后：`import urllib.parse` 放行、
+                # `import urllib.request` 拒绝、`import urllib` 拒绝。
+                if alias.name not in _ALLOWED_IMPORTS:
                     return False, f"禁止导入模块 '{alias.name}': 第{node.lineno}行"
         if isinstance(node, ast.ImportFrom):
-            if node.module:
-                root_mod = node.module.split(".")[0]
-                if root_mod not in _ALLOWED_IMPORT_ROOTS:
-                    return False, f"禁止导入模块 '{node.module}': 第{node.lineno}行"
+            if node.module and node.module not in _ALLOWED_IMPORTS:
+                return False, f"禁止导入模块 '{node.module}': 第{node.lineno}行"
         if isinstance(node, ast.Name) and node.id in FORBIDDEN_NAMES:
             return False, f"禁止使用 {node.id}: 第{node.lineno}行"
         if isinstance(node, ast.Attribute) and node.attr.startswith("__") and node.attr.endswith("__"):
@@ -565,8 +718,9 @@ def _instantiate_custom_tool(tool_obj) -> BaseTool | None:
     _real_import = __import__ if isinstance(__builtins__, dict) else __builtins__.__import__
 
     def _restricted_import(name, *args, **kwargs):
-        root = name.split(".")[0]
-        if root not in _ALLOWED_IMPORT_ROOTS:
+        # R3 1.7：与 AST 校验同口径的精确模块匹配——原根匹配（name.split(".")[0]）
+        # 放行 urllib.request 等同根逃逸子模块（运行时第二层防护同源收紧）
+        if name not in _ALLOWED_IMPORTS:
             raise ImportError(f"禁止导入模块 '{name}'")
         return _real_import(name, *args, **kwargs)
 
@@ -592,7 +746,8 @@ def _instantiate_custom_tool(tool_obj) -> BaseTool | None:
         "hashlib",
         "base64",
         "typing",
-        "pathlib",
+        # R3 1.7：pathlib 已随 _ALLOWED_IMPORTS 一并剔除（预加载名单保持
+        # 同步，防止代码跳过 import 直接引用预载的 pathlib 模块）
         "urllib.parse",
         "uuid",
         "decimal",
@@ -643,6 +798,8 @@ __all__ = [
     "TRANSLATION_TOOLS",
     "WEATHER_TOOLS",
     "ResearchFileSystem",
+    "ActivateSkillTool",
+    "ReadSkillResourceTool",
     "SkillAdapter",
     "SkillBaseTool",
     "SkillLoader",
@@ -660,6 +817,7 @@ __all__ = [
     "calculator",
     "clear_extension_tools",
     "create_skill_base_tools",
+    "create_skill_disclosure_tools",
     "create_tavily_search_tool",
     "create_tool_error",
     "create_tool_result",
@@ -703,4 +861,6 @@ __all__ = [
     "weather_query",
     "web_fetch",
     "web_search",
+    "wrap_skill_instructions",
+    "wrap_skill_resource",
 ]

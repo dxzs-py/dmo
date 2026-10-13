@@ -25,5 +25,6 @@ from Django_xm.apps.ai_engine.services.embedding_factory import (  # noqa: F401
 # LLM 工厂
 from Django_xm.apps.ai_engine.services.llm_factory import (  # noqa: F401
     get_chat_model,
+    get_helper_model,
     get_model_string,
 )

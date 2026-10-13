@@ -188,6 +188,10 @@ export async function readSSEStream(response, onEvent, signal) {
   const decoder = new TextDecoder()
   let buffer = ''
   let lastEventTime = Date.now()
+  // D-8：SSE 事件聚合状态——同一事件的多个 data: 行以 \n 拼接后整体分发
+  // （SSE 规范：事件由空行分隔，跨行 data 属于同一事件）
+  let dataLines = []
+  let sawDone = false
 
   const idleCheckInterval = setInterval(() => {
     if (Date.now() - lastEventTime > STREAM_IDLE_TIMEOUT) {
@@ -196,6 +200,54 @@ export async function readSSEStream(response, onEvent, signal) {
       reader.cancel().catch(() => {})
     }
   }, 10000)
+
+  /** 分发单个事件 payload：JSON.parse 失败时对多行合并回退逐行解析（容错非规范分包） */
+  const dispatchData = (dataStr) => {
+    if (!dataStr.trim()) return
+    try {
+      const parsed = JSON.parse(dataStr)
+      onEvent(parseProtocolEvent(parsed))
+      return
+    } catch (joinedErr) {
+      // 多行 data 合并后非法 JSON：回退按行独立解析，避免整块丢弃
+      if (dataStr.includes('\n')) {
+        let dispatchedAny = false
+        for (const part of dataStr.split('\n')) {
+          if (!part.trim()) continue
+          try {
+            const parsed = JSON.parse(part)
+            onEvent(parseProtocolEvent(parsed))
+            dispatchedAny = true
+          } catch { /* 单行仍非法，下方统一告警 */ }
+        }
+        if (dispatchedAny) return
+      }
+      logger.warn('[SSE] 解析数据失败:', dataStr, joinedErr)
+    }
+  }
+
+  /** 处理单行：累积 data 行 / 空行分发事件 / [DONE] 置结束标记 */
+  const handleLine = (line) => {
+    const trimmedLine = line.endsWith('\r') ? line.slice(0, -1) : line
+    if (trimmedLine === '') {
+      // 空行 = 事件边界：分发已累积的 data（多行 data: 按规范以 \n 拼接）
+      if (dataLines.length > 0) {
+        const payload = dataLines.join('\n')
+        dataLines = []
+        dispatchData(payload)
+      }
+      return
+    }
+    if (!trimmedLine.startsWith('data:')) return
+    // 规范：冒号后仅剥一个前导空格（'data: x' → 'x'；'data:x' → 'x'）
+    let value = trimmedLine.slice(5)
+    if (value.startsWith(' ')) value = value.slice(1)
+    if (value === '[DONE]') {
+      sawDone = true
+      return
+    }
+    dataLines.push(value)
+  }
 
   try {
     while (true) {
@@ -210,30 +262,30 @@ export async function readSSEStream(response, onEvent, signal) {
       buffer = lines.pop() || ''
 
       for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        const dataStr = line.slice(6)
-        if (dataStr === '[DONE]') break
+        handleLine(line)
+        if (sawDone) break
+      }
+      if (sawDone) break
+    }
 
-        try {
-          const parsed = JSON.parse(dataStr)
-          onEvent(parseProtocolEvent(parsed))
-        } catch (e) {
-          logger.warn('[SSE] 解析数据失败:', dataStr, e)
-        }
+    if (!sawDone) {
+      // 流结束：残留缓冲作为最后一行处理（服务端未以换行收尾的场景）
+      if (buffer) {
+        handleLine(buffer)
+        buffer = ''
+      }
+      // 兜底分发未以空行收尾的最后一个事件
+      if (dataLines.length > 0) {
+        const payload = dataLines.join('\n')
+        dataLines = []
+        dispatchData(payload)
       }
     }
 
-    if (buffer.trim() && buffer.startsWith('data: ')) {
-      const dataStr = buffer.slice(6)
-      if (dataStr.trim() && dataStr !== '[DONE]') {
-        try {
-          const parsed = JSON.parse(dataStr)
-          onEvent(parseProtocolEvent(parsed))
-        } catch (err) {
-          // 流结束时缓冲区残留的半行数据可能不完整，解析失败仅记录，忽略该残片
-          logger.warn('[SSE] 解析尾部数据失败:', dataStr, err)
-        }
-      }
+    if (sawDone) {
+      // D-8：[DONE] 是后端约定的流终结标记，主动关闭底层流，
+      // 不再依赖服务端半关闭（原实现仅跳出内层循环，连接可能一直挂着）
+      reader.cancel().catch(() => {})
     }
   } finally {
     clearInterval(idleCheckInterval)

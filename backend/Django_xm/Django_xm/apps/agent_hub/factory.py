@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -12,11 +13,36 @@ logger = logging.getLogger(__name__)
 
 
 class AgentWrapper:
-    __slots__ = ("graph", "work_dir")
+    """agent 构建产物统一包装（graph 载体 + 韧性降级元数据）。
 
-    def __init__(self, graph: CompiledStateGraph, work_dir: str | None = None):
+    slots 演进（spec 任务 4.3 环 3）：
+    - 原（graph, work_dir）：仅 base 链消费。
+    - 现扩展 thread_id / model / original_tools / original_config 四个元数据
+      slot：deep_builder 构建时注入完整构建参数（create_deep_agent 的 kwargs
+      与最终工具集），research 侧（agent_assembly）据此组装
+      ``OfficialDeepAgentAdapter``——deep_builder 不再依赖 research 类型，
+      韧性降级 _rebuild_with_degraded_tools 元数据保持贯通（af_16）。
+    - base 链（AgentFactory.create 对 CompiledStateGraph 的包装）仅填充
+      graph/work_dir，其余 slot 保持默认值，行为不变。
+    """
+
+    __slots__ = ("graph", "model", "original_config", "original_tools", "thread_id", "work_dir")
+
+    def __init__(
+        self,
+        graph: CompiledStateGraph,
+        work_dir: str | None = None,
+        thread_id: str = "",
+        model: Any | None = None,
+        original_tools: list | None = None,
+        original_config: dict[str, Any] | None = None,
+    ):
         self.graph = graph
         self.work_dir = work_dir
+        self.thread_id = thread_id
+        self.model = model
+        self.original_tools = original_tools
+        self.original_config = original_config
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.graph, name)
@@ -40,12 +66,14 @@ class AgentFactory:
             # 导入 builder 模块以触发 @register_builder 装饰器注册
             from Django_xm.apps.agent_hub.builders._registry import get_registered_builders
 
-            # deep_builder 与 research.services.adapter 存在循环依赖，
-            # 不能在 builders/__init__.py 模块级导入，在此处延迟导入触发注册。
+            # deep_builder 曾与 research.services.adapter 存在循环依赖（环 3，
+            # 已于 spec 任务 4.3 破除：deep_builder 返回 AgentWrapper 元数据载体）。
+            # 此处延迟导入（非 builders/__init__.py 模块级导入）触发 @register_builder
+            # 注册，同时保留 deepagents 等三方依赖缺失时的降级语义。
             try:
                 import Django_xm.apps.agent_hub.builders.deep_builder  # noqa: F401 — 触发 @register_builder 装饰器注册
             except ImportError:
-                logger.warning("[AgentFactory] deep_builder 导入失败（循环依赖），DEEP_RESEARCH 类型将不可用")
+                logger.warning("[AgentFactory] deep_builder 导入失败（依赖缺失），DEEP_RESEARCH 类型将不可用")
 
             registry = get_registered_builders()
             builders: dict = {}
@@ -80,9 +108,12 @@ class AgentFactory:
         # 统一模型解析（factory 输出通道）：所有 agent 的模型经 resolve_model 创建
         # （内部走 get_chat_model(enable_fallback=True)，带 SDK 重试 + 候选切换 + 熔断），
         # 结果写回 config.model 供 preflight / builder / 调用方复用，全程单次创建。
+        # 经 to_thread 执行：resolve_model 内含 SystemConfig.get_value 等同步 ORM/缓存
+        # 读取，事件循环内直接调用会因异步上下文缓存未命中而静默返回默认值（用户配置
+        # 的默认/降级模型周期性失效）；落线程后同步回源路径正常工作，SDK 网络创建也不阻塞循环。
         from Django_xm.apps.agent_hub.model_resolver import resolve_model
 
-        config.model = resolve_model(config)
+        config.model = await asyncio.to_thread(resolve_model, config)
 
         # 执行预检（默认不阻止创建，仅记录问题；fail_fast_on_preflight=True 时抛出 PreflightCheckError）
         # 注意：PreflightCheckError 必须冒泡（不被 except 捕获），其他异常忽略保持向后兼容
@@ -113,9 +144,11 @@ class AgentFactory:
             # 快速失败模式：让 PreflightCheckError 冒泡到调用方
             raise
         except Exception as e:
-            # 预检本身抛异常（如网络错误）：保持向后兼容，仅 debug 日志，不阻止创建
-            # 即使 fail_fast_on_preflight=True，预检内部异常也不阻止（仅预检结果未通过才阻止）
-            logger.debug(f"[AgentFactory] 预检异常（忽略）: {e}")
+            # 预检本身抛异常（如网络错误）：不阻止创建（向后兼容；即使
+            # fail_fast_on_preflight=True，预检内部异常也不阻止，仅预检结果
+            # 未通过才阻止）。D-10：debug→exception——生产日志级别常为 INFO，
+            # debug 会吞掉预检异常堆栈，"agent 预检从未生效"将无痕
+            logger.exception(f"[AgentFactory] 预检异常（忽略，不阻止创建）: {e}")
 
         builders = cls._get_builders()
         builder = builders.get(config.agent_type)

@@ -166,7 +166,6 @@ class DegradationLevel(Enum):
     FULL = "full"  # 完整工具集
     REDUCED_TOOLS = "reduced"  # 减少工具（移除非核心工具）
     NO_TOOLS = "no_tools"  # 无工具纯对话
-    MINIMAL = "minimal"  # 最小化（仅系统提示 + 直接回答）
 
 
 # 核心工具名称（降级时保留）
@@ -217,7 +216,7 @@ def get_degraded_tools(
     if level == DegradationLevel.FULL:
         return tools
 
-    if level in (DegradationLevel.NO_TOOLS, DegradationLevel.MINIMAL):
+    if level is DegradationLevel.NO_TOOLS:
         return []
 
     # REDUCED_TOOLS: 保留核心工具 + critical 工具

@@ -116,3 +116,49 @@ def get_active_session_ids_for_research_task(task_id: str) -> list:
             session__is_deleted=False,
         ).values_list("session__session_id", flat=True)
     )
+
+
+# ── 运行期 provider 注入的 chat 侧实现（阶段 7 票②豁免清零）──────────────────
+# 注册组合根：chat AppConfig.ready()（先例 ai_engine ready → context_manager
+# runtime_providers）。消费方：ai_engine SessionTokenBudgetGuard（预算基线）、
+# tools attachment_rag（会话存在性校验）——二者均不得直连 chat.models。
+
+
+def aggregate_session_total_tokens(session_id: str) -> int:
+    """聚合单个会话已落库消息的累计 token 数（COST-01 预算基线数据源）。
+
+    消费链：ai_engine ``SessionTokenBudgetGuard.check`` 首次执行经
+    ``usage_tracker.get_session_total_tokens`` 的注册 provider 调到本函数。
+    使用 all_objects 包含软删除消息——已消耗的 token 不因删消息而绕过预算；
+    数据写入点为消息终态链路（chat_service._update_last_message_tokens）。
+
+    Args:
+        session_id: 聊天会话 ID（ChatSession.session_id）。
+
+    Returns:
+        int: 会话累计 token；会话无消息时返回 0（聚合失败由消费方按 0 降级）。
+    """
+    from django.db.models import Sum
+
+    ChatMessage = apps.get_model("chat", "ChatMessage")
+    total = ChatMessage.all_objects.filter(session__session_id=session_id).aggregate(
+        total=Sum("token_count")
+    )["total"]
+    return int(total or 0)
+
+
+def is_chat_session_exists(session_id: str) -> bool:
+    """判断会话 ID 对应的 ChatSession 是否存在（tools attachment_rag 会话校验）。
+
+    语义对齐原 attachment_rag 直连查询（``ChatSession.objects.get`` 仅作存在性
+    判定、不过滤软删）：session_id 唯一约束（models.py unique=True）下
+    filter().exists() 与 get() 判定等价。
+
+    Args:
+        session_id: 聊天会话 ID（ChatSession.session_id）。
+
+    Returns:
+        bool: 会话存在返回 True，否则 False（查询异常由消费方按"未找到"降级）。
+    """
+    ChatSession = apps.get_model("chat", "ChatSession")
+    return ChatSession.objects.filter(session_id=session_id).exists()

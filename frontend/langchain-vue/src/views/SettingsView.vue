@@ -63,7 +63,7 @@
       </el-card>
 
       <!-- 聊天模型配置 -->
-      <el-card style="margin-top: 16px;">
+      <el-card v-if="isAdmin" style="margin-top: 16px;">
         <template #header>
           <div class="card-header">
             <span>聊天模型配置</span>
@@ -190,7 +190,7 @@
       </el-card>
 
       <!-- Embedding 配置 -->
-      <el-card style="margin-top: 16px;">
+      <el-card v-if="isAdmin" style="margin-top: 16px;">
         <template #header>
           <div class="card-header">
             <span>Embedding 配置</span>
@@ -329,7 +329,7 @@
             <span>关于</span>
           </div>
         </template>
-        <p class="about-item">LC-StudyLab - 智能学习与研究助手</p>
+        <p class="about-item">DX-Study-Agent - 智能学习与研究助手</p>
         <p class="about-item">版本: 2.0.0</p>
         <p class="about-item">技术栈: Django 5.2 + Vue 3 + LangChain 1.2.13</p>
       </el-card>
@@ -340,6 +340,7 @@
 <script setup>
 import { reactive, ref, computed, watch, onMounted } from 'vue'
 import { useThemeStore } from '../stores/theme'
+import { useUserStore } from '../stores/user'
 import settings from '../config/settings'
 import { updateBaseURL } from '../api/axios'
 import { modelAPI } from '../api/model'
@@ -350,6 +351,10 @@ import { logger } from '../utils/logger'
 
 const isSaving = ref(false)
 const themeStore = useThemeStore()
+const userStore = useUserStore()
+// AI 设置（模型/Embedding/重建）后端为 IsAdminUser——普通用户 403，
+// 与知识库监控卡 R-UX-09 同款门控：卡片不渲染、请求不发起
+const isAdmin = computed(() => userStore.isAdmin)
 
 const settingsForm = reactive({
   apiBaseUrl: settings.apiBaseUrl,
@@ -694,7 +699,7 @@ const saveSettings = async () => {
   }
   isSaving.value = true
   try {
-    localStorage.setItem('lc-studylab-api-url', settingsForm.apiBaseUrl)
+    localStorage.setItem('dx-study-agent-api-url', settingsForm.apiBaseUrl)
     settings.apiBaseUrl = settingsForm.apiBaseUrl
     updateBaseURL(settingsForm.apiBaseUrl)
     ElMessage.success('设置已保存')
@@ -714,6 +719,10 @@ const resetSettings = () => {
 // ===== 初始化 =====
 onMounted(async () => {
   loadPreferences()
+  if (!isAdmin.value) {
+    // 非管理员：AI 设置卡已隐藏，不发请求（后端 IsAdminUser，403 属预期）
+    return
+  }
   try {
     const res = await modelAPI.getAISettings()
     const data = res.data?.data

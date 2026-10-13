@@ -21,8 +21,8 @@ from unittest.mock import AsyncMock, patch
 
 from django.test import SimpleTestCase
 
-from Django_xm.async_utils import run_async
 from Django_xm.apps.chat.services.stream_broadcast import publish_stream_event
+from Django_xm.async_utils import run_async
 
 PUBLISH_EVENT = "Django_xm.common.realtime_events.publish_event"
 
@@ -98,7 +98,9 @@ class TestErrorEventBroadcast(SimpleTestCase):
 
     修复前缺口（审计 F1-1）：error 事件类型不在 publish_stream_event 广播
     白名单内，被静默丢弃 → chat 链失败（模型全败/回退失败/slash 命令失败）
-    对用户不可见，且 chat_executor_core finally 恒广播 success=True（假成功）。
+    对用户不可见，且 chat_executor_core 早期实现恒广播 success=True（假成功；
+    该缺口已由 A1.3 修复——异常路径广播 success=False，D-1 进一步覆盖落库
+    失败：PERSIST_FAILED 终态广播 success=False）。
     修复后：error → STREAM_EVENT + event_subtype='error'，data 规范化为
     {code, message}（对齐 consumers.py / sse_utils.py 的 WS error 帧规范）。
     """
@@ -209,7 +211,6 @@ class TestRetryAndTimeoutWarningBroadcast(SimpleTestCase):
         """保序与节流边界：retry/timeout_warning 属"流继续"类事件，不冲刷
         reasoning 节流窗口（与 chunk 同性质，D2 边界红线）；到达即按序广播，
         不插队不等待窗口内 pending。"""
-        from Django_xm.apps.chat.services.stream_broadcast import TimeWindowThrottle
 
         event_retry = {"type": "retry", "data": {"attempt": 1, "max": 3}}
         event_warning = {"type": "timeout_warning", "data": {"elapsed": 1801, "limit": 1800}}

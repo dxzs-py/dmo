@@ -31,9 +31,13 @@ export const createSubagentHandlers = (ctx) => {
   /**
    * 应用子代理图层正文/中间思考事件（stream_subagent_content，session 频道）
    *
-   * spec D10：
-   * - 按 subagentThreadId 写入 message.subagentContents[threadId]（content/reasoningContent 追加累计）；
-   * - 未知 threadId（chunk 先于 spawn 元数据到达）：动态初始化条目（时序竞争防御）；
+   * 阶段 2（eliminate-priority-debts，BREAKING）覆盖语义：
+   * - payload.data.content / reasoningContent 为该子代理**累积全量正文快照**
+   *   （后端 TimeWindowThrottle 合流节流 + persist_history=False 不入回放历史），
+   *   直接整帧替换 message.subagentContents[threadId]，禁止再按增量追加累计；
+   * - 刷新/断线恢复走权威源（消息快照 API subagentContents + useSnapshotSync
+   *   校对提升），随后实时快照帧继续覆盖更新，无重复拼接、无空洞；
+   * - 未知 threadId（快照帧先于 spawn 元数据到达）：动态初始化条目（时序竞争防御）；
    * - 子代理名称/深度从 payload.data 透传（用于摘要卡片展示）。
    *
    * @param {string} sessionId
@@ -62,17 +66,14 @@ export const createSubagentHandlers = (ctx) => {
     const reasoningContent = data.reasoningContent || ''
     if (!content && !reasoningContent) return
 
-    // 动态初始化条目（chunk 先于 spawn 元数据到达的时序竞争防御）
+    // 动态初始化条目（快照帧先于 spawn 元数据到达的时序竞争防御）
     if (!targetMsg.subagentContents || typeof targetMsg.subagentContents !== 'object') {
       targetMsg.subagentContents = {}
     }
-    // 幂等追加（根因修复）：从现有 entry 构建新对象，content/reasoningContent 各追加
-    // 恰好一次后整体替换。message 与活跃版本按 D5 引用同步（下方收敛），禁止对版本
-    // 二次追加——别名时二者为同一对象，二次追加会把同一 content 追加两次产生逐段双写。
+    // 全量快照覆盖（阶段 2 BREAKING）：payload 为权威全量，直接替换对应线程条目；
+    // 缺席元数据保留既有值（agentName/depth 由事件透传）。
     const entry = targetMsg.subagentContents[subagentThreadId] || { content: '', reasoningContent: '' }
-    const nextEntry = { ...entry }
-    if (content) nextEntry.content = (nextEntry.content || '') + content
-    if (reasoningContent) nextEntry.reasoningContent = (nextEntry.reasoningContent || '') + reasoningContent
+    const nextEntry = { ...entry, content, reasoningContent }
     if (data.agentName) nextEntry.agentName = data.agentName
     if (typeof data.depth === 'number') nextEntry.depth = data.depth
     targetMsg.subagentContents[subagentThreadId] = nextEntry

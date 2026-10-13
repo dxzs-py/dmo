@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -105,6 +106,16 @@ class AgentConfig:
     interrupt_on: dict[str, bool] | None = None
     backend_type: str = "filesystem"
     work_dir: str | None = None
+    # ── deep_research 默认物料注入（环 3 破除，spec 任务 4.3）─────────────────
+    # agent_hub builder 不再 import research.prompts（agent_hub → research 反向
+    # 依赖边归零），业务默认值由组装方（research.services.agent_assembly）提供：
+    # prompt_factory：deep_research 默认 system_prompt 提供器（system_prompt 为
+    #   None 时由 builder 调用；ARCH-03 prompt_provider 注入先例）。None 时 builder
+    #   使用通用英文兜底 prompt（组装方漏注入的显性信号）。
+    # doc_analysis_prompt_suffix：启用文档分析时追加的知识库检索引导文案；
+    #   None 时 builder 不追加（与"未启用文档分析"一致）。
+    prompt_factory: Callable[[], str] | None = None
+    doc_analysis_prompt_suffix: str | None = None
     # 预检快速失败模式：True 时预检未通过抛出 PreflightCheckError，False 时仅 warning 并继续
     fail_fast_on_preflight: bool = False
     # builder.build() 超时（秒）：None 表示不限制（仅推荐调试用），默认 30s

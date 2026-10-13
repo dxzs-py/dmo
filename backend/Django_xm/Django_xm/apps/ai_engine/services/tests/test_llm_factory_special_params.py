@@ -13,9 +13,8 @@
     python manage.py test Django_xm.apps.ai_engine.services.tests.test_llm_factory_special_params --noinput
 """
 
-from unittest.mock import patch
-
 import unittest
+from unittest.mock import patch
 
 from Django_xm.apps.ai_engine.services.thinking import is_thinking_enabled
 
@@ -139,7 +138,6 @@ class OllamaMaxTokensTests(unittest.TestCase):
                 temperature=0.3,
                 max_tokens=max_tokens,
                 streaming=False,
-                use_cache=False,
             )
         return mock_create
 

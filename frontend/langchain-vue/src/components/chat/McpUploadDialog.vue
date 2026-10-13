@@ -197,7 +197,7 @@ watch(visible, (val) => {
           v-model="form.authToken"
           type="password"
           show-password
-          placeholder="可选的认证令牌"
+          placeholder="可选的认证令牌；留空或保持掩码（******）表示不修改"
         />
       </el-form-item>
 

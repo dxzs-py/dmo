@@ -13,7 +13,10 @@
 - DB 列类型为 TEXT，可容纳变长的 Fernet token（含 IV/HMAC，密文长度 > 明文）
 - ``max_length`` 仅作用于明文（Python 端校验），不影响 DB 列定义
 - 空字符串 / None 透传不加密
-- ``from_db_value`` 解密失败时回退为原值，兼容历史明文迁移
+- ``from_db_value`` 解密失败时回退为原值，兼容历史明文迁移（仅读路径；
+  写路径 get_prep_value 会对历史明文重新加密，自愈落库）
+- ``get_prep_value`` 加密密钥未配置时拒绝保存（抛 RuntimeError），绝不
+  以明文落库（R3 1.9）
 """
 
 from __future__ import annotations
@@ -119,7 +122,13 @@ class EncryptedCharField(models.TextField):
         return value
 
     def get_prep_value(self, value):
-        """Python → DB：明文加密为 Fernet token；空值透传。"""
+        """Python → DB：明文加密为 Fernet token；空值透传。
+
+        R3 1.9：加密密钥未配置时不再回退"明文落库"，改为抛出明确错误拒绝
+        保存——敏感字段（如 MCP auth token）以明文写入 DB 是不可接受的安全
+        后果，宁可保存失败并提示重新录入 token。value_to_string（dumpdata
+        序列化）同样经此路径，密钥缺失时导出也会失败而非导出明文。
+        """
         if value is None or value == "":
             return value
         if not isinstance(value, str):
@@ -127,9 +136,15 @@ class EncryptedCharField(models.TextField):
         # 跳过已加密的 Fernet token，避免重复加密
         try:
             fernet = _get_fernet()
-        except RuntimeError:
-            logger.warning("EncryptedCharField.get_prep_value: FIELD_ENCRYPTION_KEY 未配置，明文落库")
-            return value
+        except RuntimeError as exc:
+            logger.error(
+                "EncryptedCharField.get_prep_value: FIELD_ENCRYPTION_KEY 未配置，"
+                "拒绝将敏感字段以明文写入数据库"
+            )
+            raise RuntimeError(
+                "FIELD_ENCRYPTION_KEY 未配置，拒绝以明文保存敏感字段；"
+                "请配置 FIELD_ENCRYPTION_KEY（Fernet base64 32 字节）后重新录入 token。"
+            ) from exc
         try:
             fernet.decrypt(value.encode())
             return value  # 已是合法 Fernet token

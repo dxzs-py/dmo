@@ -25,6 +25,11 @@ from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
+# 子代理正文快照广播节流间隔（阶段 2，对齐 D2 reasoning/content 500ms 感知阈值）：
+# payload 为累积全量快照（前端覆盖渲染），窗口内多帧合流为最新单帧，丢中间帧安全；
+# TimeWindowThrottle 经 common.stream_throttle 消费（research 禁止直连 chat.services）。
+SUBAGENT_CONTENT_BROADCAST_INTERVAL = 0.5
+
 
 class DeepResearchEventPublisher:
     """深度研究实时事件发布器（持有 adapter 引用，读写会话级累计容器）。"""
@@ -236,6 +241,12 @@ class DeepResearchEventPublisher:
                     # 空字符串 / 0（depth=0 主 agent）不写入
                     continue
                 evt[sub_field] = val
+            # TOOL_CALL 边界冲刷（阶段 2，D2 白名单规则对齐）：先冲刷该子代理
+            # 正文节流窗口，保证前端先收到全量正文快照再收到工具事件——position
+            # 内联切段依赖"正文在前、工具卡在后"的到达顺序（保序红线）。
+            _evt_thread_id = evt.get("subagent_thread_id", "") or ""
+            if _evt_thread_id:
+                await self.flush_subagent_content(_evt_thread_id)
             await owner._publish_tool_event(evt)
 
         return _on_tool_event
@@ -250,17 +261,30 @@ class DeepResearchEventPublisher:
         owner = self._owner
         # 惰性初始化去重键集合（原主方法内联段，时点保持：每次 astream 装配回调时；
         # 同一 adapter 跨审批 resume 复用同一实例时幂等、不重置）。
-        # 处理逻辑（spec MODIFIED：路由收敛）：
+        # 处理逻辑（spec MODIFIED：路由收敛；阶段 2：全量快照 + 节流 + 不入历史）：
         # 1. 按 subagent_thread_id 累计到 owner.subagent_contents（废弃 agent_path
         #    拼接键），content/reasoning_content 追加式累积（多轮模型调用拼接）；
         #    按 msg_id 幂等去重——审批 interrupt 恢复时 LangGraph 重放节点，
         #    同一条 AIMessage 会再次触发回调，跳过已转发消息（防重复 + 防错位）；
-        # 2. 发布 STREAM_SUBAGENT_CONTENT WebSocket 事件到 session/task 频道，
-        #    前端按 subagent_thread_id 路由到对应子代理卡片实时展示
-        #    （data 不携带 agent_path，仅保留 subagent_thread_id 定向路由）；
-        # 3. 事件携带 message_id（chat 关联场景定位归属消息）。
+        # 2. 发布 STREAM_SUBAGENT_CONTENT WebSocket 事件到 session/task 频道：
+        #    **payload.data 为该子代理累积全量正文快照**（覆盖渲染语义，对齐
+        #    chat 链 reasoning/content_update），经 TimeWindowThrottle（下沉
+        #    common.stream_throttle）按 subagent_thread_id 独立节流（500ms 合流，
+        #    多子代理并发互不覆盖），``persist_history=False`` 不占用回放历史
+        #    席位（E9 遗留缺口治理；前端按 subagent_thread_id 路由到对应子代理
+        #    卡片实时覆盖展示，data 不携带 agent_path）；
+        # 3. 事件携带 message_id（chat 关联场景定位归属消息）；
+        # 4. 节流广播时同步运行期落库（persist_research_subagent_contents）：
+        #    research 链挂起/完成前无逐事件落库，独立深研运行中刷新的恢复权威源
+        #    为 ResearchTask.subagent_contents（2.1 权威源补缺），与广播同频
+        #    合流防 DB 写放大；不广播 MESSAGE_UPDATED（挂起/完成落库点专用，
+        #    运行期高频广播会引发前端快照校对风暴）。
         if not hasattr(owner, "_sent_subagent_msg_keys"):
             owner._sent_subagent_msg_keys: dict[str, set] = {}
+        # 子代理正文快照节流器容器（subagent_thread_id → TimeWindowThrottle），
+        # 与累计容器同生命周期（跨审批 resume 复用同一 adapter 时不重置）。
+        if not hasattr(owner, "_subagent_content_throttles"):
+            owner._subagent_content_throttles: dict = {}
 
         async def _on_subagent_content(
             agent_path,
@@ -289,38 +313,80 @@ class DeepResearchEventPublisher:
                     f"subagent_thread_id={subagent_thread_id}, msg_id={msg_id}"
                 )
                 return
+            # 累积全量正文快照（覆盖语义）：取容器当前累计值构造 payload，
+            # 经节流器合流（窗口内仅保留最新快照，丢中间帧不影响最终态）。
+            _entry = owner.subagent_contents.get(subagent_thread_id) or {}
+            _snapshot = {
+                "content": _entry.get("content") or "",
+                "reasoning_content": _entry.get("reasoning_content") or "",
+                "agent_name": agent_name or "",
+                "depth": depth,
+            }
             try:
+                from asgiref.sync import sync_to_async
+
+                from Django_xm.apps.research.services.writeback import (
+                    persist_research_subagent_contents,
+                )
                 from Django_xm.common.event_schema import EventSource, EventType
                 from Django_xm.common.realtime_events import publish_event
+                from Django_xm.common.stream_throttle import TimeWindowThrottle
 
-                _configurable = getattr(owner, "_last_config", None)
-                _cfg = _configurable if isinstance(_configurable, dict) else {}
-                _session_id = (_cfg.get("configurable") or {}).get("chat_session_id") or owner.chat_session_id
-                _assistant_message_id = (_cfg.get("configurable") or {}).get("assistant_message_id") or ""
-                if not _assistant_message_id:
-                    _assistant_message_id = getattr(owner, "_assistant_message_id", "")
+                throttle = owner._subagent_content_throttles.get(subagent_thread_id)
+                if throttle is None:
 
-                # 深度研究执行流：session/task 双频道（与工具事件路由一致）
-                await publish_event(
-                    EventType.STREAM_SUBAGENT_CONTENT,
-                    {
-                        "source": EventSource.DEEP_RESEARCH,
-                        "source_id": owner.thread_id,
-                        "message_id": _assistant_message_id or None,
-                        "data": {
-                            # data 不携带 agent_path（spec MODIFIED：data.agent_path 废弃，
-                            # 路由唯一依据顶层 subagent_thread_id，协议标识符保持
-                            # snake_case，见 sessionTransformers 转换边界）
-                            "content": content,
-                            "reasoning_content": reasoning_content,
-                            "agent_name": agent_name or "",
-                            "depth": depth,
-                        },
-                    },
-                    session_id=_session_id or None,
-                    task_id=owner.thread_id,
-                    subagent_thread_id=subagent_thread_id or None,
-                )
+                    async def _broadcast_subagent_snapshot(snapshot_data: dict) -> None:
+                        """广播单条全量快照（双频道）+ 运行期落库（节流窗口到期触发）。"""
+                        _configurable = getattr(owner, "_last_config", None)
+                        _cfg = _configurable if isinstance(_configurable, dict) else {}
+                        _session_id = (
+                            (_cfg.get("configurable") or {}).get("chat_session_id")
+                            or owner.chat_session_id
+                        )
+                        _assistant_message_id = (
+                            (_cfg.get("configurable") or {}).get("assistant_message_id") or ""
+                        )
+                        if not _assistant_message_id:
+                            _assistant_message_id = getattr(owner, "_assistant_message_id", "")
+
+                        # 深度研究执行流：session/task 双频道（与工具事件路由一致）
+                        await publish_event(
+                            EventType.STREAM_SUBAGENT_CONTENT,
+                            {
+                                "source": EventSource.DEEP_RESEARCH,
+                                "source_id": owner.thread_id,
+                                "message_id": _assistant_message_id or None,
+                                "data": dict(snapshot_data),
+                            },
+                            session_id=_session_id or None,
+                            task_id=owner.thread_id,
+                            subagent_thread_id=subagent_thread_id or None,
+                            # 快照仅实时广播不入历史（E9/PF-02 同源治理）：回放
+                            # 窗口席位留给 tool_call/approval/status_change；
+                            # 终态权威恢复源为 writeback/stream_completed + 落库
+                            # subagent_contents（运行期落库见下）。
+                            persist_history=False,
+                        )
+                        # 运行期落库（2.1 权威源补缺，与广播同频合流）：仅写
+                        # subagent_contents、不广播 MESSAGE_UPDATED（防前端快照
+                        # 校对风暴）；挂起/完成落库点（persist_research_progress /
+                        # writeback_to_chat_message）继续读全量容器兜底。
+                        await sync_to_async(
+                            persist_research_subagent_contents, thread_sensitive=True
+                        )(
+                            owner.thread_id,
+                            subagent_thread_id,
+                            snapshot_data.get("content") or "",
+                            snapshot_data.get("reasoning_content") or "",
+                        )
+
+                    throttle = TimeWindowThrottle(
+                        min_interval=SUBAGENT_CONTENT_BROADCAST_INTERVAL,
+                        broadcaster=_broadcast_subagent_snapshot,
+                    )
+                    owner._subagent_content_throttles[subagent_thread_id] = throttle
+
+                await throttle.submit(_snapshot)
             except Exception as e:
                 logger.warning(
                     f"[OfficialDeepAgent] 广播子代理正文失败: "
@@ -328,6 +394,41 @@ class DeepResearchEventPublisher:
                 )
 
         return _on_subagent_content
+
+    async def flush_subagent_content(self, subagent_thread_id: str) -> None:
+        """冲刷指定子代理的正文节流窗口（TOOL_CALL 边界红线，幂等）。
+
+        TOOL_CALL 类事件到达即冲刷同线程 pending：position 内联切段依赖
+        "正文快照在前、工具卡事件在后"的到达顺序（保序）。
+        """
+        throttle = getattr(self._owner, "_subagent_content_throttles", {}).get(
+            subagent_thread_id
+        )
+        if throttle is None:
+            return
+        try:
+            await throttle.flush()
+        except Exception as e:
+            logger.warning(
+                f"[OfficialDeepAgent] 冲刷子代理正文节流窗口失败: "
+                f"subagent_thread_id={subagent_thread_id}, err={e}"
+            )
+
+    async def flush_all_subagent_content(self) -> None:
+        """冲刷全部子代理正文节流窗口（终态边界红线：挂起/收尾前 pending 必须送达）。
+
+        冲刷时机对齐 D2 白名单规则：APPROVAL/业务等待挂起/终态类边界后流形态
+        切换或执行结束，pending 若不冲刷将永久丢失。幂等：pending 为空时 no-op。
+        """
+        throttles = dict(getattr(self._owner, "_subagent_content_throttles", {}) or {})
+        for subagent_thread_id, throttle in throttles.items():
+            try:
+                await throttle.flush()
+            except Exception as e:
+                logger.warning(
+                    f"[OfficialDeepAgent] 冲刷子代理正文节流窗口失败: "
+                    f"subagent_thread_id={subagent_thread_id}, err={e}"
+                )
 
     def handle_reasoning_chunk(self, msg_obj: Any, config_arg: dict) -> None:
         """消费 messages 模式 chunk：提取 thinking/reasoning 并累积广播。

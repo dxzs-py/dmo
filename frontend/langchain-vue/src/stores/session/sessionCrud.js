@@ -125,6 +125,8 @@ export const createSessionCrudSlice = (sessionList, runtimeDeps) => {
     sessions.value = sessions.value.filter(s => s.id !== sessionId)
     // 清理该会话关联的工具调用与待绑定审批数据（Map 为唯一真相源）
     runtimeDeps._removeSessionToolCallState(sessionId)
+    // D-7：回收该会话按会话键缓存的同步状态（_syncLocks/_lastSyncSignatures/_toolSyncTimers）
+    runtimeDeps.cleanupSessionSyncState(sessionId)
     // 清理该会话关联的审批条目（延迟导入避免循环依赖）
     try {
       const { useApprovalStore } = await import('../approval')
@@ -233,6 +235,8 @@ export const createSessionCrudSlice = (sessionList, runtimeDeps) => {
       sessions.value.splice(idx, 1)
     }
     runtimeDeps._removeSessionToolCallState(sessionId)
+    // D-7：回收该会话按会话键缓存的同步状态（与 deleteSession 对称）
+    runtimeDeps.cleanupSessionSyncState(sessionId)
     if (currentSessionId.value === sessionId) {
       currentSessionId.value = sessions.value.length > 0 ? sessions.value[0].id : null
     }

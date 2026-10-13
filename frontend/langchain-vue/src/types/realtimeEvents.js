@@ -62,7 +62,7 @@ const EventType = {
   // —— 以下 8 项为补齐项：后端 common/event_schema.py 已定义、前端也已有处理逻辑，
   // 但此前未登记进本枚举，导致派发处只能写字符串字面量（契约散落、无法校验）。
   // 值一律以后端 EventType.value 为准，勿凭成员名臆测（见 TASK_STATUS_CHANGE 说明）。
-  STREAM_SUBAGENT_CONTENT: 'stream_subagent_content', // 子代理图层正文/中间思考流式更新
+  STREAM_SUBAGENT_CONTENT: 'stream_subagent_content', // 子代理图层正文/中间思考**累积全量快照**（覆盖渲染，不入回放历史，阶段 2）
   SUBAGENT_STATUS_CHANGE: 'subagent_status_change', // 子代理状态变更
   MESSAGE_FINALIZED: 'message_finalized', // 消息版本固化（多 Tab 同步）
   TASK_CREATED: 'task_created', // 新任务创建（深度研究/工作流）

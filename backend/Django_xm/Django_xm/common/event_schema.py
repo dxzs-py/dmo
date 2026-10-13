@@ -83,7 +83,21 @@ class EventType(StrEnum):
     STREAM_SUGGESTIONS = "stream_suggestions"  # 建议
     STREAM_CONTEXT = "stream_context"  # 上下文
     STREAM_CONTENT_UPDATE = "stream_content_update"  # 内容更新（节流后的 chunk）
-    # 子代理图层正文/思考更新（按顶层 subagent_thread_id 定向路由，spec D10/MODIFIED）
+    # 子代理图层正文/思考更新（按顶层 subagent_thread_id 定向路由，spec D10/MODIFIED）。
+    #
+    # payload 契约（阶段 2，BREAKING；spec REMOVED「增量追加语义」）：
+    # data.content / data.reasoning_content 为**该子代理累积全量正文快照**
+    # （覆盖渲染语义，对齐 STREAM_REASONING / STREAM_CONTENT_UPDATE），前端
+    # 直接替换对应子代理卡正文，禁止再按增量追加累计。经 TimeWindowThrottle
+    # （common.stream_throttle，500ms）按 subagent_thread_id 独立合流节流，
+    # 且 persist_history=False 仅实时广播（回放窗口保护，E9/PF-02 同源治理）；
+    # 断线/刷新恢复权威源为落库 subagent_contents（ChatMessage/ResearchTask）
+    # + message_updated / stream_completed + snapshot 校对通道。
+    #
+    # 命名边界：对 payload 整体递归 toCamelCase 转换后，事件顶层 type 与
+    # subagent_thread_id 还原为后端原始 snake_case（协议路由标识符，非业务
+    # 数据，不参与转换）；其余字段均为前端 camelCase（data.agentName/depth/
+    # content/reasoningContent）。
     STREAM_SUBAGENT_CONTENT = "stream_subagent_content"
     STREAM_EVENT = "stream_event"  # 流式通用事件（approval/deep_research/research_task_id/model_fallback/error/retry/timeout_warning，桥经 event_subtype 注入原始子类型）
 

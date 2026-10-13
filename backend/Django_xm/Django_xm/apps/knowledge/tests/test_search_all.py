@@ -15,6 +15,7 @@
 （单测类 mock 模块绑定无 DB 依赖；401 测试为 Django TestCase 需测试库）
 """
 
+import asyncio
 import os
 import unittest
 from unittest import mock
@@ -24,6 +25,7 @@ import django
 
 django.setup()
 
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
@@ -75,6 +77,9 @@ class SearchAllViewTests(unittest.TestCase):
 
         manager = mock.MagicMock(name="IndexManager")
         manager.load_index.side_effect = lambda name, embeddings: store_mocks[name]
+        # C-2arch：views_rag 改经 get_score_semantics 取后端语义声明
+        #（原 get_store_type MagicMock ≠ "pgvector" → "similarity"，等价保持）
+        manager.get_score_semantics.return_value = "similarity"
 
         metadata_cls = mock.MagicMock(name="IndexMetadata")
         metadata_cls.objects.filter.return_value.values_list.return_value = list(records)
@@ -91,7 +96,8 @@ class SearchAllViewTests(unittest.TestCase):
             mock.patch(f"{_VIEWS_RAG}.get_embeddings", return_value=embeddings),
             mock.patch(f"{_VIEWS_RAG}.ai_settings", ai_settings),
         ):
-            response = SearchAllView().post(_FakeRequest(data))
+            # RP-01：post 已 async 化（重活经 sync_to_async 调度），直调时需事件循环
+            response = asyncio.run(SearchAllView().post(_FakeRequest(data)))
 
         return response, store_mocks, embeddings
 
@@ -118,11 +124,13 @@ class SearchAllViewTests(unittest.TestCase):
             [(item["content"], item["fused_rank"]) for item in data["results"]],
             [("B 内容", 1), ("A 内容", 2), ("C 内容", 3)],
         )
-        # 展示字段取首次出现（kb1 内 rank2 的 B），score 为原库 score
+        # 展示字段取首次出现（kb1 内 rank2 的 B），score 为原库 score；
+        # metadata 经 C-7 白名单（source 服务器路径键剥离，original_name 保留）
         first = data["results"][0]
         self.assertEqual(first["source_index"], "kb1")
         self.assertEqual(first["score"], 0.8)
-        self.assertEqual(first["metadata"], {"source": "b.md", "original_name": "b.md"})
+        self.assertEqual(first["metadata"], {"original_name": "b.md"})
+        self.assertNotIn("source", first["metadata"])
 
     def test_rrf_global_top_k_slice(self):
         """全局 top-k 截断：k=1 时仅保留融合分最高条目。"""
@@ -182,6 +190,51 @@ class SearchAllViewTests(unittest.TestCase):
         self.assertEqual(data["results"], [])
         self.assertEqual(data["searched_indexes"], 0)
         self.assertEqual(data["failed_indexes"], 1)
+
+    def test_all_indexes_failed_message_reports_failure(self):
+        """E5-09：全部检索失败时协议 message 必须是故障文案，不得宣称"操作成功"。"""
+        response, _, _ = self._post(
+            {"query": "查询", "k": 4},
+            stores={"user_1_kb1": []},
+            records=[("user_1_kb1", 2, 1024)],
+            on_stores=lambda stores: setattr(
+                stores["user_1_kb1"].similarity_search_with_score_by_vector,
+                "side_effect",
+                RuntimeError("boom"),
+            ),
+        )
+
+        self.assertEqual(response.data["code"], 200)
+        self.assertEqual(response.data["message"], "检索服务暂时不可用，请稍后重试")
+
+    def test_embedding_global_failure_message_reports_outage(self):
+        """E5-09：query embedding 全局故障（全库检索不可达）时 message 必须是故障文案。"""
+
+        embeddings = mock.MagicMock(name="embeddings")
+        embeddings.embed_query.side_effect = RuntimeError("embedding 服务不可用")
+
+        manager = mock.MagicMock(name="IndexManager")
+        metadata_cls = mock.MagicMock(name="IndexMetadata")
+        metadata_cls.objects.filter.return_value.values_list.return_value = [
+            ("user_1_kb1", 2, 1024)
+        ]
+        ai_settings = mock.MagicMock(name="ai_settings")
+        ai_settings.rag_rrf_constant = 60
+
+        with (
+            mock.patch(f"{_VIEWS_RAG}.IndexMetadata", metadata_cls),
+            mock.patch(f"{_VIEWS_RAG}.IndexManager", return_value=manager),
+            mock.patch(f"{_VIEWS_RAG}.get_embeddings", return_value=embeddings),
+            mock.patch(f"{_VIEWS_RAG}.ai_settings", ai_settings),
+        ):
+            # RP-01：post 已 async 化（重活经 sync_to_async 调度），直调时需事件循环
+            response = asyncio.run(SearchAllView().post(_FakeRequest({"query": "查询", "k": 4})))
+
+        data = response.data["data"]
+        self.assertEqual(data["results"], [])
+        self.assertEqual(data["searched_indexes"], 0)
+        self.assertEqual(data["failed_indexes"], 1)
+        self.assertEqual(response.data["message"], "检索服务暂时不可用，请稍后重试")
 
     def test_embedding_computed_once_and_reused(self):
         """query embedding 仅计算 1 次，多索引检索共用同一预计算向量（by-vector 路径）。"""
@@ -257,6 +310,34 @@ class SearchAllViewAuthTests(TestCase):
 
     def test_unauthenticated_returns_401(self):
         resp = APIClient().post(SEARCH_ALL_URL, {"query": "查询"}, format="json")
+        self.assertEqual(resp.status_code, 401)
+
+
+class RagQueryStreamAuthTests(TestCase):
+    """C-6：rag_query_stream 挂 IsAuthenticated（token 不再允许走 URL 查询参数）。
+
+    前端 fetchSSE 已注入 Authorization 头（utils/sse.js buildHeaders），
+    query-param 认证仅剩 <a href> 下载场景，SSE 端点属权限残留。
+    """
+
+    def test_unauthenticated_returns_401(self):
+        resp = APIClient().post(
+            "/api/v1/knowledge/query/stream/", {"query": "查询", "index_name": "kb1"}, format="json"
+        )
+        self.assertEqual(resp.status_code, 401)
+
+    def test_valid_query_param_token_no_longer_grants_access(self):
+        """判别用例（修复前红）：合法 JWT 放查询串，query-param 认证放行（非 401）、
+        修复后统一 401（token 不应出现在 URL，避免进访问日志/浏览器历史）。"""
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        user = get_user_model().objects.create_user(username="qpstream", password="pw123456")
+        token = str(AccessToken.for_user(user))
+        resp = APIClient().post(
+            f"/api/v1/knowledge/query/stream/?token={token}",
+            {"query": "查询", "index_name": "kb1"},
+            format="json",
+        )
         self.assertEqual(resp.status_code, 401)
 
 

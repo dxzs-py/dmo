@@ -70,10 +70,15 @@ persist_stream_result = MODULE.persist_stream_result
 def _build_chat_models_fake(session_fake, message_fake, get_side_effect=None):
     """构造 ChatSession/ChatMessage 替身模块（复刻现有测试注入模式）。
 
+    stub 链与 A17 行锁化后的查询链对齐：
+    - 会话：``ChatSession.objects.select_for_update().filter(...).first()``
+    - 精确命中：``ChatMessage.objects.select_for_update().get(...)``
+    - 回退：``filter(...).order_by("-created_at").select_for_update().first()``
+
     Args:
         session_fake: 会话替身（需含 pk 属性）
         message_fake: 消息替身（回退路径返回值）
-        get_side_effect: ``ChatMessage.objects.get`` 的 side_effect
+        get_side_effect: ``ChatMessage.objects.select_for_update().get`` 的 side_effect
             （None 时返回 message_fake，模拟 message_id 精确命中）
 
     Returns:
@@ -85,14 +90,18 @@ def _build_chat_models_fake(session_fake, message_fake, get_side_effect=None):
     chat_models.ChatMessage.DoesNotExist = type("DoesNotExist", (Exception,), {})
 
     chat_models.ChatSession.objects = mock.MagicMock()
-    chat_models.ChatSession.objects.filter.return_value.first.return_value = session_fake
-    chat_models.ChatSession.objects.filter.return_value.update.return_value = None
+    chat_models.ChatSession.objects.select_for_update.return_value.filter.return_value.first.return_value = (
+        session_fake
+    )
+    chat_models.ChatSession.objects.select_for_update.return_value.filter.return_value.update.return_value = None
     chat_models.ChatMessage.objects = mock.MagicMock()
     if get_side_effect is not None:
-        chat_models.ChatMessage.objects.get.side_effect = get_side_effect
+        chat_models.ChatMessage.objects.select_for_update.return_value.get.side_effect = get_side_effect
     else:
-        chat_models.ChatMessage.objects.get.return_value = message_fake
-    chat_models.ChatMessage.objects.filter.return_value.order_by.return_value.first.return_value = message_fake
+        chat_models.ChatMessage.objects.select_for_update.return_value.get.return_value = message_fake
+    (
+        chat_models.ChatMessage.objects.filter.return_value.order_by.return_value.select_for_update.return_value.first
+    ).return_value = message_fake
     return chat_models
 
 
@@ -116,7 +125,7 @@ class LocateSessionAndMessageTests(unittest.TestCase):
         """会话不存在 → 返回 None。"""
         session_fake = None
         chat_models = _build_chat_models_fake(session_fake, _build_message_fake())
-        chat_models.ChatSession.objects.filter.return_value.first.return_value = None
+        chat_models.ChatSession.objects.select_for_update.return_value.filter.return_value.first.return_value = None
 
         with mock.patch.dict(sys.modules, {"Django_xm.apps.chat.models": chat_models}):
             result = _locate_session_and_message("sess-1", None)
@@ -133,7 +142,9 @@ class LocateSessionAndMessageTests(unittest.TestCase):
             result = _locate_session_and_message("sess-1", "1")
 
         self.assertEqual(result, (session_fake, message_fake))
-        chat_models.ChatMessage.objects.get.assert_called_once_with(id=1, session=session_fake, role="assistant")
+        chat_models.ChatMessage.objects.select_for_update.return_value.get.assert_called_once_with(
+            id=1, session=session_fake, role="assistant"
+        )
 
     def test_invalid_message_id_falls_back_to_latest_assistant(self):
         """message_id 非法（int 转换 ValueError）→ 回退最新 assistant 消息。"""
@@ -148,15 +159,20 @@ class LocateSessionAndMessageTests(unittest.TestCase):
 
         self.assertEqual(result, (session_fake, message_fake))
         chat_models.ChatMessage.objects.filter.return_value.order_by.assert_called_once_with("-created_at")
+        chat_models.ChatMessage.objects.filter.return_value.order_by.return_value.select_for_update.assert_called_once()
 
     def test_no_assistant_message_returns_none(self):
         """message_id 未命中（DoesNotExist）且会话无 assistant 消息 → 返回 None。"""
         session_fake = SimpleNamespace(pk=1)
         chat_models = _build_chat_models_fake(session_fake, None)
         # side_effect 异常类必须来自同一替身实例（except 按类精确匹配）
-        chat_models.ChatMessage.objects.get.side_effect = chat_models.ChatMessage.DoesNotExist
+        chat_models.ChatMessage.objects.select_for_update.return_value.get.side_effect = (
+            chat_models.ChatMessage.DoesNotExist
+        )
         # 回退路径也无 assistant 消息
-        chat_models.ChatMessage.objects.filter.return_value.order_by.return_value.first.return_value = None
+        (
+            chat_models.ChatMessage.objects.filter.return_value.order_by.return_value.select_for_update.return_value.first
+        ).return_value = None
 
         with mock.patch.dict(sys.modules, {"Django_xm.apps.chat.models": chat_models}):
             result = _locate_session_and_message("sess-1", "999")
@@ -540,10 +556,16 @@ class PersistStreamResultOrchestrationTests(unittest.TestCase):
         return event_schema, realtime_events, asgiref_sync, publish_mock
 
     def _run_persist(self, message_fake, publish_side_effect=None, **persist_kwargs):
-        """注入全部替身后运行 persist_stream_result，返回 (结果, publish_mock)。"""
+        """注入全部替身后运行 persist_stream_result，返回 (结果, publish_mock)。
+
+        A17 后 ``_persist_to_db_sync`` 置于 ``transaction.atomic()`` 内——本测试
+        为无 DB 单测，patch 掉 atomic 避免真实建连。
+        """
         session_fake = SimpleNamespace(pk=7)
         chat_models = _build_chat_models_fake(session_fake, message_fake)
-        chat_models.ChatMessage.objects.get.side_effect = chat_models.ChatMessage.DoesNotExist
+        chat_models.ChatMessage.objects.select_for_update.return_value.get.side_effect = (
+            chat_models.ChatMessage.DoesNotExist
+        )
         event_schema, realtime_events, asgiref_sync, publish_mock = self._build_broadcast_fakes(
             publish_side_effect
         )
@@ -556,7 +578,7 @@ class PersistStreamResultOrchestrationTests(unittest.TestCase):
                 "Django_xm.common.realtime_events": realtime_events,
                 "asgiref.sync": asgiref_sync,
             },
-        ):
+        ), mock.patch("django.db.transaction.atomic"):
             result = asyncio.run(
                 persist_stream_result(
                     session_id=persist_kwargs.get("session_id", "sess-1"),
@@ -609,11 +631,13 @@ class PersistStreamResultOrchestrationTests(unittest.TestCase):
         message_fake = _build_message_fake()
         session_fake = SimpleNamespace(pk=7)
         chat_models = _build_chat_models_fake(session_fake, message_fake)
-        chat_models.ChatMessage.objects.get.side_effect = RuntimeError("db down")
-        chat_models.ChatMessage.objects.filter.return_value.order_by.return_value.first.side_effect = RuntimeError(
-            "db down"
+        chat_models.ChatMessage.objects.select_for_update.return_value.get.side_effect = RuntimeError("db down")
+        (
+            chat_models.ChatMessage.objects.filter.return_value.order_by.return_value.select_for_update.return_value.first
+        ).side_effect = RuntimeError("db down")
+        chat_models.ChatSession.objects.select_for_update.return_value.filter.return_value.first.side_effect = (
+            RuntimeError("db down")
         )
-        chat_models.ChatSession.objects.filter.return_value.first.side_effect = RuntimeError("db down")
         event_schema, realtime_events, asgiref_sync, publish_mock = self._build_broadcast_fakes()
 
         with mock.patch.dict(
@@ -624,7 +648,7 @@ class PersistStreamResultOrchestrationTests(unittest.TestCase):
                 "Django_xm.common.realtime_events": realtime_events,
                 "asgiref.sync": asgiref_sync,
             },
-        ):
+        ), mock.patch("django.db.transaction.atomic"):
             result = asyncio.run(
                 persist_stream_result("sess-1", None, "内容", {}, message_id=None)
             )

@@ -61,26 +61,29 @@ export const useResearchStore = defineStore('research', () => {
   }
 
   /**
-   * 更新任务子代理正文/中间思考（spec D10）
+   * 更新任务子代理正文/中间思考（spec D10；阶段 2 改覆盖语义）
    *
    * 由 task 频道 stream_subagent_content 事件调用（独立深度研究模式）；
-   * 按 subagentThreadId 聚合（替代旧 agentPath 聚合）；content/reasoningContent 追加累计。
+   * 按 subagentThreadId 聚合（替代旧 agentPath 聚合）。
+   *
+   * 阶段 2（eliminate-priority-debts，BREAKING）：payload 为该子代理**累积
+   * 全量正文快照**（后端 TimeWindowThrottle 合流 + persist_history=False），
+   * 直接整帧替换对应线程条目，禁止再按增量追加累计；刷新/断线恢复走权威源
+   * （getStatus 快照 subagentContents + setTaskSubagentContentsFromSnapshot）。
    *
    * @param {string} taskId - 研究任务 ID
    * @param {string} subagentThreadId - 子代理 thread_id
-   * @param {string} content - 本轮子代理正文增量
-   * @param {string} reasoningContent - 本轮子代理中间思考增量
+   * @param {string} content - 该子代理累积全量正文快照
+   * @param {string} reasoningContent - 该子代理累积全量中间思考快照
    */
   const setTaskSubagentContent = (taskId, subagentThreadId, content, reasoningContent) => {
     if (!taskId || !subagentThreadId) return
     const task = _ensureTask(taskId)
     if (!content && !reasoningContent) return
-    // 新对象追加（与 chat 模块 _applySubagentContent 修复模式一致，防同类共享引用隐患）：
-    // 从现有 entry 构建新对象，content/reasoningContent 各追加一次后整表替换
+    // 整帧覆盖（阶段 2 BREAKING）：新对象替换，content/reasoningContent 为权威全量；
+    // 与 chat 模块 applySubagentContent 同构（防共享引用隐患）。
     const entry = task.subagentContents.value[subagentThreadId] || { content: '', reasoningContent: '' }
-    const nextEntry = { ...entry }
-    if (content) nextEntry.content = (nextEntry.content || '') + content
-    if (reasoningContent) nextEntry.reasoningContent = (nextEntry.reasoningContent || '') + reasoningContent
+    const nextEntry = { ...entry, content: content || '', reasoningContent: reasoningContent || '' }
     task.subagentContents.value = { ...task.subagentContents.value, [subagentThreadId]: nextEntry }
   }
 
@@ -122,16 +125,20 @@ export const useResearchStore = defineStore('research', () => {
    * 从 stream_completed 实时事件更新任务状态
    *
    * 由 sync.js handleTaskEvent 在收到 stream_completed 事件时调用，
-   * 用于跨浏览器同步任务完成/失败状态。
+   * 用于跨浏览器同步任务完成/失败/取消状态。
    *
    * 与 setTaskStatus 的区别：
    * - 此方法专用于 stream_completed 事件，使用 force=true 强制覆盖终态
    *   （stream_completed 是权威完成事件，必须更新）
    * - 自动从 payload 提取 status / finalReport / error 等字段
+   * - 取消语义（stopped=true，深研取消→聊天侧同步修复）：映射 CANCELLED 而非
+   *   FAILED，对齐 chat 侧停止生成的 stream_completed(stopped) 语义，防止取消
+   *   被详情页/卡片误显"深度研究失败"
    *
    * @param {string} taskId - 研究任务 ID
    * @param {Object} payload - stream_completed 事件 payload
    * @param {boolean} [payload.success] - 是否成功
+   * @param {boolean} [payload.stopped] - 是否用户取消（取消终态标记）
    * @param {string} [payload.finalReport] - 最终报告内容
    * @param {string} [payload.error] - 错误信息
    * @param {string} [payload.messageId] - 关联的 ChatMessage ID
@@ -144,7 +151,9 @@ export const useResearchStore = defineStore('research', () => {
     const data = payload
     const success = data.success !== false
     const patch = {
-      status: success ? ResearchTaskStatus.COMPLETED : ResearchTaskStatus.FAILED,
+      status: data.stopped === true
+        ? ResearchTaskStatus.CANCELLED
+        : (success ? ResearchTaskStatus.COMPLETED : ResearchTaskStatus.FAILED),
     }
     if (data.finalReport !== undefined) patch.finalReport = data.finalReport
     if (data.content !== undefined) patch.content = data.content
@@ -152,7 +161,7 @@ export const useResearchStore = defineStore('research', () => {
     if (data.messageId) patch.messageId = data.messageId
     logger.info(
       `[Research] updateTaskFromEvent stream_completed: taskId=${taskId}, ` +
-      `success=${success}, hasReport=${!!data.finalReport}, error=${data.error || ''}`
+      `success=${success}, stopped=${data.stopped === true}, hasReport=${!!data.finalReport}, error=${data.error || ''}`
     )
     return setTaskStatus(taskId, patch, { force: true })
   }

@@ -133,7 +133,11 @@ def process_approval_outbox(self):
 
     设计原则：
     - 直接发布成功时 outbox 已被标记为 delivered，此任务仅处理 pending（补偿场景）
-    - 幂等：publish_approval_sync 内部有去重机制，重复投递不会产生副作用
+    - 行认领（D-9）：select_for_update 锁行 + state 二次校验，同一 pending 条目
+      同一时刻仅被一个 worker 投递。publish_approval_sync 本身**无去重机制**
+      （重复调用即重复发布实时事件，见 common/realtime_sync.py），投递语义为
+      at-least-once，防重复靠行认领；下游事件消费方按最新状态幂等渲染
+    - attempts 在同一行锁内读改写，避免并发 worker 覆盖重试计数（D-9）
     - 故障隔离：单条投递失败不影响其他条目
     """
     from Django_xm.common.realtime_sync import publish_approval_sync
@@ -160,34 +164,44 @@ def process_approval_outbox(self):
 
     for entry in entries:
         try:
-            params = _restore_event_enums(entry.payload)
-            publish_approval_sync(**params)
-            entry.state = ApprovalOutboxEntry.State.DELIVERED
-            entry.delivered_at = now
-            entry.save(update_fields=["state", "delivered_at"])
+            with transaction.atomic():
+                # D-9：行认领 + state 二次校验（对齐 cleanup_expired_approvals /
+                # approval_lifecycle.complete_batch 的锁模式），并发 worker 处理
+                # 同一条目时后者阻塞等待或读到非 pending 后跳过
+                locked = ApprovalOutboxEntry.objects.select_for_update().get(pk=entry.pk)
+                if locked.state != ApprovalOutboxEntry.State.PENDING:
+                    continue
+                params = _restore_event_enums(locked.payload)
+                publish_approval_sync(**params)
+                locked.state = ApprovalOutboxEntry.State.DELIVERED
+                locked.delivered_at = now
+                locked.save(update_fields=["state", "delivered_at"])
             delivered += 1
         except Exception as e:
-            entry.attempts += 1
-            entry.error_message = str(e)[:500]
-            if entry.attempts >= entry.max_attempts:
-                entry.state = ApprovalOutboxEntry.State.FAILED
-                failed += 1
-                logger.exception(
-                    f"[ApprovalOutbox] 投递失败(已达最大重试): "
-                    f"entry_id={entry.id}, event_type={entry.event_type}, "
-                    f"attempts={entry.attempts}"
-                )
-            else:
-                # 指数退避：2^attempts 秒，上限 OUTBOX_MAX_BACKOFF_SECONDS
-                backoff = min(2**entry.attempts, OUTBOX_MAX_BACKOFF_SECONDS)
-                entry.next_retry_at = now + timedelta(seconds=backoff)
-                retried += 1
-                logger.warning(
-                    f"[ApprovalOutbox] 投递失败(将重试): "
-                    f"entry_id={entry.id}, event_type={entry.event_type}, "
-                    f"attempts={entry.attempts}, next_retry_in={backoff}s, error={e}"
-                )
-            entry.save(update_fields=["attempts", "error_message", "state", "next_retry_at"])
+            # 失败记录独立事务 + 行锁：attempts 读改写在锁内完成，非原子 += 竞态消除
+            with transaction.atomic():
+                locked = ApprovalOutboxEntry.objects.select_for_update().get(pk=entry.pk)
+                locked.attempts += 1
+                locked.error_message = str(e)[:500]
+                if locked.attempts >= locked.max_attempts:
+                    locked.state = ApprovalOutboxEntry.State.FAILED
+                    failed += 1
+                    logger.exception(
+                        f"[ApprovalOutbox] 投递失败(已达最大重试): "
+                        f"entry_id={locked.id}, event_type={locked.event_type}, "
+                        f"attempts={locked.attempts}"
+                    )
+                else:
+                    # 指数退避：2^attempts 秒，上限 OUTBOX_MAX_BACKOFF_SECONDS
+                    backoff = min(2**locked.attempts, OUTBOX_MAX_BACKOFF_SECONDS)
+                    locked.next_retry_at = now + timedelta(seconds=backoff)
+                    retried += 1
+                    logger.warning(
+                        f"[ApprovalOutbox] 投递失败(将重试): "
+                        f"entry_id={locked.id}, event_type={locked.event_type}, "
+                        f"attempts={locked.attempts}, next_retry_in={backoff}s, error={e}"
+                    )
+                locked.save(update_fields=["attempts", "error_message", "state", "next_retry_at"])
 
     logger.info(
         f"[ApprovalOutbox] 完成: total={len(entries)}, delivered={delivered}, failed={failed}, retried={retried}"

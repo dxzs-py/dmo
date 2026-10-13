@@ -278,7 +278,10 @@ def _locate_session_and_message(
     session_id: str,
     message_id: str | None,
 ) -> tuple[Any, Any] | None:
-    """定位目标会话与助手消息（消息定位段）。
+    """定位目标会话与助手消息（消息定位段，会话与消息行均加 select_for_update）。
+
+    要求调用方处于 ``transaction.atomic()`` 事务内（由 ``_persist_to_db_sync``
+    提供），行锁覆盖 locate → merge → save 全程（A17 原子化）。
 
     定位策略：
         - 会话不存在 → 返回 None（上层跳过持久化）
@@ -297,7 +300,10 @@ def _locate_session_and_message(
     # 延迟导入避免循环依赖
     from Django_xm.apps.chat.models import ChatMessage, ChatSession
 
-    session = ChatSession.objects.filter(session_id=session_id).first()
+    # 会话定位与消息行锁（A17）：select_for_update 要求事务上下文，由调用方
+    # ``_persist_to_db_sync`` 的 transaction.atomic 提供——锁覆盖 locate → merge →
+    # save 全程，消除并发写同一助手消息的读-改-写末写胜出竞态。
+    session = ChatSession.objects.select_for_update().filter(session_id=session_id).first()
     if session is None:
         logger.warning(f"[persist_stream_result] 会话不存在: session_id={session_id}")
         return None
@@ -306,22 +312,25 @@ def _locate_session_and_message(
     assistant_msg: ChatMessage | None = None
     if message_id:
         try:
-            assistant_msg = ChatMessage.objects.get(
-                id=int(message_id),
-                session=session,
-                role="assistant",
+            assistant_msg = (
+                ChatMessage.objects.select_for_update().get(
+                    id=int(message_id),
+                    session=session,
+                    role="assistant",
+                )
             )
         except (ChatMessage.DoesNotExist, ValueError, TypeError):
             assistant_msg = None
 
     if assistant_msg is None:
-        # 回退：取该会话最新的一条 assistant 消息
+        # 回退：取该会话最新的一条 assistant 消息（回退定位保留，更新仍走行锁）
         assistant_msg = (
             ChatMessage.objects.filter(
                 session=session,
                 role="assistant",
             )
             .order_by("-created_at")
+            .select_for_update()
             .first()
         )
 
@@ -537,34 +546,41 @@ def _persist_to_db_sync(
         content_changed, tool_calls_changed, reasoning_changed}``；
         None 表示跳过持久化（会话或消息不存在）
     """
-    located = _locate_session_and_message(session_id, message_id)
-    if located is None:
-        return None
-    session, assistant_msg = located
+    # 延迟导入避免循环依赖
+    from django.db import transaction
 
-    content_changed = _merge_message_content(assistant_msg, content)
-    merged_tool_calls, tool_calls_changed = _merge_message_tool_calls(assistant_msg, new_tool_calls)
-    reasoning_changed = _apply_reasoning_override(assistant_msg, reasoning)
-    subagent_contents_changed = _apply_subagent_contents_override(assistant_msg, subagent_contents)
+    # A17：locate → merge → save 全程置于单事务 + select_for_update 行锁内，
+    # 并发写同一助手消息（如挂起恢复补写与流结束落库重叠）时后写者基于
+    # 已提交的最新行内容合并，而非基于过期快照末写胜出。
+    with transaction.atomic():
+        located = _locate_session_and_message(session_id, message_id)
+        if located is None:
+            return None
+        session, assistant_msg = located
 
-    _save_message_and_touch_session(
-        assistant_msg,
-        session,
-        merged_tool_calls,
-        content_changed,
-        tool_calls_changed,
-        reasoning_changed,
-        subagent_contents_changed,
-    )
+        content_changed = _merge_message_content(assistant_msg, content)
+        merged_tool_calls, tool_calls_changed = _merge_message_tool_calls(assistant_msg, new_tool_calls)
+        reasoning_changed = _apply_reasoning_override(assistant_msg, reasoning)
+        subagent_contents_changed = _apply_subagent_contents_override(assistant_msg, subagent_contents)
 
-    return {
-        "message_id": str(assistant_msg.id),
-        "content_len": len(assistant_msg.content),
-        "tool_calls_count": len(merged_tool_calls),
-        "content_changed": content_changed,
-        "tool_calls_changed": tool_calls_changed,
-        "reasoning_changed": reasoning_changed,
-    }
+        _save_message_and_touch_session(
+            assistant_msg,
+            session,
+            merged_tool_calls,
+            content_changed,
+            tool_calls_changed,
+            reasoning_changed,
+            subagent_contents_changed,
+        )
+
+        return {
+            "message_id": str(assistant_msg.id),
+            "content_len": len(assistant_msg.content),
+            "tool_calls_count": len(merged_tool_calls),
+            "content_changed": content_changed,
+            "tool_calls_changed": tool_calls_changed,
+            "reasoning_changed": reasoning_changed,
+        }
 
 
 def _collect_tool_calls_with_subagents(

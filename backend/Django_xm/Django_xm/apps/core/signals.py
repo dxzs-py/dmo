@@ -8,6 +8,9 @@ Django 信号处理模块 - 核心自定义信号定义
   - ai_data_cleanup_needed: AI 数据（checkpoint/Store）清理通知
     （原 task_status_changed 因全仓无接收方、场景已被 realtime 事件总线
      EventType.TASK_STATUS_CHANGED 覆盖，2026-10-01 移除）
+  - knowledge_base_deleted: 知识库删除完成通知（A-2 依赖反转，2026-10-06）。
+    发送方 knowledge.kb_service.delete_knowledge_base；接收方 chat
+    （清理会话中对该库的选中引用）。参数：user_id: int, kb_name: str
 """
 
 import logging
@@ -19,6 +22,10 @@ logger = logging.getLogger(__name__)
 
 
 ai_data_cleanup_needed = Signal()
+
+# A-2：knowledge→chat 上行依赖反转为事件通知——资源层 app 发信号，
+# 业务层 app 自行订阅，knowledge 不再 import chat.cross_app
+knowledge_base_deleted = Signal()
 
 @receiver(post_save, sender="users.User")
 def user_post_save(sender, instance, created, **kwargs):

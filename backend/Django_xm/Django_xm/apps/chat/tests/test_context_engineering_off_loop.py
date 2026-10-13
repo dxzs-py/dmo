@@ -1,20 +1,22 @@
 """D1（审计 PF-05/P2-7）：apply_context_engineering 非 checkpointer 分支移出事件循环。
 
 修复前缺口（audit perf PF-05）：
-- ``chat_service._invoke_chat_graph`` / ``_build_stream_agent_and_input``（async，
-  use_checkpointer=False 分支）与 ``stream/fallback.stream_without_tools`` 在事件循环上
+- ``chat_service._build_stream_agent_and_input``（async，use_checkpointer=False 分支）
+  与 ``stream/fallback.stream_without_tools`` 在事件循环上
   直接同步调用 ``apply_context_engineering`` → ``build_structured_context`` 同步执行
   KG/store 检索与逐条同步 ``embed_query``（远程 API，最多 10 次串行），
   命中时 FastAPI 执行服务事件循环停摆，同循环其他会话/WS 广播全部被卡。
+  （原第三个调用点 ``_invoke_chat_graph`` 属非流式孤儿链，已随 CT-01=A 删除，
+  其接线用例一并移除。）
 
 修复：新增 ``ChatService.aapply_context_engineering``（asyncio.to_thread 调度），
-三个非 checkpointer 调用点统一改走该入口；仅改调度不改编排，输入输出与同步版一致。
+两个生产调用点统一改走该入口；仅改调度不改编排，输入输出与同步版一致。
 
 测试证明方式：
 1. 时序死锁式断言——同步重活阻塞在 threading.Event 上，只有事件循环上的心跳协程
    置位后才能结束；若重活直接跑在循环上则心跳永远无法先于重活完成（断言必败）；
 2. 线程身份断言——同步实现执行线程 ≠ 事件循环线程；
-3. 三调用点接线断言——均经异步入口调度，同步入口零直接调用。
+3. 调用点接线断言——均经异步入口调度，同步入口零直接调用。
 
 运行：
     python manage.py test Django_xm.apps.chat.tests.test_context_engineering_off_loop
@@ -146,73 +148,7 @@ class AapplyContextEngineeringOffLoopTests(SimpleTestCase):
 
 
 # ---------------------------------------------------------------------------
-# 2. 调用点接线：_invoke_chat_graph 非 checkpointer 分支
-# ---------------------------------------------------------------------------
-
-
-class InvokeChatGraphOffLoopWiringTests(SimpleTestCase):
-    def test_non_checkpointer_branch_schedules_off_loop(self):
-        """_invoke_chat_graph 非 checkpointer 分支：同步实现经 to_thread 执行且编排不变"""
-        timeline = {}
-        release = threading.Event()
-        service = ChatService.__new__(ChatService)
-        converted = {}
-
-        def _spy_apply(self, chat_history, query, mode="agent", model_name=None):
-            timeline["work_thread"] = threading.current_thread()
-            release.set()
-            processed = list(chat_history) + [{"role": "assistant", "content": "ctx"}]
-            return processed, {"pruned": True}
-
-        def _fake_convert(history):
-            converted["args"] = history
-            return []
-
-        stub_agent = SimpleNamespace(
-            graph=SimpleNamespace(
-                ainvoke=mock.AsyncMock(return_value={"messages": [AIMessage(content="ok")]})
-            )
-        )
-        data = {
-            "mode": "agent",
-            "message": "hello",
-            "chat_history": [{"role": "user", "content": "hello"}],
-            "model_name": _REQUESTED_MODEL,
-        }
-
-        async def scenario():
-            timeline["loop_thread"] = threading.current_thread()
-            return await service._invoke_chat_graph(data, [], {}, None)
-
-        patches = [
-            mock.patch.object(
-                ChatService,
-                "_create_agent_with_memory",
-                new=mock.AsyncMock(return_value=(stub_agent, {}, False, SimpleNamespace())),
-            ),
-            mock.patch.object(
-                ChatService, "_build_user_content", new=mock.MagicMock(return_value={"content": "hi"})
-            ),
-            mock.patch.object(ChatService, "apply_context_engineering", new=_spy_apply),
-            mock.patch.object(chat_service_module, "convert_chat_history", new=_fake_convert),
-        ]
-        with ExitStack() as stack:
-            for p in patches:
-                stack.enter_context(p)
-            response = asyncio.run(scenario())
-
-        # 重活不在事件循环线程上执行
-        self.assertIsNot(timeline["work_thread"], timeline["loop_thread"])
-        # 编排不变：上下文工程产物（而非原始历史）流入 convert_chat_history
-        self.assertEqual(
-            converted["args"],
-            [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "ctx"}],
-        )
-        self.assertEqual(response, "ok")
-
-
-# ---------------------------------------------------------------------------
-# 3. 调用点接线：_build_stream_agent_and_input 非 checkpointer 分支
+# 2. 调用点接线：_build_stream_agent_and_input 非 checkpointer 分支
 # ---------------------------------------------------------------------------
 
 
@@ -274,7 +210,7 @@ class BuildStreamAgentInputOffLoopWiringTests(SimpleTestCase):
 
 
 # ---------------------------------------------------------------------------
-# 4. 调用点接线：fallback.stream_without_tools
+# 3. 调用点接线：fallback.stream_without_tools
 # ---------------------------------------------------------------------------
 
 

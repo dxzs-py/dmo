@@ -13,43 +13,29 @@ from langchain_core.tools import BaseTool, StructuredTool
 from Django_xm.apps.agent_hub.builders._registry import register_builder
 from Django_xm.apps.agent_hub.config import AgentType
 from Django_xm.apps.agent_hub.exceptions import AgentCreationError
-# ── 跨 app 依赖标注（审计 arch §1.3，E8 收编）─────────────────────────────
-# agent_hub → research 为既定合法依赖方向（ARCH-03；互依现状见 .importlinter 头注环3）。
-# C1：以下 prompt 常量权威定义在 apps/research/prompts.py（单一来源模块），
-#     本 builder 在 config.system_prompt=None 时兜底使用——"通用 builder 层硬编码
-#     业务默认 prompt"的方向倒置为审计 §1.4 记录的扩展摩擦，收敛方向为后续经
-#     cross_app 门面注入，当前保留现状（强行外移会波及全部 AgentConfig 组装点）。
-# C2：SANDBOX_ALLOWED_DIRS 权威源为 research/services/_constants.py（单一来源；
-#     历史上曾在 deep_builder 与 adapter 两处定义不一致），本模块以 _SANDBOX_ALLOWED_DIRS
-#     别名私用（是公开常量的本地别名，非私有 API 访问）。
-from Django_xm.apps.research.prompts import (
-    DEEP_RESEARCH_SYSTEM_PROMPT,
-    DOC_ANALYSIS_PROMPT_SUFFIX,
-)
-from Django_xm.apps.research.services._constants import (
-    SANDBOX_ALLOWED_DIRS as _SANDBOX_ALLOWED_DIRS,
-)
-
-# OfficialDeepAgentAdapter 位于 research/services/adapter.py，作为 deep agent 的统一适配器
-# （将 CompiledStateGraph 适配为 research/aresearch/astream_research_with_interrupts 接口）。
-#
-# 分层依赖说明（E8 实测纠偏：反向直连边已随 E6 拆分变化）：
-# - 正向：agent_hub.builders.deep_builder → research.services.adapter（本导入；
-#   C3：builder 返回类型绑定业务 app，adapter 注入韧性降级元数据所致）
-# - 反向：research.services.adapter → research.services.patches →
-#   agent_hub.services.agent_executor（_DeepAgentExecutor 继承 AgentExecutor）；
-#   builders/__init__.py 头注所称 "adapter → builders.subagent_support" 直连
-#   已不存在（subagent_support 现仅 agent_hub 包内 base_builder 使用）
-# 这是 agent_hub ↔ research 的循环依赖，与 spec 2.4 的 chat ↔ research 循环同性质，
-# 后续应通过 cross_app 门面统一收敛。当前保持现状，不引入新的循环依赖。
-#
-# 设计决策：DeepAgentBuilder.build() 直接返回 OfficialDeepAgentAdapter（不返回 raw graph），
-# 注入 original_tools / original_config / model，使韧性降级 _rebuild_with_degraded_tools
-# 能获取完整构建参数重建 graph（根本性修复 af_16 残留：韧性降级失效）。
-from Django_xm.apps.research.services.adapter import OfficialDeepAgentAdapter
 from Django_xm.async_utils import run_async
 
+# ── 环 3 破除（spec 任务 4.3）────────────────────────────────────────────
+# 原本模块级导入 research.prompts（DEEP_RESEARCH_SYSTEM_PROMPT /
+# DOC_ANALYSIS_PROMPT_SUFFIX）、research.services._constants（SANDBOX_ALLOWED_DIRS）、
+# research.services.adapter（OfficialDeepAgentAdapter）构成 agent_hub → research
+# 反向依赖业务层（agent_hub ↔ research 循环的正向边）。处置：
+# - 默认 prompt / doc suffix：改为 AgentConfig.prompt_factory /
+#   doc_analysis_prompt_suffix 注入（业务组装方 research.services.agent_assembly
+#   提供权威值，ARCH-03 依赖倒置）；
+# - SANDBOX_ALLOWED_DIRS：下沉 common/sandbox/constants.py（机制层常量单源）；
+# - adapter 包装上移 research（deep_builder 返回 AgentWrapper 元数据载体，
+#   research.services.agent_assembly 组装 OfficialDeepAgentAdapter，af_16
+#   韧性降级元数据 original_tools / original_config / model 保持贯通）。
+from Django_xm.common.sandbox.constants import SANDBOX_ALLOWED_DIRS as _SANDBOX_ALLOWED_DIRS
+
 logger = logging.getLogger(__name__)
+
+# prompt_factory 缺失/失败时的通用兜底 prompt（原 _build_system_prompt 尾部
+# except 分支同文案；业务默认 prompt 由 research 侧经 AgentConfig.prompt_factory 注入）
+_DEEP_RESEARCH_FALLBACK_PROMPT = (
+    "You are a deep research assistant. Conduct thorough research on the given topic."
+)
 
 
 def _ensure_sync_tool(tool: BaseTool) -> BaseTool:
@@ -197,14 +183,14 @@ class DeepAgentBuilder:
         流程：deepagents 可用性检查 → 工具解析（含 fs_* 冲突过滤）→
         middleware 链构建（含子代理工具注入）→ backend/skills 解析 →
         system_prompt 解析（含文档分析引导）→ create_deep_agent 参数组装 →
-        agent 创建与 OfficialDeepAgentAdapter 包装。
+        agent 创建与 AgentWrapper 元数据包装（adapter 组装上移 research 侧）。
 
         Args:
             config: AgentConfig 实例。
         """
         try:
             # 仅做 deepagents 可用性探测（构建期 fail-fast），实际调用在
-            # _create_deep_agent_adapter 内导入
+            # _create_deep_agent_wrapper 内导入
             from deepagents import create_deep_agent  # noqa: F401
         except ImportError:
             from Django_xm.apps.agent_hub.exceptions import FrameworkNotAvailableError
@@ -218,7 +204,7 @@ class DeepAgentBuilder:
         agent_kwargs = self._build_deep_agent_kwargs(
             config, model, tools, middleware_stack, backend, system_prompt, skills
         )
-        return self._create_deep_agent_adapter(
+        return self._create_deep_agent_wrapper(
             config, model, tools, middleware_stack, agent_kwargs, backend_type, work_dir
         )
 
@@ -324,7 +310,8 @@ class DeepAgentBuilder:
 
         职责：config.system_prompt 为 None 时构建默认 prompt（自定义时输出
         续研上下文日志）；启用文档分析（enable_doc_analysis）时追加
-        DOC_ANALYSIS_PROMPT_SUFFIX 知识库检索引导。
+        doc_analysis_prompt_suffix 注入值（知识库检索引导，业务文案由
+        research 组装方提供）。
 
         Args:
             config: AgentConfig 实例。
@@ -344,15 +331,18 @@ class DeepAgentBuilder:
             )
 
         # 当启用文档分析时，追加知识库检索引导到 system_prompt
+        # （环 3 破除：suffix 业务文案经 AgentConfig.doc_analysis_prompt_suffix 注入，
+        # 未注入时行为与"未启用文档分析"一致——不追加）
         tool_config = config.tool_config or {}
         _enable_doc_analysis = tool_config.get("enable_doc_analysis") or tool_config.get("use_doc_analysis", False)
-        has_doc_suffix = DOC_ANALYSIS_PROMPT_SUFFIX[:30] in system_prompt
+        doc_suffix = getattr(config, "doc_analysis_prompt_suffix", None)
+        has_doc_suffix = bool(doc_suffix) and doc_suffix[:30] in system_prompt
         logger.info(
             f"DeepBuilder tool_config check: "
             f"enable_doc_analysis={_enable_doc_analysis}, has_suffix={has_doc_suffix}"
         )
-        if _enable_doc_analysis and DOC_ANALYSIS_PROMPT_SUFFIX not in system_prompt:
-            system_prompt += DOC_ANALYSIS_PROMPT_SUFFIX
+        if _enable_doc_analysis and doc_suffix and doc_suffix not in system_prompt:
+            system_prompt += doc_suffix
             logger.info(f"DeepAgent system_prompt 已追加知识库文档分析引导 ({len(system_prompt)} 字符)")
         return system_prompt
 
@@ -410,7 +400,7 @@ class DeepAgentBuilder:
             agent_kwargs["interrupt_on"] = interrupt_on
         return agent_kwargs
 
-    def _create_deep_agent_adapter(
+    def _create_deep_agent_wrapper(
         self,
         config,
         model: Any,
@@ -420,11 +410,18 @@ class DeepAgentBuilder:
         backend_type: str,
         work_dir: str | None,
     ) -> Any:
-        """创建 deep agent 并包装为 OfficialDeepAgentAdapter。
+        """创建 deep agent 并包装为携带构建元数据的 AgentWrapper。
 
         职责：禁用 deepagents 自动 general-purpose subagent、调用
-        create_deep_agent 创建 graph、注入完整构建元数据包装
-        OfficialDeepAgentAdapter（韧性降级 _rebuild_with_degraded_tools 所需）。
+        create_deep_agent 创建 graph、注入完整构建元数据返回 AgentWrapper
+        （韧性降级 _rebuild_with_degraded_tools 所需）。
+
+        环 3 破除（spec 任务 4.3）：本方法原直接返回 research 侧
+        ``OfficialDeepAgentAdapter``（构成 agent_hub → research 类型依赖边）；
+        现改为返回 AgentWrapper 元数据载体（graph + thread_id / model /
+        original_tools / original_config），OfficialDeepAgentAdapter 包装上移
+        research.services.agent_assembly（research 消费 wrapper 组装 adapter），
+        元数据逐字段原样贯通，af_16 韧性降级行为不变。
 
         Args:
             config: AgentConfig 实例（取 session_id 作为 thread_id）。
@@ -436,9 +433,11 @@ class DeepAgentBuilder:
             work_dir: 工作目录（adapter 文件系统根目录）。
 
         Returns:
-            OfficialDeepAgentAdapter 实例。
+            AgentWrapper 实例（携带完整构建元数据）。
         """
         from deepagents import create_deep_agent
+
+        from Django_xm.apps.agent_hub.factory import AgentWrapper
 
         # 禁用 deepagents 自动 general-purpose subagent（阻塞 task 工具），
         # 深度研究子代理统一走 SubAgentRuntime.spawn + spawn_sub_agent 工具。
@@ -450,25 +449,20 @@ class DeepAgentBuilder:
             f"DeepAgent 创建成功 "
             f"(tools={len(tools)}, middleware={len(middleware_stack)}, backend={backend_type})"
         )
-        # 返回 OfficialDeepAgentAdapter（不返回 raw graph），注入韧性降级所需的完整构建元数据：
+        # 返回 AgentWrapper 元数据载体（不返回 raw graph，也不再包装 research 侧
+        # adapter），注入韧性降级所需的完整构建元数据：
         # - original_tools / original_config：_rebuild_with_degraded_tools 用降级工具集重建 graph
         # - model：_fallback_direct_answer 用原 model 直接 LLM 回答
         # - thread_id / work_dir：研究任务标识与文件系统根目录
-        # - chat_session_id=None：由 adapter 内部从 ResearchTask.session_id 反查
-        #   （chat 模块触发的深度研究需要跨模块同步事件到 session 频道）
-        #
-        # 根本性修复 af_16 残留：原实现返回 raw graph，经 AgentFactory.create 包装为
-        # AgentWrapper（仅含 graph + work_dir），original_tools / original_config / model
-        # 全部丢失，导致 _rebuild_with_degraded_tools 因 original_config=None 返回 None，
-        # 韧性降级完全失效。
-        return OfficialDeepAgentAdapter(
+        # chat_session_id 语义由 research 侧 adapter 组装点保持（默认 None，
+        # astream_research_with_interrupts 内部从 ResearchTask.session_id 反查）。
+        return AgentWrapper(
             graph=graph,
-            thread_id=config.session_id or "",
             work_dir=work_dir,
+            thread_id=config.session_id or "",
             model=model,
             original_tools=tools,
             original_config=agent_kwargs,
-            chat_session_id=None,
         )
 
     @staticmethod
@@ -616,7 +610,7 @@ class DeepAgentBuilder:
         动态上下文 opt-in（context_settings.deep_dynamic_context_enabled，默认 False）：
         开启时优先走 _common.build_dynamic_context_prompt（mode="deep-research"，FULL
         上下文分区），构建失败（返回 None）自动回退下方静态逻辑；关闭时代码路径与
-        现状完全一致。opt-in 原因：深研 prompt 现为静态 DEEP_RESEARCH_SYSTEM_PROMPT，
+        现状完全一致。opt-in 原因：深研 prompt 现为业务侧注入的静态默认 prompt，
         动态上下文会改变 prompt 基底（prompts.yaml 的 deep-research 模板）与注入内容，
         需实测验证研究质量后再决定是否默认开启。
         """
@@ -635,15 +629,15 @@ class DeepAgentBuilder:
                 return dynamic_prompt
             logger.warning("DeepAgent 动态提示词构建失败，回退静态 deep-research prompt")
 
-        from Django_xm.apps.agent_hub.config import AgentType
-
-        if config.agent_type == AgentType.DEEP_RESEARCH:
-            return DEEP_RESEARCH_SYSTEM_PROMPT
-        try:
-            # prompt 归属 research 模块（单一来源），从 research.prompts 导入
-            from Django_xm.apps.research.prompts import get_deep_research_prompt
-
-            return get_deep_research_prompt()
-        except Exception:
-            logger.exception("深度研究 prompt 导入失败，使用默认 prompt")
-            return "You are a deep research assistant. Conduct thorough research on the given topic."
+        # 业务默认 prompt 经 AgentConfig.prompt_factory 注入（环 3 破除：
+        # 业务组装方 research.services.agent_assembly 提供权威值，builder 不再
+        # import research.prompts）。未注入时仅剩通用兜底（组装方漏注入的显性信号）。
+        prompt_factory = getattr(config, "prompt_factory", None)
+        if prompt_factory is not None:
+            try:
+                return prompt_factory()
+            except Exception:
+                logger.exception("注入的 deep_research 默认 prompt 提供失败，使用兜底 prompt")
+                return _DEEP_RESEARCH_FALLBACK_PROMPT
+        logger.warning("AgentConfig 未注入 prompt_factory，deep_research 使用通用兜底 prompt")
+        return _DEEP_RESEARCH_FALLBACK_PROMPT

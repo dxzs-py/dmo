@@ -3,22 +3,23 @@
 将 SkillSpec 统一转换为 LangChain / LangGraph / DeepAgent 所需格式。
 """
 
-import logging
 import os
 
 from langchain_core.tools import BaseTool
-
-logger = logging.getLogger(__name__)
 
 
 class SkillAdapter:
     """三框架统一适配层
 
     提供四个标准接口，将 SkillSpec 转换为各框架所需的格式：
-    - to_langchain_tools() → List[BaseTool]  (LangChain Agent)
+    - to_langchain_tools() → List[BaseTool]  (LangChain Agent，pipeline 管道工具)
     - to_langgraph_tools() → List[BaseTool]  (LangGraph ToolNode)
     - to_deep_agent_skills() → List[str]     (DeepAgent skills 参数)
     - to_discovery_metadata() → List[Dict]   (Level 1 元数据，供 API 展示)
+
+    SkillPackage 不再生成工具（旧 advisor 全量注入模式已删除）：
+    其 Level 2/3 披露由 SkillProvider 装配的 activate_skill /
+    read_skill_resource 工具承担。
     """
 
     def __init__(self, user_id: int | None = None):
@@ -28,13 +29,13 @@ class SkillAdapter:
         self,
         available_tools: list[BaseTool] | None = None,
     ) -> list[BaseTool]:
-        """转换为 LangChain Agent 可用的 BaseTool 列表
+        """转换为 LangChain Agent 可用的 BaseTool 列表（仅 pipeline 管道技能）
 
         Args:
             available_tools: Agent 可用的工具列表，SkillBaseTool 执行时从中查找子工具
 
         Returns:
-            SkillBaseTool 实例列表
+            SkillBaseTool 实例列表（预置技能 + 用户 SkillConfig）
         """
         from Django_xm.apps.tools.skills.registry import SkillRegistryService
         from Django_xm.apps.tools.skills.tool import SkillBaseTool
@@ -43,10 +44,6 @@ class SkillAdapter:
         tools: list[BaseTool] = []
         for spec in skills:
             tools.append(SkillBaseTool(spec=spec, available_tools=available_tools or []))
-
-        # 加载 SkillPackage (advisor 模式)
-        pkg_tools = self._load_skill_package_tools(available_tools)
-        tools.extend(pkg_tools)
 
         return tools
 
@@ -83,37 +80,3 @@ class SkillAdapter:
                 skill_dirs.append(pkg.skill_dir)
 
         return skill_dirs
-
-    def _load_skill_package_tools(
-        self,
-        available_tools: list[BaseTool] | None = None,
-    ) -> list[BaseTool]:
-        """从 SkillPackage 数据库加载 advisor 模式的 SkillBaseTool"""
-        from Django_xm.apps.tools.skills.registry import SkillSpec
-        from Django_xm.apps.tools.skills.tool import SkillBaseTool
-
-        try:
-            from Django_xm.apps.tools.models import SkillPackage
-
-            qs = SkillPackage.objects.filter(status="active")
-            if self.user_id is not None:
-                qs = qs.filter(user_id=self.user_id) | qs.filter(source="system")
-
-            tools = []
-            for pkg in qs:
-                if not pkg.skill_dir or not os.path.isdir(pkg.skill_dir):
-                    continue
-                spec = SkillSpec(
-                    name=pkg.name,
-                    description=pkg.description or f"Skill: {pkg.name}",
-                    mode="advisor",
-                    skill_dir=pkg.skill_dir,
-                    allowed_tools=pkg.allowed_tools,
-                    version=pkg.version,
-                    source=pkg.source,
-                )
-                tools.append(SkillBaseTool(spec=spec, available_tools=available_tools or []))
-            return tools
-        except Exception as e:
-            logger.warning(f"加载 SkillPackage 工具失败: {e}")
-            return []

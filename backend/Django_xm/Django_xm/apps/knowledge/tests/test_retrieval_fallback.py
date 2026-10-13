@@ -1,24 +1,28 @@
 """知识库检索降级单元测试（向量检索失败 → PG 全文关键词检索）。
 
-覆盖 Django_xm.apps.knowledge.services.retrieval_service：
-- _is_embedding_error 表驱动：异常类名/消息命中降级模式（ConnectionError /
-  timeout / refused / ollama / 403 / MaxRetriesError 等）vs 普通业务异常返回 False
-- _keyword_search_fallback：
+覆盖 Django_xm.apps.knowledge.services.keyword_fallback（B-3/A-4 拆分转正）：
+- is_embedding_error 表驱动（B14 收窄契约）：类型化判定（内置连接类异常）+
+  字符串兜底仅匹配 embedding 明确特征词（embedding / ollama /
+  insufficient_balance 等）；过宽子串（connect / timeout / refused / 403 /
+  503）不再命中——PG 连接错误误判会转入关键词降级再打同一 PG；
+  PG/Django.db/SQLAlchemy 数据库层异常显式排除（详见
+  test_rag_details_b9_b14.IsEmbeddingErrorNarrowedTests）
+- keyword_search_fallback：
   * PGVector 表不存在 → 返回 []
   * 表存在 + mock DB cursor → 返回 Document 列表，metadata 含 degraded=True
     与 degraded_score（float(rank)），cmetadata 为 None 时落 {}
   * k 参数透传到 SQL LIMIT %s（捕获 cursor.execute 参数断言）
-  * CJK 2-gram / ASCII 整词切分（_build_retrieval_grams），gram 数组参数化传入
+  * CJK 2-gram / ASCII 整词切分（build_retrieval_grams），gram 数组参数化传入
   * DB 异常 → 返回 []（降级链最终兜底）
 
-mock 点说明：_keyword_search_fallback 函数体内延迟导入
+mock 点说明：keyword_search_fallback 函数体内延迟导入
 ``from Django_xm.apps.knowledge.vector_store.pgvector_backend import ...`` 与
 ``from django.db import connections``，均为调用时解析，故：
-- pgvector_backend 的 _check_table_exists / _get_collection_table_name /
-  _get_embedding_table_name / _quote_identifier patch 其源模块属性
+- pgvector_backend 的 check_table_exists / get_collection_table_name /
+  get_embedding_table_name / quote_identifier patch 其源模块属性
 - django.db.connections 整体替换为 MagicMock，其
   ``connections["default"].cursor()`` 上下文管理器返回受控 cursor
-（_keyword_search_fallback 使用 PG 专属 unnest + ILIKE 原生 SQL，必须 mock DB 层）
+（keyword_search_fallback 使用 PG 专属 unnest + ILIKE 原生 SQL，必须 mock DB 层）
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
     python -m unittest Django_xm.apps.knowledge.tests.test_retrieval_fallback
@@ -37,32 +41,34 @@ django.setup()
 
 from langchain_core.documents import Document
 
-from Django_xm.apps.knowledge.services.retrieval_service import (
-    _build_retrieval_grams,
-    _is_embedding_error,
-    _keyword_search_fallback,
+from Django_xm.apps.knowledge.services.keyword_fallback import (
+    build_retrieval_grams,
+    is_embedding_error,
+    keyword_search_fallback,
 )
 
 _PGV_BACKEND = "Django_xm.apps.knowledge.vector_store.pgvector_backend"
 
 
 class IsEmbeddingErrorTests(unittest.TestCase):
-    """_is_embedding_error：异常类名/消息与降级模式匹配。"""
+    """is_embedding_error：B14 收窄契约（类型化优先 + 字符串仅特征词）。"""
 
     _CASES: ClassVar[list[tuple[Exception, bool]]] = [
-        # 异常类名命中（ConnectionError / ConnectionRefusedError / TimeoutError）
+        # 类型化命中：内置连接类异常（类型判定优先，不依赖消息内容）
         (ConnectionError("dial tcp failed"), True),
         (ConnectionRefusedError("errno 111"), True),
         (TimeoutError("request timed out"), True),
-        # 异常消息命中（refused / connect / ollama / embedding / 403 / 503 / MaxRetriesError）
-        (OSError("[Errno 111] Connection refused"), True),
-        (RuntimeError("cannot connect to host"), True),
+        # 字符串兜底（B14 收窄）：仅 embedding 明确特征词 / provider 名
         (RuntimeError("Ollama Server Error"), True),
         (RuntimeError("embedding service unavailable"), True),
-        (Exception("HTTP 403 Forbidden"), True),
-        (Exception("service unavailable: 503"), True),
-        (Exception("MaxRetriesError: too many retries"), True),
         (Exception("insufficient_balance"), True),
+        # B14 收窄反例：过宽子串不再命中（旧行为会把 PG/网络错误误判为降级）
+        (OSError("[Errno 111] Connection refused"), False),
+        (RuntimeError("cannot connect to host"), False),
+        (RuntimeError("timeout while parsing payload"), False),
+        (Exception("HTTP 403 Forbidden"), False),
+        (Exception("service unavailable: 503"), False),
+        (Exception("MaxRetriesError: too many retries"), False),
         # 普通业务异常：不触发降级
         (ValueError("invalid arg"), False),
         (KeyError("missing key"), False),
@@ -74,34 +80,34 @@ class IsEmbeddingErrorTests(unittest.TestCase):
         """表驱动验证：类名或消息（均小写化）命中任一模式 → True。"""
         for exc, expected in self._CASES:
             with self.subTest(exc=repr(exc)):
-                self.assertIs(_is_embedding_error(exc), expected)
+                self.assertIs(is_embedding_error(exc), expected)
 
     def test_matching_is_case_insensitive(self) -> None:
         """大小写不敏感：消息含大写 Ollama 也命中。"""
-        self.assertTrue(_is_embedding_error(RuntimeError("OLLAMA backend down")))
+        self.assertTrue(is_embedding_error(RuntimeError("OLLAMA backend down")))
 
     def test_business_exception_returns_false(self) -> None:
         """任务指定的反例：ValueError("invalid arg") 不属于 Embedding 服务故障。"""
-        self.assertFalse(_is_embedding_error(ValueError("invalid arg")))
+        self.assertFalse(is_embedding_error(ValueError("invalid arg")))
 
 
 class KeywordSearchFallbackTests(unittest.TestCase):
-    """_keyword_search_fallback：PG 全文检索降级路径。"""
+    """keyword_search_fallback：PG 全文检索降级路径。"""
 
     def _patch_backend_helpers(self, check_exists: bool) -> None:
         """打桩 pgvector_backend 辅助函数（函数内延迟导入，patch 源模块属性）。"""
         patchers = [
-            mock.patch(f"{_PGV_BACKEND}._check_table_exists", return_value=check_exists),
+            mock.patch(f"{_PGV_BACKEND}.check_table_exists", return_value=check_exists),
             mock.patch(
-                f"{_PGV_BACKEND}._get_collection_table_name",
+                f"{_PGV_BACKEND}.get_collection_table_name",
                 return_value="langchain_pg_collection",
             ),
             mock.patch(
-                f"{_PGV_BACKEND}._get_embedding_table_name",
+                f"{_PGV_BACKEND}.get_embedding_table_name",
                 return_value="langchain_pg_embedding",
             ),
             mock.patch(
-                f"{_PGV_BACKEND}._quote_identifier",
+                f"{_PGV_BACKEND}.quote_identifier",
                 side_effect=lambda name: f'"{name}"',
             ),
         ]
@@ -122,7 +128,7 @@ class KeywordSearchFallbackTests(unittest.TestCase):
         connections_mock = self._make_connections_mock(cursor)
 
         with mock.patch("django.db.connections", connections_mock):
-            result = _keyword_search_fallback("hello world", "test_collection", k=4)
+            result = keyword_search_fallback("hello world", "test_collection", k=4)
 
         self.assertEqual(result, [])
         cursor.execute.assert_not_called()
@@ -139,7 +145,7 @@ class KeywordSearchFallbackTests(unittest.TestCase):
         connections_mock = self._make_connections_mock(cursor)
 
         with mock.patch("django.db.connections", connections_mock):
-            docs = _keyword_search_fallback("hello world", "test_collection", k=7)
+            docs = keyword_search_fallback("hello world", "test_collection", k=7)
 
         # 返回 Document 列表，顺序与行数据一致
         self.assertEqual(len(docs), 2)
@@ -177,7 +183,7 @@ class KeywordSearchFallbackTests(unittest.TestCase):
         connections_mock = self._make_connections_mock(cursor)
 
         with mock.patch("django.db.connections", connections_mock):
-            _keyword_search_fallback("机器   学习 入门", "test_collection")
+            keyword_search_fallback("机器   学习 入门", "test_collection")
 
         params: list[Any] = cursor.execute.call_args.args[1]
         self.assertEqual(params[0], ["机器", "学习", "入门"])
@@ -186,7 +192,7 @@ class KeywordSearchFallbackTests(unittest.TestCase):
 
         # 单 gram 查询
         with mock.patch("django.db.connections", connections_mock):
-            _keyword_search_fallback("hello", "test_collection")
+            keyword_search_fallback("hello", "test_collection")
         params_single: list[Any] = cursor.execute.call_args.args[1]
         self.assertEqual(params_single[0], ["hello"])
 
@@ -197,7 +203,7 @@ class KeywordSearchFallbackTests(unittest.TestCase):
         connections_mock = self._make_connections_mock(cursor)
 
         with mock.patch("django.db.connections", connections_mock):
-            result = _keyword_search_fallback("   !!! a ", "test_collection")
+            result = keyword_search_fallback("   !!! a ", "test_collection")
 
         self.assertEqual(result, [])
         cursor.execute.assert_not_called()
@@ -210,38 +216,38 @@ class KeywordSearchFallbackTests(unittest.TestCase):
         connections_mock = self._make_connections_mock(cursor)
 
         with mock.patch("django.db.connections", connections_mock):
-            result = _keyword_search_fallback("hello", "test_collection", k=4)
+            result = keyword_search_fallback("hello", "test_collection", k=4)
 
         self.assertEqual(result, [])
 
 
 class BuildRetrievalGramsTests(unittest.TestCase):
-    """_build_retrieval_grams：CJK 2-gram / ASCII 整词 / 去重 / 截断。"""
+    """build_retrieval_grams：CJK 2-gram / ASCII 整词 / 去重 / 截断。"""
 
     def test_cjk_bigram_and_ascii_word(self) -> None:
         """中文切 2-gram；ASCII 词整词保留（长 gram 排在前面）。"""
         self.assertEqual(
-            _build_retrieval_grams("机器学习 hello"),
+            build_retrieval_grams("机器学习 hello"),
             ["hello", "机器", "器学", "学习"],
         )
 
     def test_single_ascii_char_dropped(self) -> None:
         """单个 ASCII 字符不构成检索单元（召回噪声过大）。"""
-        self.assertEqual(_build_retrieval_grams("a b 缓存"), ["缓存"])
+        self.assertEqual(build_retrieval_grams("a b 缓存"), ["缓存"])
 
     def test_duplicate_grams_deduped(self) -> None:
         """重复 gram 去重，避免同一子串被重复计数、抬高 degraded_score。"""
-        self.assertEqual(_build_retrieval_grams("缓存缓存"), ["缓存", "存缓"])
+        self.assertEqual(build_retrieval_grams("缓存缓存"), ["缓存", "存缓"])
 
     def test_blank_query_returns_empty(self) -> None:
-        self.assertEqual(_build_retrieval_grams("   "), [])
-        self.assertEqual(_build_retrieval_grams(""), [])
+        self.assertEqual(build_retrieval_grams("   "), [])
+        self.assertEqual(build_retrieval_grams(""), [])
 
     def test_max_grams_truncation(self) -> None:
         """长查询按 max_grams 截断，防止 SQL 开销失控。"""
         long_query = "一二三四五六七八九十甲乙丙丁戊己庚辛壬癸"
-        self.assertEqual(len(_build_retrieval_grams(long_query, max_grams=5)), 5)
-        self.assertLess(len(_build_retrieval_grams(long_query)), len(long_query))
+        self.assertEqual(len(build_retrieval_grams(long_query, max_grams=5)), 5)
+        self.assertLess(len(build_retrieval_grams(long_query)), len(long_query))
 
 
 if __name__ == "__main__":

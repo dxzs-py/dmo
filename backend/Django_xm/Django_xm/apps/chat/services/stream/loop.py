@@ -273,7 +273,9 @@ async def run_stream_loop(
         if not budget_guard.enabled:
             return None
         try:
-            info = budget_guard.check(usage_cb.total_tokens if usage_cb is not None else 0)
+            # acheck：DB 基线聚合经 to_thread 离环（本函数在执行器事件循环内，
+            # 同步 check 会触发 SynchronousOnlyOperation——冒烟实测 fastapi.log）
+            info = await budget_guard.acheck(usage_cb.total_tokens if usage_cb is not None else 0)
         except Exception as e:
             logger.warning(f"[Loop] 会话预算检查失败（忽略）: {e}")
             return None

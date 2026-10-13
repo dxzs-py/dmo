@@ -55,7 +55,7 @@ const handleCommand = async (command) => {
           @click="emit('toggle-sidebar')"
         />
         <router-link to="/chat" class="logo-link">
-          <h1 class="app-title">LC-StudyLab</h1>
+          <h1 class="app-title">DX-Study-Agent</h1>
           <span class="app-subtitle">智能学习 & 研究助手</span>
         </router-link>
       </div>

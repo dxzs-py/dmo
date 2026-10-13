@@ -23,7 +23,7 @@ import django
 django.setup()
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -52,6 +52,40 @@ class KnowledgeBaseCreateValidationTests(TestCase):
         body = resp.json()
         self.assertEqual(body["code"], int(ErrorCode.INVALID_PARAMS))
         self.assertIn("name", body["message"])
+
+    def test_post_traversal_name_rejected(self):
+        """C-2（判别用例，修复前红）：名称含路径分隔符/穿越序列 → 400。
+
+        CreateKnowledgeBaseSerializer 此前仅 max_length=100，名称直达磁盘路径
+        （kb_service.upload_dir = data_uploads_path / user_index_name），
+        `../` 可逃逸 uploads 根目录实现任意目录写/列/删。
+        """
+        traversal_names = [
+            "../evil",
+            "a/../b",
+            "a\\..\\evil",  # Windows 反斜杠分隔
+            "..",
+            "kb%5c..%2f",  # URL 编码字面量变体（%5c=\ %2f=/，含 % 均不在白名单）
+            "kb/child",
+        ]
+        for name in traversal_names:
+            with self.subTest(name=name):
+                with mock.patch(f"{_KB_SERVICE}.IndexManager"):
+                    resp = self.client.post(KNOWLEDGE_BASES_URL, {"name": name}, format="json")
+                self.assertEqual(resp.status_code, 400, f"穿越名称 {name!r} 必须被拒绝")
+                body = resp.json()
+                self.assertEqual(body["code"], int(ErrorCode.INVALID_PARAMS))
+                self.assertIn("name", body["message"])
+
+    def test_post_legal_name_still_accepted(self):
+        """白名单合法名（含中文/连字符/下划线）不受 C-2 收紧影响。"""
+        with (
+            mock.patch(f"{_KB_SERVICE}.IndexManager") as manager_cls,
+            mock.patch(f"{_KB_SERVICE}.invalidate_knowledge_cache"),
+        ):
+            manager_cls.return_value.index_exists.return_value = False
+            resp = self.client.post(KNOWLEDGE_BASES_URL, {"name": "研发文档_库-01"}, format="json")
+        self.assertEqual(resp.status_code, 200)
 
     def test_post_duplicate_active_index_returns_409(self):
         """活跃同名向量索引 → 服务层抛 KnowledgeBaseAlreadyExistsError → 409 + DUPLICATE_RESOURCE。"""
@@ -162,3 +196,51 @@ class KnowledgeBaseSearchValidationTests(TestCase):
         body = resp.json()
         self.assertEqual(body["code"], int(ErrorCode.INVALID_PARAMS))
         self.assertIn("top_k", body["message"])
+
+
+class KnowledgeBaseServiceNameWhitelistTests(SimpleTestCase):
+    """C-2 深度防御第二层（独立于 serializer）：service 层名称白名单。
+
+    serializer 挡 HTTP 面；service 层直挡任何绕过 serializer 的调用面
+    （管理命令/内部调用/未来新视图）。校验位于函数最前，不触达 DB。
+    """
+
+    def test_create_knowledge_base_rejects_traversal_name(self):
+        from Django_xm.apps.knowledge.services.kb_service import create_knowledge_base
+
+        user = mock.MagicMock(id=1, username="svc-user")
+        for name in ("../evil", "a\\..\\b", "kb%5c..", ".."):
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError):
+                    create_knowledge_base(user, name)
+
+    def test_save_uploaded_files_rejects_traversal_kb(self):
+        """上传落盘路径 upload_dir.mkdir(parents=True) 是穿越写的主危害面。"""
+        from Django_xm.apps.knowledge.services.kb_service import save_uploaded_files
+
+        user = mock.MagicMock(id=1, username="svc-user")
+        with self.assertRaises(ValueError):
+            save_uploaded_files(user, "../evil", [mock.MagicMock()])
+
+    def test_list_documents_rejects_traversal_kb(self):
+        from Django_xm.apps.knowledge.services.kb_service import list_documents
+
+        user = mock.MagicMock(id=1, username="svc-user")
+        with self.assertRaises(ValueError):
+            list_documents(user, "../evil")
+
+    def test_delete_document_rejects_traversal_kb(self):
+        """删除面 file_path.unlink() 是穿越删的主危害面。"""
+        from Django_xm.apps.knowledge.services.kb_service import delete_document
+
+        user = mock.MagicMock(id=1, username="svc-user")
+        with self.assertRaises(ValueError):
+            delete_document(user, "../evil", "a.txt")
+
+    def test_delete_document_rejects_traversal_filename(self):
+        """filename 单独穿越（kb_id 合法）同样拒绝：file_path 解析后必须仍在 upload_dir 内。"""
+        from Django_xm.apps.knowledge.services.kb_service import delete_document
+
+        user = mock.MagicMock(id=1, username="svc-user")
+        with self.assertRaises(ValueError):
+            delete_document(user, "safe-kb", "..\\..\\secret.txt")

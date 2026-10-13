@@ -231,6 +231,20 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
     _lastSyncSignatures.delete(sessionId)
   }
 
+  /**
+   * 会话删除时的同步资源回收入口（D-7）：清理按会话键缓存的
+   * _syncLocks / _lastSyncSignatures / _toolSyncTimers。
+   * 这些 Map/对象按 sessionId 只增不清会随长期使用缓慢泄漏；
+   * session store 的 deleteSession / removeSession 动作负责调用。
+   * @param {string} sessionId
+   */
+  const cleanupSessionSyncState = (sessionId) => {
+    if (!sessionId) return
+    _syncLocks.delete(sessionId)
+    _lastSyncSignatures.delete(sessionId)
+    clearToolSyncTimer(sessionId)
+  }
+
   const updateLastMessage = (sessionId, content) => {
     const result = _getLast(sessionId)
     if (!result) return
@@ -393,6 +407,7 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
     removeMessagesByIds,
     clearToolSyncTimer,
     clearSyncSignature,
+    cleanupSessionSyncState,
     // 切片间共享（toolCallState.addOrUpdateToolCall / updateOrAddToolResult 使用）
     _debouncedToolSync,
   }

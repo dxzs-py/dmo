@@ -15,6 +15,29 @@ from Django_xm.apps.context_manager.services.manager import ContextManager
 
 logger = logging.getLogger(__name__)
 
+# 4.4/4.8：上下文工程降级的用户可见提示文案（degradation 事件 data.message）
+_COMPRESSION_DEGRADED_NOTICE = "上下文过长，自动摘要未达质量标准，已降级为关键片段保留（可能丢失部分细节）"
+_BUDGET_TRIMMED_NOTICE = "上下文过长，已裁剪 {removed_count} 条最早的会话历史"
+
+
+def build_context_degradation_events(metadata: dict[str, Any]) -> list[dict[str, str]]:
+    """从上下文工程 metadata 构建用户可见降级事件（4.4/4.8，E5-02 同型结构）。
+
+    - compression_degraded：摘要质量门禁不达标，已降级为【原文关键片段】保留；
+    - budget_trimmed.trimmed：压缩与相关性筛选后仍超预算，最终裁剪了最旧历史。
+
+    消费方：chat_service._build_stream_agent_and_input（追加进
+    _stream_degradation_events）与 stream/fallback.stream_without_tools（直接
+    yield degradation 事件），前端按 type=degradation 展示提示。
+    """
+    events: list[dict[str, str]] = []
+    if metadata.get("compression_degraded"):
+        events.append({"message": _COMPRESSION_DEGRADED_NOTICE})
+    trimmed = metadata.get("budget_trimmed")
+    if isinstance(trimmed, dict) and trimmed.get("trimmed"):
+        events.append({"message": _BUDGET_TRIMMED_NOTICE.format(removed_count=trimmed.get("removed_count", 0))})
+    return events
+
 
 class ContextService:
     CHECKPOINTER_ENABLED = True
@@ -70,6 +93,9 @@ class ContextService:
                 "injection_detected": metadata.get("injection_detected", False),
                 "pruned": metadata.get("prune_result", {}).get("pruned_count", 0) > 0,
                 "budget_over": metadata.get("budget_over_sections", []),
+                # 4.4/4.8：质量门禁降级与最终裁剪标记，供 chat 消费端转用户可见提示
+                "compression_degraded": bool(metadata.get("compression_degraded", False)),
+                "budget_trimmed": metadata.get("budget_trimmed") or {"trimmed": False, "removed_count": 0},
             }
         except Exception as e:
             logger.warning(f"build_structured_context 调用失败，回退到简单修剪: {e}")
@@ -98,7 +124,9 @@ class ContextService:
 
         injection_detected = self._context_manager.check_injection(user_message)
         if injection_detected:
-            logger.warning("检测到指令注入尝试（Checkpointer 模式），用户输入将被隔离")
+            # 1.5 真实语义：检测仅留痕，无隔离动作，用户输入原样进入模型上下文
+            # （旧日志"用户输入将被隔离"为假隔离表述）
+            logger.warning("检测到指令注入尝试（Checkpointer 模式，已留痕，未隔离）")
             metadata["injection_detected"] = True
 
         if model_name:
@@ -110,6 +138,21 @@ class ContextService:
         if self._context_manager is None:
             return False
         return self._context_manager.check_injection(user_message)
+
+    def get_injection_context(self, query: str, session_id: str | None = None) -> str:
+        """获取记忆注入上下文（A9：checkpointer 主链路接通）。
+
+        委托 ContextManager.get_injection_context：返回知识图谱相关实体上下文
+        与跨会话会话摘要的拼接（两段各自内部捕获异常降级为空段，段首自带
+        「【知识图谱上下文·来源：对话记忆】」「【跨会话上下文】」标题）。
+        manager 未初始化或全部来源不可用时返回空串，调用方按"不注入"处理。
+
+        同步方法且内部含 KG 检索与逐条同步 embed_query（远程 API），
+        调用方（chat_service checkpointer 分支）须经 asyncio.to_thread 调度。
+        """
+        if self._context_manager is None:
+            return ""
+        return self._context_manager.get_injection_context(query, session_id=session_id)
 
     def load_research_context(
         self, research_task_id: str, user_id: int | None = None, session_id: str | None = None

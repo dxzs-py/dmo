@@ -11,6 +11,8 @@ import logging
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
+from Django_xm.apps.core.signals import knowledge_base_deleted
+
 from .models import ChatSession
 
 logger = logging.getLogger(__name__)
@@ -53,3 +55,17 @@ def on_session_delete(sender, instance, **kwargs):
         SecureSessionCacheService.invalidate_user_session(instance.user_id, str(instance.session_id))
     except Exception:
         logger.exception("会话安全缓存失效失败")
+
+
+@receiver(knowledge_base_deleted)
+def on_knowledge_base_deleted(sender, **kwargs):
+    """A-2 依赖反转：knowledge 删除知识库后清理会话中的选中引用。
+
+    此前 knowledge.kb_service 函数体内直接 import chat.cross_app 调用本逻辑
+    （knowledge→chat 上行依赖）；现改为 knowledge 发 core.signals 信号、chat
+    订阅。延迟 import 保持（测试 patch cross_app 模块属性 + 行为等价）。
+    receiver 异常沿 send 向上传播（与原直接调用一致），不吞。
+    """
+    from Django_xm.apps.chat.services.cross_app import clear_knowledge_base_selection
+
+    clear_knowledge_base_selection(user_id=kwargs.get("user_id"), kb_name=kwargs.get("kb_name"))

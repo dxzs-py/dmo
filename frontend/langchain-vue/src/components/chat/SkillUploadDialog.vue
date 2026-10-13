@@ -262,20 +262,13 @@ const removeStep = (index) => {
         />
       </el-form-item>
 
+      <!-- Task 10 对齐：后端 SkillSpec.mode 仅剩 pipeline（迁移 0009 已归一化
+           advisor/hybrid），模式选择器随之移除，仅保留管线模式说明 -->
       <el-form-item label="执行模式">
-        <el-radio-group v-model="skillMode" size="small">
-          <el-radio-button value="pipeline">管线模式</el-radio-button>
-          <el-radio-button value="advisor">顾问模式</el-radio-button>
-          <el-radio-button value="hybrid">混合模式</el-radio-button>
-        </el-radio-group>
-        <div class="mode-hint">
-          <span v-if="skillMode === 'pipeline'">自动按步骤链执行子工具</span>
-          <span v-else-if="skillMode === 'advisor'">返回 SKILL.md 指令，由 Agent 自主决策</span>
-          <span v-else>先加载指令注入上下文，再执行步骤链</span>
-        </div>
+        <div class="mode-hint">自动按步骤链执行子工具</div>
       </el-form-item>
 
-      <div v-if="skillMode === 'pipeline' || skillMode === 'hybrid'">
+      <div>
       <el-form-item required>
         <template #label>
           <div class="steps-label">

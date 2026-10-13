@@ -126,12 +126,12 @@
             :auto-upload="false"
             :on-change="handleFileChange"
             :file-list="uploadFiles"
-            accept=".pdf,.txt,.md,.csv,.json,.docx"
+            accept=".pdf,.txt,.md,.mdx,.html,.htm,.json,.csv,.docx,.xlsx,.pptx"
           >
             <el-icon :size="48"><Upload /></el-icon>
             <div>拖拽文件到此处或 <em>点击上传</em></div>
             <template #tip>
-              <div class="upload-tip">支持 PDF、TXT、Markdown、CSV、JSON、DOCX 格式，支持多选上传</div>
+              <div class="upload-tip">支持 PDF、TXT、Markdown、MDX、HTML、JSON、CSV、DOCX、XLSX、PPTX 格式，支持多选上传</div>
             </template>
           </el-upload>
           <div v-if="uploadFiles.length > 0" class="upload-file-list">
@@ -142,9 +142,9 @@
             </div>
           </div>
           <div class="upload-actions">
-            <el-button 
-              type="success" 
-              :disabled="!uploadFiles.length || !selectedIndexName" 
+            <el-button
+              type="success"
+              :disabled="!uploadFiles.length || !selectedIndexName"
               :loading="isUploading"
               @click="handleUpload"
             >
@@ -156,16 +156,26 @@
             <el-progress :percentage="uploadProgress" :status="uploadProgress >= 100 ? 'success' : undefined" />
             <div class="upload-status-text">{{ uploadStatusText }}</div>
           </div>
+          <!-- UX-c：接收确认区列出后端已接收文件清单（files 字段消费） -->
+          <div v-if="receivedFiles.length" class="received-files">
+            <el-alert type="success" :closable="false" show-icon>
+              <template #title>
+                已接收 {{ receivedFiles.length }} 个文件：{{ receivedFiles.join('、') }}
+              </template>
+            </el-alert>
+          </div>
         </div>
-        
+
         <el-divider />
-        
+
         <div v-if="selectedIndexName" class="files-section">
           <h4 class="files-title">
             已上传文件
-            <el-button 
-              link 
-              :loading="isLoadingFiles" 
+            <!-- R-UX-02：消费分页 total，消除第 21 个文件起静默消失 -->
+            <span v-if="filesTotal > 0" class="files-total-hint">共 {{ filesTotal }} 个</span>
+            <el-button
+              link
+              :loading="isLoadingFiles"
               style="margin-left: 10px"
               @click="loadFiles"
             >
@@ -174,7 +184,7 @@
           </h4>
           <div v-if="files.length > 0" class="files-list">
             <div
-v-for="file in files" :key="file.name" v-memo="[file.name, file.size, file.uploadedAt, isDeletingFile === file.name]"
+              v-for="file in files" :key="file.name" v-memo="[file.name, file.size, file.uploadedAt, isDeletingFile === file.name]"
                  class="file-item">
               <div class="file-info">
                 <span class="file-name">{{ file.name }}</span>
@@ -182,9 +192,9 @@ v-for="file in files" :key="file.name" v-memo="[file.name, file.size, file.uploa
                   {{ formatFileSize(file.size) }} · {{ formatDate(file.uploadedAt) }}
                 </span>
               </div>
-              <el-button 
-                type="danger" 
-                size="small" 
+              <el-button
+                type="danger"
+                size="small"
                 :loading="isDeletingFile === file.name"
                 @click="handleDeleteFile(file.name)"
               >
@@ -192,7 +202,17 @@ v-for="file in files" :key="file.name" v-memo="[file.name, file.size, file.uploa
               </el-button>
             </div>
           </div>
-          <el-empty v-else description="暂无上传文件" />
+          <el-empty v-else-if="!isLoadingFiles" description="暂无上传文件" />
+          <!-- R-UX-02：文件列表服务端分页 -->
+          <div v-if="filesTotal > filesPageSize" class="files-pagination">
+            <el-pagination
+              layout="total, prev, pager, next"
+              :total="filesTotal"
+              :page-size="filesPageSize"
+              :current-page="filesPage"
+              @current-change="handleFilesPageChange"
+            />
+          </div>
         </div>
       </el-card>
       
@@ -210,35 +230,56 @@ v-for="file in files" :key="file.name" v-memo="[file.name, file.size, file.uploa
           <div class="card-header">
             <span>查询结果</span>
             <el-tag v-if="isStreaming" type="warning" class="streaming-tag">
-              生成中...
+              {{ stageHint || '生成中...' }}
             </el-tag>
           </div>
         </template>
-        
-        <div v-if="result.success !== false">
-          <h4>答案</h4>
-          <div class="answer-content">
-            <MarkdownRenderer :content="result.answer || streamingAnswer" />
+
+        <!-- UX-e：答案区走 MarkdownRenderer，包局部 ErrorBoundary 防渲染异常炸整页
+             （research 已有局部边界先例） -->
+        <ErrorBoundary>
+          <div v-if="result.success !== false">
+            <h4>答案</h4>
+            <div class="answer-content">
+              <!-- R-UX-03：等待期阶段占位（start/heartbeat 事件已由后端发出），
+                   首 chunk 到达后清 stageHint 切回正文渲染 -->
+              <div v-if="!streamingAnswer && stageHint" class="stage-hint">
+                <span class="stage-hint-dot" />
+                {{ stageHint }}
+              </div>
+              <MarkdownRenderer v-else :content="result.answer || streamingAnswer" />
+            </div>
+
+            <div v-if="result.sources && result.sources.length > 0">
+              <h4>参考来源</h4>
+              <el-collapse>
+                <el-collapse-item
+                  v-for="(source, index) in result.sources"
+                  :key="index"
+                  v-memo="[source.content, formatSourceTitle(source, index), source.degraded, source.score]"
+                  :name="index"
+                >
+                  <template #title>
+                    <span class="source-title">{{ formatSourceTitle(source, index) }}</span>
+                    <!-- UX-a：来源级降级徽标（degradation 事件是全局 toast，此处标记单条来源） -->
+                    <el-tag v-if="source.degraded" type="warning" size="small" class="source-flag-tag">
+                      降级检索
+                    </el-tag>
+                    <!-- R-UX-04：相关度分数透出显示（后端检索内核归一相似度语义，越大越相关） -->
+                    <el-tag v-if="typeof source.score === 'number'" type="info" size="small" class="source-flag-tag">
+                      相关度: {{ source.score.toFixed(3) }}
+                    </el-tag>
+                  </template>
+                  <p class="source-content">{{ source.content }}</p>
+                </el-collapse-item>
+              </el-collapse>
+            </div>
           </div>
-          
-          <div v-if="result.sources && result.sources.length > 0">
-            <h4>参考来源</h4>
-            <el-collapse>
-              <el-collapse-item
-                v-for="(source, index) in result.sources"
-                :key="index"
-                v-memo="[source.content || source, getSourceTitle(source, index)]"
-                :title="getSourceTitle(source, index)"
-              >
-                <p class="source-content">{{ source.content || source }}</p>
-              </el-collapse-item>
-            </el-collapse>
+
+          <div v-else class="error">
+            <el-alert type="error" :title="result.error || '查询失败'" />
           </div>
-        </div>
-        
-        <div v-else class="error">
-          <el-alert type="error" :title="result.error || '查询失败'" />
-        </div>
+        </ErrorBoundary>
       </el-card>
     </div>
     
@@ -289,13 +330,16 @@ import { ElMessage } from 'element-plus'
 import { Upload, Document } from '@element-plus/icons-vue'
 import { formatDate, formatFileSize } from '../utils/format'
 import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
+import ErrorBoundary from '../components/common/ErrorBoundary.vue'
 import { logger } from '../utils/logger'
+import { extractErrorMessage } from '../utils/apiErrorHandler'
 import { confirmDelete, confirmAction } from '../utils/dialog'
 import { useSessionStore } from '../stores/session'
 import { useRealtimeSync } from '../composables/useRealtimeSync'
 import { useApiTask } from '../composables/useApiTask'
 import { useSSEStream } from '../composables/useSSEStream'
-import { buildUploadFormData, notifyEmbeddingFallback, getUploadErrorMessage, trackUploadTask } from '../utils/knowledgeUpload'
+import { buildUploadFormData, notifyEmbeddingFallback, getUploadErrorMessage, trackUploadTask, mapUploadProgress } from '../utils/knowledgeUpload'
+import { formatSourceTitle } from '../utils/ragSources'
 
 const sessionStore = useSessionStore()
 // isDeletingFile（存文件名，标记删除中的行）与 isUploading（成功路径由 WS 回调复位）为手动管理
@@ -304,6 +348,9 @@ const isDeletingFile = ref('')
 const isStreaming = ref(false)
 const result = ref(null)
 const errorMessage = ref('')
+// R-UX-03：流式等待期阶段文案——后端 start("检索中...")与 heartbeat 三阶段
+// （正在改写查询/正在检索文档/正在生成回答）此前前端零消费，首 chunk 前答案区空白
+const stageHint = ref('')
 const availableIndexes = ref([])
 const files = ref([])
 const uploadRef = ref(null)
@@ -347,13 +394,6 @@ const createRules = {
   ]
 }
 
-const getSourceTitle = (source, index) => {
-  if (source.metadata && source.metadata.source) {
-    return `来源 ${index + 1}: ${source.metadata.source}`
-  }
-  return `来源 ${index + 1}`
-}
-
 const handleIndexChange = (value) => {
   if (value) {
     queryForm.indexName = value
@@ -361,43 +401,67 @@ const handleIndexChange = (value) => {
   } else {
     files.value = []
   }
+  receivedFiles.value = []
 }
 
+// R-UX-02：文件列表真分页（后端默认 20/页，消费 total 翻页）
+const filesPage = ref(1)
+const filesPageSize = ref(20)
+const filesTotal = ref(0)
+
 const { run: runLoadFiles, loading: isLoadingFiles } = useApiTask(
-  async () => {
-    const response = await ragAPI.getDocuments(selectedIndexName.value)
+  async (page = 1) => {
+    const response = await ragAPI.getDocuments(selectedIndexName.value, {
+      page,
+      page_size: filesPageSize.value,
+    })
     const data = response.data
 
+    let items = []
+    let total = 0
+    let currentPage = page
     if (data.code === 200 && data.data) {
-      files.value = data.data.items || []
+      items = data.data.items || []
+      total = data.data.total ?? items.length
+      currentPage = data.data.page || page
     } else if (data.items) {
-      files.value = data.items
+      items = data.items
+      total = data.total ?? items.length
     } else if (Array.isArray(data)) {
-      files.value = data
-    } else {
-      files.value = []
+      items = data
     }
+    files.value = items
+    filesTotal.value = total
+    filesPage.value = currentPage
   },
   {
     showErrorToast: false,
     onError: (error) => {
       logger.error('获取文件列表失败:', error)
-      ElMessage.error('获取文件列表失败')
+      ElMessage.error('获取文件列表失败: ' + extractErrorMessage(error))
       files.value = []
+      filesTotal.value = 0
     },
   }
 )
 
-const loadFiles = () => {
+const loadFiles = (page = 1) => {
   if (!selectedIndexName.value) return
-  return runLoadFiles()
+  return runLoadFiles(page)
+}
+
+const handleFilesPageChange = (page) => {
+  loadFiles(page)
 }
 
 const { run: runDeleteFile } = useApiTask(
   async (filename) => {
     await ragAPI.deleteDocument(selectedIndexName.value, filename)
     ElMessage.success('文件删除成功')
-    await loadFiles()
+    // 当前页删空时回退一页（分页配套）
+    const lastPage = Math.max(1, Math.ceil((filesTotal.value - 1) / filesPageSize.value))
+    const targetPage = files.value.length === 1 ? Math.min(filesPage.value - 1, lastPage) : filesPage.value
+    await loadFiles(Math.max(1, targetPage))
     await fetchIndexes()
   },
   {
@@ -405,7 +469,7 @@ const { run: runDeleteFile } = useApiTask(
     showErrorToast: false,
     onError: (error) => {
       logger.error('删除文件失败:', error)
-      ElMessage.error('删除文件失败')
+      ElMessage.error('删除文件失败: ' + extractErrorMessage(error))
     },
   }
 )
@@ -437,7 +501,7 @@ const { run: runDeleteIndex, loading: isDeletingIndex } = useApiTask(
     showErrorToast: false,
     onError: (error) => {
       logger.error('删除索引失败:', error)
-      ElMessage.error('删除索引失败')
+      ElMessage.error('删除索引失败: ' + extractErrorMessage(error))
     },
   }
 )
@@ -453,12 +517,17 @@ const handleDeleteIndex = async () => {
 
 const { run: runFetchIndexes, loading: isLoadingIndexes } = useApiTask(
   async () => {
-    const response = await ragAPI.getIndices()
+    // R-UX-02：索引下拉消费分页契约——page_size=100 一次拉取（上限），超限显式警告非静默截断
+    const response = await ragAPI.getIndices({ page_size: 100 })
     const data = response.data
 
     let indexes = []
     if (data.code === 200 && data.data) {
       indexes = Array.isArray(data.data) ? data.data : data.data.items || []
+      const total = Array.isArray(data.data) ? indexes.length : data.data.total ?? indexes.length
+      if (total > 100) {
+        ElMessage.warning(`索引数量（${total}）超过单页上限，仅显示前 100 个`)
+      }
     } else if (data.indexes) {
       indexes = data.indexes
     } else if (Array.isArray(data)) {
@@ -482,7 +551,7 @@ const { run: runFetchIndexes, loading: isLoadingIndexes } = useApiTask(
     showErrorToast: false,
     onError: (error) => {
       logger.error('获取索引列表失败:', error)
-      ElMessage.error('获取索引列表失败')
+      ElMessage.error('获取索引列表失败: ' + extractErrorMessage(error))
     },
   }
 )
@@ -540,22 +609,8 @@ const { run: runNormalQuery, loading: isLoading } = useApiTask(
     },
     onError: (error) => {
       logger.error('查询失败:', error)
-      let errorMsg = '查询失败，请稍后重试'
-
-      if (error.response) {
-        if (error.response.status === 404) {
-          errorMsg = '索引不存在，请检查索引名称'
-        } else if (error.response.status === 500) {
-          errorMsg = '服务器内部错误，请联系管理员'
-        } else if (error.response.data && error.response.data.message) {
-          errorMsg = error.response.data.message
-        } else if (error.response.data && error.response.data.detail) {
-          errorMsg = error.response.data.detail
-        }
-      } else if (error.request) {
-        errorMsg = '网络连接失败，请检查网络设置'
-      }
-
+      // R-UX-05：统一错误文案入口（覆盖 status 分类/后端 message/detail/网络错误）
+      const errorMsg = extractErrorMessage(error)
       errorMessage.value = errorMsg
       ElMessage.error(errorMsg)
       result.value = { success: false, error: errorMsg }
@@ -576,6 +631,7 @@ const executeStreamQuery = async () => {
   result.value = { answer: '', sources: [] }
   errorMessage.value = ''
   streamingAnswer.value = ''
+  stageHint.value = ''
 
   try {
     const streamResult = await sseStream.start((signal) =>
@@ -603,6 +659,7 @@ const executeStreamQuery = async () => {
   } finally {
     isLoading.value = false
     isStreaming.value = false
+    stageHint.value = ''
     if (result.value && streamingAnswer.value) {
       result.value.answer = streamingAnswer.value
     }
@@ -614,9 +671,18 @@ const handleStreamEvent = (convertedData) => {
   // （toCamelCase + type 还原为后端原始 snake_case 协议路由标识符），
   // 消费方只拿已转换对象，case 分支字段访问均为 camelCase。
   switch (convertedData.type) {
+    // R-UX-03：start（"检索中..."）与 heartbeat（改写查询/检索文档/生成回答三阶段）
+    // 事件此前零消费——渲染为答案区占位文案，首 chunk 到达后清除
     case 'start':
+      stageHint.value = convertedData.message || '检索中...'
+      break
+    case 'heartbeat':
+      if (convertedData.message) {
+        stageHint.value = convertedData.message
+      }
       break
     case 'chunk':
+      stageHint.value = ''
       if (convertedData.content) {
         streamingAnswer.value += convertedData.content
         if (result.value) {
@@ -625,12 +691,14 @@ const handleStreamEvent = (convertedData) => {
       }
       break
     case 'end':
+      stageHint.value = ''
       if (result.value) {
         result.value.answer = streamingAnswer.value
         result.value.success = true
       }
       break
     case 'error':
+      stageHint.value = ''
       errorMessage.value = convertedData.message || convertedData.error || '查询出错'
       if (result.value) {
         result.value.success = false
@@ -666,6 +734,7 @@ const clearResult = () => {
   result.value = null
   errorMessage.value = ''
   streamingAnswer.value = ''
+  stageHint.value = ''
 }
 
 const handleFileChange = (file, fileList) => {
@@ -674,6 +743,7 @@ const handleFileChange = (file, fileList) => {
 
 const clearUpload = () => {
   uploadFiles.value = []
+  receivedFiles.value = []
   if (uploadRef.value) {
     uploadRef.value.clearFiles()
   }
@@ -681,6 +751,8 @@ const clearUpload = () => {
 
 const uploadProgress = ref(0)
 const uploadStatusText = ref('')
+// UX-c：上传响应 files 字段——接收确认区列出后端已接收文件清单
+const receivedFiles = ref([])
 
 const realtimeSync = useRealtimeSync()
 let cancelUploadTask = null
@@ -690,17 +762,28 @@ let cancelUploadTask = null
 const { run: runUpload } = useApiTask(
   async () => {
     const formData = buildUploadFormData(uploadFiles.value)
-    const response = await ragAPI.uploadDocuments(selectedIndexName.value, formData)
+    // R-UX-06：HTTP 上传段经 onUploadProgress 映射到 0-30 段，消除首段盲窗
+    const response = await ragAPI.uploadDocuments(selectedIndexName.value, formData, {
+      onUploadProgress: (event) => {
+        const pct = mapUploadProgress(event.loaded, event.total)
+        if (pct > 0) {
+          uploadProgress.value = Math.max(uploadProgress.value, pct)
+          uploadStatusText.value = `正在上传文件... ${pct}%`
+        }
+      },
+    })
     const taskId = response.data?.data?.taskId
     if (!taskId) {
       throw new Error('上传响应缺少任务ID')
     }
-    return taskId
+    // UX-c：files 为后端已接收文件清单（保存成功即返回，先于向量化终态）
+    return { taskId, files: (response.data?.data?.files || []).map(f => f.name || f.fileName).filter(Boolean) }
   },
   {
     loading: false,
     showErrorToast: false,
-    onSuccess: (taskId) => {
+    onSuccess: ({ taskId, files: received }) => {
+      receivedFiles.value = received
       uploadStatusText.value = '文档已接收，正在后台处理...'
       cancelUploadTask = trackUploadTask(realtimeSync, taskId, {
         onProgress: (progress, step) => {
@@ -748,6 +831,7 @@ const handleUpload = async () => {
   isUploading.value = true
   uploadProgress.value = 0
   uploadStatusText.value = '正在上传文件...'
+  receivedFiles.value = []
   await runUpload()
 }
 
@@ -777,19 +861,8 @@ const { run: runCreateIndex, loading: isCreating } = useApiTask(
     showErrorToast: false,
     onError: (error) => {
       logger.error('创建索引失败:', error)
-      let errorMsg = '创建索引失败'
-
-      if (error.response) {
-        if (error.response.status === 409) {
-          errorMsg = error.response.data.message || '索引已存在'
-        } else if (error.response.data && error.response.data.message) {
-          errorMsg = error.response.data.message
-        } else if (error.response.data && error.response.data.detail) {
-          errorMsg = error.response.data.detail
-        }
-      }
-
-      ElMessage.error(errorMsg)
+      // R-UX-05：统一错误文案入口（409 冲突等后端 message 优先透出）
+      ElMessage.error(extractErrorMessage(error))
     },
   }
 )
@@ -832,15 +905,20 @@ onActivated(async () => {
   }
 })
 
+// R-UX-06：keep-alive 停用不取消上传任务订阅——WS 回调持续更新响应式状态，
+// 回到页面即见终态（任务后台继续执行，replay 机制兜底历史帧）；订阅仅随组件销毁释放
 const cleanupRagView = () => {
   stopStreaming()
+}
+const disposeRagView = () => {
+  cleanupRagView()
   if (cancelUploadTask) {
     cancelUploadTask()
     cancelUploadTask = null
   }
 }
-onUnmounted(cleanupRagView)
-// keep-alive 缓存生效后组件停用不卸载（onUnmounted 不触发），停用时显式清理
+onUnmounted(disposeRagView)
+// keep-alive 缓存生效后组件停用不卸载（onUnmounted 不触发），停用时仅断开流式查询
 onDeactivated(cleanupRagView)
 </script>
 
@@ -924,6 +1002,60 @@ onDeactivated(cleanupRagView)
   border-radius: 6px;
   line-height: 1.8;
   min-height: 60px;
+}
+
+/* R-UX-03：等待期阶段占位文案（脉冲呼吸） */
+.stage-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 14px;
+  animation: stage-hint-pulse 1.5s ease-in-out infinite;
+}
+
+.stage-hint-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--el-color-warning);
+  flex-shrink: 0;
+}
+
+@keyframes stage-hint-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* 来源面板：标题行内联徽标（UX-a 降级标记 / R-UX-04 相关度分数） */
+.source-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-flag-tag {
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.received-files {
+  margin-top: 12px;
+}
+
+.files-total-hint {
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--el-text-color-secondary);
+}
+
+.files-pagination {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .source-content {

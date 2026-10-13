@@ -62,12 +62,6 @@ class Command(BaseCommand):
             dest="dry_run",
             help="仅显示将要执行的操作，不实际重建",
         )
-        parser.add_argument(
-            "--batch-size",
-            type=int,
-            default=50,
-            help="文档嵌入批处理大小（默认 50）",
-        )
 
     def handle(self, *args, **options):
         index_name: str | None = options.get("index_name")
@@ -75,7 +69,6 @@ class Command(BaseCommand):
         rebuild_all: bool = options.get("rebuild_all", False)
         list_indexes: bool = options.get("list_indexes", False)
         dry_run: bool = options.get("dry_run", False)
-        batch_size: int = options.get("batch_size", 50)
 
         if list_indexes:
             self._list_indexes()
@@ -85,9 +78,9 @@ class Command(BaseCommand):
             raise CommandError("请指定索引名称，或使用 --all 重建所有索引")
 
         if rebuild_all:
-            self._rebuild_all(provider, dry_run, batch_size)
+            self._rebuild_all(provider, dry_run)
         else:
-            self._rebuild_single(index_name, provider, dry_run, batch_size)
+            self._rebuild_single(index_name, provider, dry_run)
 
     def _list_indexes(self):
         """列出所有索引及其维度信息"""
@@ -114,15 +107,16 @@ class Command(BaseCommand):
         index_name: str,
         provider: str | None,
         dry_run: bool,
-        batch_size: int,
     ):
         """重建单个索引"""
         manager = IndexManager()
 
-        if not manager.index_exists(index_name):
+        # 管理命令系统路径：user_id=None（IndexManager 可信内部路径，
+        # 索引名由运维显式指定，无 HTTP 面暴露）
+        if not manager.index_exists(index_name, user_id=None):
             raise CommandError(f"索引不存在: {index_name}")
 
-        metadata = manager.load_metadata(index_name) or {}
+        metadata = manager.load_metadata(index_name, user_id=None) or {}
         old_model = metadata.get("embedding_model", "未知")
         old_dim = metadata.get("embedding_dimension", "未知")
         num_docs = metadata.get("num_documents", 0)
@@ -160,13 +154,12 @@ class Command(BaseCommand):
             self.stdout.write("已取消")
             return
 
-        self._do_rebuild(manager, index_name, embeddings, batch_size)
+        self._do_rebuild(manager, index_name, embeddings)
 
     def _rebuild_all(
         self,
         provider: str | None,
         dry_run: bool,
-        batch_size: int,
     ):
         """重建所有索引"""
         manager = IndexManager()
@@ -202,7 +195,7 @@ class Command(BaseCommand):
         for idx in indexes:
             name = idx.get("name", "")
             try:
-                self._do_rebuild(manager, name, embeddings, batch_size)
+                self._do_rebuild(manager, name, embeddings)
             except Exception as e:
                 self.stderr.write(self.style.ERROR(f"重建索引 {name} 失败: {e}"))
 
@@ -211,51 +204,18 @@ class Command(BaseCommand):
         manager: IndexManager,
         index_name: str,
         embeddings,
-        batch_size: int,
     ):
         """执行索引重建"""
-        from langchain_core.documents import Document
-
         self.stdout.write(f"正在重建索引: {index_name}...")
 
-        # 1. 读取旧索引中的文档
+        # 1. 读取旧索引中的文档（B-6：复用 IndexManager.read_all_documents 公共 API——
+        # PGVector 走 SQL 全量读取，其他后端回退 docstore 遍历；不再平行实现
+        # similarity_search("", k=min(total,10000)) 路径及其 10000 硬上限）
         try:
-            old_store = manager.load_index(index_name, embeddings)
-        except Exception:
-            # 维度不匹配时无法加载，需要直接从 PGVector 读取原始文档
-            self.stdout.write("  无法用新 embedding 加载旧索引，尝试从数据库直接读取文档...")
-            old_store = None
-
-        documents = []
-        if old_store is not None:
-            # 从旧向量库中提取文档
-            try:
-                if hasattr(old_store, "docstore") and hasattr(old_store, "index_to_docstore_id"):
-                    for doc_id in old_store.index_to_docstore_id.values():
-                        doc = old_store.docstore.search(doc_id)
-                        if isinstance(doc, Document):
-                            documents.append(doc)
-                elif hasattr(old_store, "similarity_search"):
-                    # PGVector: 用大 k 尝试获取所有文档
-                    # 先获取文档总数
-                    from django.db import connections
-
-                    with connections["default"].cursor() as cursor:
-                        cursor.execute(
-                            """SELECT COUNT(*) FROM langchain_pg_embedding
-                               WHERE collection_id = (
-                                   SELECT uuid FROM langchain_pg_collection WHERE name = %s
-                               )""",
-                            [index_name],
-                        )
-                        total = cursor.fetchone()[0]
-
-                    self.stdout.write(f"  从 PGVector 读取 {total} 条文档...")
-                    if total > 0:
-                        documents = old_store.similarity_search("", k=min(total, 10000))
-            except Exception as e:
-                self.stderr.write(self.style.ERROR(f"  读取旧文档失败: {e}"))
-                raise
+            documents = manager.read_all_documents(index_name, embeddings)
+        except Exception as e:
+            self.stderr.write(self.style.ERROR(f"  读取旧文档失败: {e}"))
+            raise
 
         if not documents:
             self.stderr.write(
@@ -266,8 +226,9 @@ class Command(BaseCommand):
         self.stdout.write(f"  读取到 {len(documents)} 条文档")
 
         # 2. 用新 embedding 创建索引（overwrite=True 自动处理旧索引）
-        store_type = manager.get_store_type(index_name)
-        description = (manager.load_metadata(index_name) or {}).get("description", "")
+        # user_id=None：同上，管理命令可信系统路径
+        store_type = manager.get_store_type(index_name, user_id=None)
+        description = (manager.load_metadata(index_name, user_id=None) or {}).get("description", "")
 
         start_time = time.time()
         manager.create_index(

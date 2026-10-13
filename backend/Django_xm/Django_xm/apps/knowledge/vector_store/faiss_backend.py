@@ -97,7 +97,7 @@ class FAISSBackend(VectorStoreBackend):
         _save_faiss_integrity(collection_path)
 
         logger.info(f"FAISS 向量库创建成功 (collection={collection_name})")
-        return vector_store
+        return self._stamp_score_semantics(vector_store)
 
     def load(
         self,
@@ -127,7 +127,7 @@ class FAISSBackend(VectorStoreBackend):
             )
 
         logger.info(f"FAISS 向量库加载成功 (collection={collection_name})")
-        return vector_store
+        return self._stamp_score_semantics(vector_store)
 
     def save(
         self,
@@ -191,30 +191,10 @@ class FAISSBackend(VectorStoreBackend):
         logger.info(f"FAISS 添加 {len(ids)} 个文档")
         return ids
 
-    def remove_documents(
-        self,
-        collection_name: str,
-        document_ids: list[str],
-    ) -> bool:
-        """FAISS 不支持按 ID 直接删除，需要重建索引"""
-        logger.warning("FAISS 不支持按 ID 直接删除文档，请使用 remove_documents_by_metadata")
-        return False
-
-    def remove_documents_by_metadata(
-        self,
-        collection_name: str,
-        key: str,
-        value: str,
-    ) -> int:
-        """按元数据删除文档：遍历 docstore 匹配 metadata 后删除"""
-        collection_path = self._get_collection_path(collection_name)
-        if not collection_path.exists():
-            logger.warning(f"FAISS 向量库不存在: {collection_name}")
-            return 0
-
-        # FAISS 的删除需要加载后操作，此处返回 0 提示调用方使用 load + delete 流程
-        logger.warning("FAISS 按元数据删除需要加载向量库后操作，建议通过 load -> 遍历 docstore -> delete 流程处理")
-        return 0
+    # 3.3 能力矩阵：FAISS 索引是二进制文件，无法在打开前按 ID / 元数据删除；
+    # 声明 False 后 IndexManager 删除链走 load → delete → save 通用回退。
+    # 旧实现此处返回 False/0 并只打 warning——静默假成功已显式化。
+    supports_remove = False
 
     def search(
         self,
@@ -248,6 +228,10 @@ class FAISSBackend(VectorStoreBackend):
                 # metadata.json 解析失败时回退到空字典，使用默认值
                 logger.debug("metadata.json 解析失败，回退到空字典")
 
+        # 3.3 计数口径说明：FAISS 不打开索引无法取得真实向量数，num_documents
+        # 来自写入链维护的 metadata.json（可能滞后于删除操作）。真实计数走
+        # IndexManager.get_index_stats(name, embeddings=...)（加载后返回
+        # total_vectors），消费方不得以本方法计数判定删除是否生效。
         return {
             "name": collection_name,
             "exists": True,

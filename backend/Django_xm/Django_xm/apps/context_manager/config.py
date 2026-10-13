@@ -25,7 +25,7 @@ class ContextManagerSettings(BaseSettings):
 
     compression_enabled: bool = Field(default=True, description="是否启用上下文自动压缩")
 
-    compression_strategy: str = Field(default="hybrid", description="压缩策略: summary/sliding_window/hybrid")
+    compression_strategy: str = Field(default="hybrid", description="压缩策略: summary/hybrid")
 
     compression_threshold_ratio: float = Field(
         default=0.8, ge=0.5, le=0.95, description="压缩触发阈值（占模型 token 限制的比例）"
@@ -43,8 +43,6 @@ class ContextManagerSettings(BaseSettings):
 
     cross_session_enabled: bool = Field(default=True, description="是否启用跨会话上下文复用")
 
-    long_term_tags: str = Field(default="system,preference,decision", description="长期记忆标记关键词（逗号分隔）")
-
     budget_templates: str = Field(
         default="",
         description="自定义 Token 预算模板（JSON 字符串，从环境变量 CONTEXT_BUDGET_TEMPLATES 加载）。"
@@ -56,16 +54,12 @@ class ContextManagerSettings(BaseSettings):
         default=20, ge=5, le=100, description="跨会话记忆最大条目数，超限按 LRU 淘汰"
     )
 
+    cross_session_context_window: int = Field(
+        default=5, ge=1, le=50, description="跨会话上下文注入时参与相关性评分的最大会话记忆条数（4.2 窗口配置化）"
+    )
+
     compression_level_2_threshold: float = Field(
         default=0.5, ge=0.3, le=0.7, description="Level 2 压缩触发阈值（占模型 token 限制的比例）"
-    )
-
-    compression_level_3_threshold: float = Field(
-        default=0.75, ge=0.6, le=0.85, description="Level 3 压缩触发阈值（占模型 token 限制的比例）"
-    )
-
-    compression_level_4_threshold: float = Field(
-        default=0.9, ge=0.8, le=0.95, description="Level 4 压缩触发阈值（占模型 token 限制的比例）"
     )
 
     compression_lightweight_model: str = Field(
@@ -76,9 +70,22 @@ class ContextManagerSettings(BaseSettings):
         default=3, ge=1, le=10, description="目标完成检测窗口大小（最近 N 轮）"
     )
 
+    termination_goal_complete_min_rounds: int = Field(
+        default=6, ge=2, le=50,
+        description="目标完成判定所需的最低 AI 消息轮数（round3 2.9 去硬编码；"
+        "短于此轮数不做 goal_completed 判定，防止浅尝辄止误终止）",
+    )
+
     termination_info_gain_threshold: float = Field(default=0.15, ge=0.0, le=1.0, description="信息增益衰减阈值")
 
     termination_info_gain_window: int = Field(default=4, ge=2, le=10, description="信息增益衰减检测窗口大小")
+
+    termination_info_gain_consecutive_rounds: int = Field(
+        default=6, ge=2, le=30,
+        description="信息增益衰减 TERMINATE 所需的连续低增益轮数（round3 2.9："
+        "短窗口低置信信号不足以下终止结论，需连续 N 轮低于阈值才允许终止，"
+        "防止中文长任务被误杀）",
+    )
 
     token_budget_limit: int = Field(default=500000, ge=50000, description="单次 Agent 调用的累计 token 预算上限")
 

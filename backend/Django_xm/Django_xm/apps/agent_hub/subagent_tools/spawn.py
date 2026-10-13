@@ -16,6 +16,10 @@
 - 工具集与运行配置经 ``configurable`` 显式传递（主 agent 由 chat_service /
   research_runner 写入，子代理由 langgraph_adapter._build_configurable 逐层覆盖），
   无全局旁路。
+- ``configurable`` 从每次工具调用的 RunnableConfig 参数读取（BaseTool 官方
+  config 注入机制，见 langchain_core.tools.base.arun 对 ``config: RunnableConfig``
+  参数的签名检测注入），本工具为模块级单例、完全无实例运行状态——跨会话并发
+  派生时各调用读各自 config，不存在实例字段覆写导致的串号。
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import json
 import logging
 from typing import Annotated, Any
 
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, InjectedToolCallId
 from pydantic import BaseModel, Field
 
@@ -64,26 +69,6 @@ class SpawnSubAgentTool(BaseTool):
     )
     args_schema: type[BaseModel] = SpawnInput
 
-    # 父 graph 的 configurable（由 ainvoke/invoke 从 RunnableConfig 捕获），
-    # 含 thread_id / _on_tool_event / _on_subagent_content / chat_session_id 等。
-    parent_configurable: dict = Field(default_factory=dict, description="父 graph configurable（运行时注入）")
-
-    # ── config 注入 ─────────────────────────────────────────────────────────────
-
-    def invoke(self, input: str | dict | BaseModel, config=None, **kwargs) -> Any:
-        self._capture_configurable(config)
-        return super().invoke(input, config=config, **kwargs)
-
-    async def ainvoke(self, input: str | dict | BaseModel, config=None, **kwargs) -> Any:
-        self._capture_configurable(config)
-        return await super().ainvoke(input, config=config, **kwargs)
-
-    def _capture_configurable(self, config) -> None:
-        if isinstance(config, dict):
-            configurable = config.get("configurable", {})
-            if isinstance(configurable, dict):
-                self.parent_configurable = configurable
-
     # ── 执行逻辑 ────────────────────────────────────────────────────────────────
 
     def _run(self, agent_name: str, task: str, tools: list[str] | None = None) -> str:
@@ -95,8 +80,14 @@ class SpawnSubAgentTool(BaseTool):
         task: str,
         tools: list[str] | None = None,
         tool_call_id: Annotated[str | None, InjectedToolCallId] = None,
+        config: RunnableConfig = None,
     ) -> str:
         """派生子代理（异步非阻塞，立即返回实例元数据）。
+
+        ``config`` 由 BaseTool 执行机制按签名注入（langchain_core.tools.base.arun
+        检测 ``config: RunnableConfig`` 参数后传入本次调用的 RunnableConfig，
+        经 ensure_config 恒非 None）——按调用局部读取 configurable，禁止缓存到
+        实例字段（本工具为进程级单例，实例缓存会导致跨会话并发串号）。
 
         异常透传：SubAgentError 等作为字符串错误返回（父 graph 不终止）。
         """
@@ -109,7 +100,9 @@ class SpawnSubAgentTool(BaseTool):
                 resolve_system_prompt,
             )
 
-            configurable = dict(self.parent_configurable or {})
+            # 注意：annotation 必须为裸 RunnableConfig（_get_runnable_config_param
+            # 按 type is RunnableConfig 精确匹配，Optional/Union 不会被注入）。
+            configurable = dict((config or {}).get("configurable") or {})
             # 父 thread_id：RunnableConfig 的 thread_id（主 agent = session_id /
             # research task id；子代理 = subagent_xxx）。
             parent_thread_id = configurable.get("thread_id") or ""
@@ -134,6 +127,9 @@ class SpawnSubAgentTool(BaseTool):
 
             user_id = configurable.get("user_id")
             session_id = configurable.get("session_id") or parent_thread_id
+            # 模型选择继承（双字段）：缺 provider_id 时子代理 resolve_model 回退
+            # SystemConfig 默认模型，用户在 UI 选择的主模型对子代理失效
+            provider_id = configurable.get("provider_id")
             model_name = configurable.get("model_name")
             store = configurable.get("store")
 
@@ -153,11 +149,9 @@ class SpawnSubAgentTool(BaseTool):
             merged = self._merge_tools(main_tools, dedicated_tools, extra_tools)
 
             # system_prompt：注册表角色提示（命中注册表时）；否则空，由 task 作为任务输入。
-            # prompt_provider 由本层注入（ARCH-03 依赖倒置）：agent_hub 可合法依赖
-            # research，ai_engine 注册表不感知 research.prompts。
-            system_prompt = (
-                resolve_system_prompt(agent_name, prompt_provider=self._resolve_registry_prompt) if spec else ""
-            )
+            # 角色词为注册表内置数据（spec 任务 4.3 环 3：原经本层从
+            # research.prompts 注入的边已消除，注册表与角色 prompt 同域单源）。
+            system_prompt = resolve_system_prompt(agent_name) if spec else ""
 
             agent_config = AgentConfig(
                 agent_type=AgentType.BASE,
@@ -166,6 +160,7 @@ class SpawnSubAgentTool(BaseTool):
                 tools=merged,
                 user_id=user_id,
                 session_id=session_id,
+                provider_id=provider_id,
                 model_name=model_name,
                 store=store,
                 # 深度思考继承主 agent 实际生效开关（含 provider 禁用注入，见 model_resolver）
@@ -201,39 +196,16 @@ class SpawnSubAgentTool(BaseTool):
             )
 
     @staticmethod
-    def _resolve_registry_prompt(agent_name: str) -> str:
-        """解析注册表角色的 system_prompt（ARCH-03 依赖倒置的注入侧）。
-
-        agent_hub → research 为合法依赖方向；ai_engine 注册表不感知
-        research.prompts，由本层提供角色提示词。
-        """
-        try:
-            from Django_xm.apps.research.prompts import (
-                DOC_ANALYST_SUBAGENT_PROMPT,
-                WEB_RESEARCHER_SUBAGENT_PROMPT,
-            )
-        except Exception as e:
-            logger.warning(f"加载子代理角色提示词失败: {agent_name}, err={e}")
-            return ""
-        return {
-            "web-researcher": WEB_RESEARCHER_SUBAGENT_PROMPT,
-            "doc-analyst": DOC_ANALYST_SUBAGENT_PROMPT,
-        }.get(agent_name, "")
-
-    @staticmethod
     def _get_retriever_tool_prefixes() -> tuple[str, ...]:
-        """获取检索类工具名前缀（ARCH-03 依赖倒置的注入侧）。
+        """获取检索类工具名前缀（机制层常量，common 单源）。
 
-        来源 research.services._constants.RETRIEVER_TOOL_NAME_PREFIXES，
-        供 ai_engine 注册表识别 doc-analyst 专用检索工具。
+        来源 common.constants.RETRIEVER_TOOL_NAME_PREFIXES（spec 任务 4.3 环 3
+        自 research.services._constants 下沉），供 ai_engine 注册表识别
+        doc-analyst 专用检索工具。
         """
-        try:
-            from Django_xm.apps.research.services._constants import RETRIEVER_TOOL_NAME_PREFIXES
+        from Django_xm.common.constants import RETRIEVER_TOOL_NAME_PREFIXES
 
-            return RETRIEVER_TOOL_NAME_PREFIXES
-        except Exception as e:
-            logger.warning(f"加载检索工具名前缀失败: {e}")
-            return ()
+        return RETRIEVER_TOOL_NAME_PREFIXES
 
     async def _resolve_main_tools(self, main_tool_names: list[str], user_id: int | None) -> list:
         """继承父 agent 全部工具（按工具名解析）。

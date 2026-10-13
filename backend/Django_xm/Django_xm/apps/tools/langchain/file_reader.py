@@ -5,13 +5,14 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.documents import Document
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from Django_xm.apps.ai_engine.config import settings as app_cfg
 from Django_xm.apps.tools.base import AsyncToolMixin
 from Django_xm.apps.tools.langchain.external_content import wrap_external_content
-from Django_xm.apps.tools.langchain.filesystem import FilesystemContextMixin, check_path_allowed
+from Django_xm.apps.tools.langchain.filesystem import check_path_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -399,7 +400,10 @@ def read_uploaded_attachment(attachment_id: int, user=None) -> str:
         f"{'─' * 40}\n\n"
     )
 
-    return header + content
+    # B4 注入隔离（digest 遗留⑥）：附件正文属外部内容，attachment_reader 与
+    # read_multiple_attachments 两工具的唯一内容出口在此统一包裹
+    #（错误路径异常上抛由调用方文案化，不进信封）
+    return wrap_external_content(f"附件 {attachment.original_name}", header + content)
 
 
 def read_multiple_attachments(attachment_ids: list[int], user=None) -> str:
@@ -465,13 +469,15 @@ class FileReaderTool(AsyncToolMixin, BaseTool):
             return error_msg
 
 
-class AttachmentReaderTool(FilesystemContextMixin, BaseTool):
+class AttachmentReaderTool(AsyncToolMixin, BaseTool):
     """附件读取工具
 
-    属主校验（S-09 IDOR 防护）：user_id 取自系统会话上下文
-    （RunnableConfig.configurable.user_id，由 chat_service / research_runner 注入，
-    复用 FilesystemContextMixin 捕获），LLM 传入的 attachment_id 仅能命中
-    当前用户名下的附件；上下文缺失（无法确认属主）时拒绝读取（安全默认）。
+    属主校验（S-09 IDOR 防护）：user_id 取自本次调用的 RunnableConfig
+    （``config: RunnableConfig`` 参数由 BaseTool 执行机制按签名注入，
+    ``configurable.user_id`` 由 chat_service / research_runner 写入），
+    LLM 传入的 attachment_id 仅能命中当前用户名下的附件；上下文缺失
+    （无法确认属主）时拒绝读取（安全默认）。不缓存到实例字段——工具为
+    模块级单例，实例缓存会导致跨会话并发串号（属主误判）。
     """
 
     name: str = "attachment_reader"
@@ -492,26 +498,22 @@ class AttachmentReaderTool(FilesystemContextMixin, BaseTool):
     )
     args_schema: type[BaseModel] = AttachmentReaderInput
 
-    def _run(self, attachment_id: int) -> str:
+    def _run(self, attachment_id: int, config: RunnableConfig = None) -> str:
         logger.info(f"📎 读取附件: id={attachment_id}")
 
         # IDOR 防护（S-09）：无法确认属主（configurable 未注入 user_id）时拒绝读取
-        if self._captured_user_id is None:
+        user_id = (config or {}).get("configurable", {}).get("user_id")
+        if user_id is None:
             return "错误：无法确认当前用户身份，已拒绝读取附件"
 
         try:
-            content = read_uploaded_attachment(attachment_id, user=self._captured_user_id)
+            content = read_uploaded_attachment(attachment_id, user=user_id)
             logger.info(f"📎 附件读取成功: {len(content)} 字符")
             return content
         except Exception as e:
             error_msg = f"读取附件失败: {e!s}"
             logger.exception(error_msg)
             return error_msg
-
-    async def _arun(self, attachment_id: int) -> str:
-        from asgiref.sync import sync_to_async
-
-        return await sync_to_async(self._run)(attachment_id=attachment_id)
 
 
 file_reader = FileReaderTool()

@@ -39,8 +39,9 @@ cp .env.example .env
 | 向量存储    | `VECTOR_STORE_PATH`、`VECTOR_STORE_TYPE`、`EMBEDDING_MODEL`、`EMBEDDING_BATCH_SIZE`      | 向量库后端与嵌入模型       |
 | 文本分块    | `CHUNK_SIZE`、`CHUNK_OVERLAP`                                                            | 文档切分参数               |
 | 检索器      | `RETRIEVER_SEARCH_TYPE`、`RETRIEVER_K`、`RETRIEVER_SCORE_THRESHOLD`、`RETRIEVER_FETCH_K` | RAG 检索参数               |
-| Agent       | `AGENT_MAX_ITERATIONS`、`AGENT_MAX_EXECUTION_TIME`                                       | 智能体迭代限制             |
-| RAG Agent   | `RAG_AGENT_MAX_ITERATIONS`、`RAG_AGENT_RETURN_SOURCE_DOCUMENTS`                          | RAG 智能体行为             |
+| Agent       | `AGENT_MAX_DEPTH`                                                                        | 子代理最大嵌套深度         |
+
+> 注：智能体迭代/递归限制不走环境变量，为代码常量 `AGENT_RECURSION_LIMIT_CHAT=500` / `AGENT_RECURSION_LIMIT_RESEARCH=1000` / `AGENT_RECURSION_LIMIT_SUBAGENT=200`（`apps/ai_engine/config.py`）；执行超时经 Django settings 的 `AGENT_SOFT_TIMEOUT` / `AGENT_HARD_TIMEOUT` 覆盖（`apps/ai_engine/services/agent_resilience.py`）。
 
 ## settings 环境说明
 

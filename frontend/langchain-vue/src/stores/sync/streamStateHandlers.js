@@ -239,6 +239,21 @@ export const createStreamStateHandlers = (ctx) => {
           })
           .catch(() => {})
       }
+    } else if (eventType === 'degradation') {
+      // E5-02（审计 error 维度）：知识库检索工具注入失败等降级提示——此前静默
+      // 跳过，LLM 凭参数知识回答被误认为来自知识库。属"流继续"类事件：
+      // 不改 streamState、不打断渲染，仅向用户弹可见提示。
+      if (data?.message) {
+        ElNotification({
+          title: '知识库降级提示',
+          message: data.message,
+          type: 'warning',
+          duration: 8000,
+        })
+        logger.warn(
+          `[Sync] 知识库降级: session=${sessionId}, message=${message.id}, kb=${data?.kbId || 'unknown'}`
+        )
+      }
     } else if (eventType === 'error') {
       // A1.5（审计 F1-1）：流内 error 事件（后端 stream_broadcast 白名单已放行，
       // data 规范化为 {code, message}，对齐 WS error 帧规范）。标记消息 ERROR
@@ -484,13 +499,16 @@ export const createStreamStateHandlers = (ctx) => {
         // 更新消息内容：优先主 agent 累计正文（payload.content，与工具 position
         // 基准一致），回退 finalReport。直接用 finalReport 覆盖会与 position
         // （基于 main_content 累计）错位，导致工具卡内联切段乱序。
+        // 取消终态（payload.stopped=true，深研取消→聊天侧同步修复）：content 权威
+        // 源为后端（已抢救过程正文或"深度研究已取消"补文），由下方全量同步拉取，
+        // 不写"深度研究执行失败"文案（取消≠失败）。
         if (payload.success !== false) {
           if (payload.content) {
             targetMsg.content = payload.content
           } else if (payload.finalReport) {
             targetMsg.content = payload.finalReport
           }
-        } else if (payload.error) {
+        } else if (payload.error && payload.stopped !== true) {
           targetMsg.content = `深度研究执行失败：${payload.error}`
         }
         targetMsg.isStreaming = false
@@ -502,9 +520,9 @@ export const createStreamStateHandlers = (ctx) => {
         // waiting 状态由批量审批场景下 _handleProcessed 设置（同批次还有 pending 时），
         // 若研究完成时仍有工具卡在 waiting，将永久显示"等待其他审批"。
         // 收敛：内联循环移入 messageIntegrity.finalizeToolCallsForResearchResult
-        //（success 感知终态：审批→APPROVED/REJECTED，工具→COMPLETED/FAILED，行为与原内联一致）
+        //（success 感知终态：审批→APPROVED/REJECTED，取消→TIMEOUT，工具→COMPLETED/FAILED）
         const { pendingApprovalCount, runningToolCount } =
-          finalizeToolCallsForResearchResult(targetMsg, payload.success !== false)
+          finalizeToolCallsForResearchResult(targetMsg, payload.success !== false, payload.stopped === true)
         // 清理 pendingApprovals 中属于这个任务的审批
         let clearedApprovalCount = 0
         if (payload.taskId) {

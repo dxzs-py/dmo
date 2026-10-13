@@ -86,8 +86,7 @@ async def fetch_tools_for_server(srv: dict[str, Any]) -> list[BaseTool]:
     """按 transport 分派拉取单个 MCP Server 的工具列表（5-1.2 收敛：分派唯一实现）。
 
     分派规则（原 ``tools/_load_mcp_tools_async``、``views_mcp/_fetch_mcp_tools``、
-    ``views_mcp/_test_mcp_server``、``managers/McpToolManager._test_mcp_server_async``
-    四处重复逻辑收敛至此）：
+    ``views_mcp/_test_mcp_server`` 三处重复逻辑收敛至此）:
 
     - stdio → command/args/env（stdio 会以 command 在服务端启动子进程，
       仅限管理员维护的可信配置，S-04 语义见模块 docstring）；

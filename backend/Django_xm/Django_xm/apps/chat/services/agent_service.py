@@ -83,6 +83,24 @@ class AgentService:
                     context_schema = ChatContext
                     logger.info(f"Agent 已注入 Store + context_schema (user_id={self.user_id})")
 
+        # 1.2 运行时动态注入：仅 checkpointer 链路装配 MemoryInjectionMiddleware
+        # （注入文本由 chat_service 经 asyncio.to_thread 获取后写入
+        # data["_memory_injection_context"]，主 agent 与预创建降级 agent 同源）。
+        # 注入经 wrap_model_call request.override 前插到送达模型的消息列表，
+        # 不写回 checkpoint state；非 checkpointer 链路的注入走
+        # _build_base_context 上下文工程语义，不在此装配（避免双注入）。
+        middleware_stack: list = []
+        if use_checkpointer:
+            injection_text = str(data.get("_memory_injection_context") or "").strip()
+            if injection_text:
+                try:
+                    from Django_xm.apps.context_manager.middleware import MemoryInjectionMiddleware
+
+                    middleware_stack.append(MemoryInjectionMiddleware(injection_text=injection_text))
+                    logger.info("已装配 MemoryInjectionMiddleware（checkpointer 主链路记忆注入）")
+                except Exception as e:
+                    logger.warning(f"MemoryInjectionMiddleware 构建失败，本次不注入记忆: {e}")
+
         config = AgentConfig(
             agent_type=AgentType.BASE,
             provider_id=data.get("provider_id"),
@@ -94,6 +112,7 @@ class AgentService:
             tool_config=tool_config,
             system_prompt=data.get("_research_system_prompt"),
             prompt_mode=prompt_mode,
+            middleware=middleware_stack or None,
             checkpointer=checkpointer,
             store=store,
             context_schema=context_schema,

@@ -17,6 +17,7 @@ from typing import Any
 from Django_xm.apps.ai_engine.models import SubAgentStatus
 from Django_xm.apps.ai_engine.subagent_runtime.adapters.base import BaseRuntimeAdapter
 from Django_xm.apps.ai_engine.subagent_runtime.concurrency import (
+    get_subagent_concurrency_acquire_timeout,
     get_subagent_concurrency_limit,
     get_subagent_concurrency_semaphore,
 )
@@ -33,6 +34,12 @@ logger = logging.getLogger(__name__)
 # 说明：回调为函数对象不可序列化，故用进程内 registry 而非 DB 字段保存；
 # 服务重启后 registry 为空，resume 回落 instance.metadata 重建（极端场景，主流程不受影响）。
 _configurable_registry: dict[str, dict] = {}
+
+# 子代理 thread_id → 协作式取消标志（C14）。terminate 置位后，执行线程在
+# astream 下一个事件到达时检测并停止消费；执行线程退出（_execute_in_thread
+# finally）时清理。进程内对象，服务重启后为空（仅影响已失联实例的取消，
+# 状态标记由 runtime.terminate 落 DB 兜底）。
+_cancel_flags: dict[str, threading.Event] = {}
 
 
 # 子代理 graph 工厂（依赖倒置）：ai_engine 禁止直接 import agent_hub（反向依赖），
@@ -78,9 +85,16 @@ class LangGraphAdapter(BaseRuntimeAdapter):
     async def resume(self, instance: Any, resume_payload: Any) -> None:
         """恢复中断的子代理（独立线程，用 Command(resume) 断点续跑）。"""
         # 恢复需要重新创建 graph（graph 对象不能跨事件循环复用）
-        agent_config = await self._rebuild_agent_config(instance)
+        try:
+            agent_config = await self._rebuild_agent_config(instance)
+        except Exception:
+            logger.exception(f"子代理 resume 重建 AgentConfig 失败: {instance.thread_id}")
+            agent_config = None
         if agent_config is None:
+            # 重建失败：置终态并触发生命周期回调（对齐 _execute_in_thread 异常路径），
+            # 否则父会话的 fan-in 等待者永不唤醒，挂到 watchdog 超时。
             await self.runtime._update_status(instance.thread_id, SubAgentStatus.FAILED)
+            await self._notify_finished(instance, "failed")
             return
         thread = threading.Thread(
             target=self._run_in_thread,
@@ -94,8 +108,24 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         return {"thread_id": instance.thread_id}
 
     async def terminate(self, instance: Any) -> None:
-        """终止子代理（仅标记状态，不强制 kill 协程；由 runtime 统一更新状态）。"""
-        return None
+        """终止子代理（C14 协作式取消：置取消标志，执行线程在下一个流事件处停止）。
+
+        边界（LangGraph 图执行不可从外部强制 kill，仅能协作式取消）：
+        - 置位进程内取消标志后，正在消费 astream 的执行线程在下一次事件到达时
+          停止（stream_mode 含 messages，token 级事件流量下响应为秒级）；
+          长时间工具调用期间无事件流出，需等该步骤结束后才响应；
+        - 已挂起（审批/业务等待）或无运行线程的实例仅置标志（无消费循环可停），
+          状态由 runtime.terminate 统一更新为 FAILED；resume 的状态校验会拒绝
+          已终态实例续跑，业务等待恢复路径同样被 runtime.resume 拒绝；
+        - 父线程被终止后再 spawn 孙代理由 runtime.spawn 的父状态校验拒绝。
+        """
+        thread_id = instance.thread_id
+        cancel_event = _cancel_flags.get(thread_id)
+        if cancel_event is None:
+            logger.info(f"子代理终止：无运行中执行线程（已完成/挂起/服务重启），仅标记状态: {thread_id}")
+            return
+        cancel_event.set()
+        logger.info(f"子代理终止：已置协作式取消标志: {thread_id}")
 
     # ── 后台执行 ────────────────────────────────────────────────────────
 
@@ -104,8 +134,10 @@ class LangGraphAdapter(BaseRuntimeAdapter):
 
         spawn 与 resume（审批恢复 / 等待恢复 / 重启恢复）全部经此启动唯一
         执行线程：进入即获取进程级并发槽（threading.BoundedSemaphore，容量
-        settings.AGENT_SUBAGENT_CONCURRENCY，默认 8），超限排队等待而非失败，
-        终态/异常/interrupt 全路径 finally 释放。
+        settings.AGENT_SUBAGENT_CONCURRENCY，默认 8），超限排队等待；排队
+        超时（settings.AGENT_SUBAGENT_ACQUIRE_TIMEOUT，默认 30s，round3 2.5）
+        置 FAILED + _notify_finished（父 wait/fan-in 等待者立即收到失败，
+        而非悬挂到 watchdog 7200s），终态/异常/interrupt 全路径 finally 释放。
 
         收敛点选择依据：
         - 覆盖面：全部子代理图执行唯一经此入口（spawn/resume 两处线程创建
@@ -116,22 +148,69 @@ class LangGraphAdapter(BaseRuntimeAdapter):
           上下文，天然跨 loop；
         - 不占工具超时：spawn 工具立即返回（runtime.spawn → adapter.spawn
           非阻塞），排队发生在子代理自身线程内、其图尚未启动，B6
-          ToolExecutionTimeoutMiddleware（包裹父图单次工具调用，默认 300s）
-          与 Agent soft/hard 超时均不覆盖此等待；排队延迟（槽位生命周期
-          受 recursion_limit/工具超时约束，分钟级）≪ 挂起会话 watchdog
-          7200s，等待父会话不会被误终态。
+          ToolExecutionTimeoutMiddleware（包裹父图单次工具调用）与 Agent
+          soft/hard 超时均不覆盖此等待；正常排队（秒级获得调度）≪ 挂起
+          会话 watchdog 7200s，等待父会话不会被误终态。
         """
         semaphore = get_subagent_concurrency_semaphore()
-        if not semaphore.acquire(blocking=False):
-            logger.info(
-                f"[SubAgentConcurrency] 子代理并发已达上限"
-                f"（{get_subagent_concurrency_limit()}），排队等待: {instance.thread_id}"
-            )
-            semaphore.acquire()
+        acquired = semaphore.acquire(blocking=False)
+        if not acquired:
+            acquire_timeout = get_subagent_concurrency_acquire_timeout()
+            if acquire_timeout is None:
+                logger.info(
+                    f"[SubAgentConcurrency] 子代理并发已达上限"
+                    f"（{get_subagent_concurrency_limit()}），排队等待（无超时）: {instance.thread_id}"
+                )
+                semaphore.acquire()
+                acquired = True
+            else:
+                logger.info(
+                    f"[SubAgentConcurrency] 子代理并发已达上限"
+                    f"（{get_subagent_concurrency_limit()}），排队等待（最多 {acquire_timeout:g}s）: "
+                    f"{instance.thread_id}"
+                )
+                acquired = semaphore.acquire(timeout=acquire_timeout)
+                if not acquired:
+                    logger.warning(
+                        f"[SubAgentConcurrency] 并发槽排队超时（{acquire_timeout:g}s），"
+                        f"置 FAILED 并唤醒父等待者: {instance.thread_id}"
+                    )
+                    self._fail_before_execution(instance, configurable, acquire_timeout)
+                    return
         try:
             self._execute_in_thread(instance, agent_config, configurable, resume_payload)
         finally:
-            semaphore.release()
+            if acquired:
+                semaphore.release()
+
+    def _fail_before_execution(self, instance: Any, configurable: dict | None, waited_seconds: float) -> None:
+        """并发槽排队超时失败终态（round3 2.5）：置 FAILED + 状态事件 + 唤醒父等待者。
+
+        在独立一次性事件循环中执行异步收尾（本方法运行于执行线程、loop 尚未
+        创建），语义对齐 _execute_in_thread 的异常终态路径：DB 状态 FAILED →
+        前端状态事件 → lifecycle 回调（父 wait/fan-in 等待者立即收到失败，
+        不挂 watchdog）。任何一步失败仅日志留痕，不阻塞线程退出。
+        """
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(self._mark_failed_before_execution(instance, configurable, waited_seconds))
+        except Exception:
+            logger.exception(f"子代理排队超时失败终态处理异常: {instance.thread_id}")
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                logger.warning("关闭排队超时失败路径事件循环失败（非致命）", exc_info=True)
+
+    async def _mark_failed_before_execution(
+        self, instance: Any, configurable: dict | None, waited_seconds: float
+    ) -> None:
+        try:
+            await self.runtime._update_status(instance.thread_id, SubAgentStatus.FAILED)
+        except Exception:
+            logger.exception(f"子代理排队超时置 FAILED 失败: {instance.thread_id}")
+        await self._publish_status_event(instance, configurable, SubAgentStatus.FAILED)
+        await self._notify_finished(instance, "failed")
 
     def _execute_in_thread(self, instance: Any, agent_config: Any, configurable: dict | None, resume_payload: Any) -> None:
         """持有并发槽执行子代理图（原 _run_in_thread 执行体，独立成方法）。"""
@@ -159,12 +238,17 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             except Exception:
                 logger.warning("关闭子代理事件循环失败（非致命）", exc_info=True)
             asyncio.set_event_loop(None)
+            # 协作式取消标志随执行线程退出清理（防 thread_id 复用泄漏/误触）
+            _cancel_flags.pop(instance.thread_id, None)
 
     async def _execute(self, instance: Any, agent_config: Any, configurable: dict | None, resume_payload: Any) -> None:
         from langchain_core.messages import HumanMessage
         from langgraph.types import Command as LgCommand
 
         thread_id = instance.thread_id
+        # 协作式取消（C14）：执行线程入口注册取消标志，terminate 置位后停止流消费
+        cancel_event = threading.Event()
+        _cancel_flags[thread_id] = cancel_event
         if resume_payload is None:
             # 首次 spawn：保存父 configurable（含事件回调引用），resume 时复用
             if configurable:
@@ -180,6 +264,16 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         # 经 _build_configurable 兜底后齐全）：供审批创建与状态事件消费，
         # 替代 raw configurable（重启恢复时为内存 registry 兜底值，可能为 None）。
         routing_config = run_config["configurable"]
+
+        # 终止竞态兜底：terminate 可能在执行线程尚未注册取消标志时到达
+        # （spawn 后立即终止，thread 调度晚于 DB 终态写入），复核 DB 状态，
+        # 已终态则不再启动图执行（否则终止的任务会以 completed 终态覆盖 FAILED）
+        fresh = await self.runtime.get_instance(thread_id)
+        if fresh is not None and fresh.status == SubAgentStatus.FAILED:
+            logger.info(f"子代理已在执行启动前被终止，跳过图执行: {thread_id}")
+            _configurable_registry.pop(thread_id, None)
+            await self._notify_finished(instance, "failed")
+            return
 
         # 创建子代理 graph（独立 thread_id + 独立 checkpoint）：
         # 经注入工厂创建（默认由 agent_hub AppConfig.ready() 注册），
@@ -201,13 +295,27 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             interrupt_id = (instance.pending_interrupt_info or {}).get("interrupt_id", "")
             graph_input = LgCommand(resume={interrupt_id: resume_payload})
 
-        # 消费 astream（事件转发由中间件钩子完成，无需手动消费 chunk）
+        # 消费 astream（事件转发由中间件钩子完成，无需手动消费 chunk）；
+        # C14 协作式取消：每个事件检查点检测终止标志，命中则停止消费
+        cancelled = False
         async for _chunk in agent.graph.astream(
             graph_input,
             config=run_config,
             stream_mode=["messages", "updates"],
         ):
-            pass
+            if cancel_event.is_set():
+                cancelled = True
+                break
+
+        if cancelled:
+            logger.info(f"子代理协作式取消生效，停止流消费: {thread_id}")
+            _configurable_registry.pop(thread_id, None)
+            await self.runtime._update_status(thread_id, SubAgentStatus.FAILED)
+            # 子代理状态事件：前端实时刷新子代理卡为终态（否则停留"执行中"）
+            await self._publish_status_event(instance, routing_config, SubAgentStatus.FAILED)
+            # 唤醒父会话 fan-in 等待者（与异常终态路径一致）
+            await self._notify_finished(instance, "failed")
+            return
 
         # 关键：astream 结束 ≠ 完成，读真实 state 判定
         state = await agent.graph.aget_state(run_config)
@@ -369,26 +477,23 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             f"interrupt_id={interrupt_id}"
         )
 
-        # 竞态兜底：孙代理可能在「spawn → wait」窗口内已终态（终态回调错过 awaiter），
-        # 注册前二次检查并直接恢复（对齐 SessionExecutor._register_waiter）。
-        results: dict[str, dict] = {}
+        # TOCTOU 修复（round3 2.6）：先注册 awaiter，再复核 DB 终态。
+        # 旧实现「先查终态 → 再注册」在两步之间存在竞态窗口：孙代理在
+        # 查询之后、注册之前终态时，其终态回调（on_subagent_finished）
+        # 找不到 awaiter 被丢弃 → 父会话永久等待（挂到 watchdog）。
+        # 注册后复核把窗口收敛到「注册点之后」——此后回调必然送达；
+        # 复核命中的已终态孙代理经 awaiter 补投（与 lifecycle 回调同一路径，
+        # 与回调的重复投递由 _make_subagent_wait_awaiter 的 resume-once
+        # 守卫幂等吸收）。
+        from Django_xm.apps.ai_engine.subagent_runtime.lifecycle import get_lifecycle_manager
+
+        awaiter = self._make_subagent_wait_awaiter(instance, subagent_thread_ids)
+        get_lifecycle_manager().register_parent_awaiter(thread_id, awaiter)
+
         for sid in subagent_thread_ids:
             inst = await self.runtime.get_instance(sid)
             if inst is not None and inst.status in (SubAgentStatus.COMPLETED, SubAgentStatus.FAILED):
-                results[sid] = {
-                    "status": inst.status,
-                    "result": inst.result_preview or "",
-                }
-        if len(results) >= len(subagent_thread_ids):
-            logger.info(f"子代理业务等待：孙代理已全部终态，直接恢复: {thread_id}")
-            await self._resume_subagent_after_wait(instance, subagent_thread_ids, results)
-            return
-
-        from Django_xm.apps.ai_engine.subagent_runtime.lifecycle import get_lifecycle_manager
-
-        get_lifecycle_manager().register_parent_awaiter(
-            thread_id, self._make_subagent_wait_awaiter(instance, subagent_thread_ids)
-        )
+                await awaiter(sid, inst.status)
 
     def _make_subagent_wait_awaiter(self, instance: Any, subagent_thread_ids: list[str]):
         """构造父 awaiter（孙代理终态回调）：全部终态后恢复子代理 graph。
@@ -397,36 +502,34 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         loop 中被 lifecycle_manager await。恢复（runtime.resume → adapter.resume）
         自行新建线程执行子代理 graph，不依赖本 loop 存活（子代理挂起协程的 loop
         在 _run_in_thread 结束时已 close），故直接 await 而非调度回原 loop。
-        累积结果按 key 写入 dict（GIL 原子 + 互不冲突 key），并发安全。
+
+        并发安全（round3 2.6）：多个孙代理终态回调在不同线程并发到达，且
+        注册后复核（_handle_subagent_wait_suspend）可能与 lifecycle 回调对
+        同一 sid 重复投递——resume-once 守卫（threading.Event + 锁保护临界区，
+        锁不跨 await：DB 读取在锁外、判定与置位在锁内）保证 runtime.resume
+        恰好触发一次。
         """
         collected: dict[str, dict] = {}
+        resume_lock = threading.Lock()
+        resumed = threading.Event()
 
         async def _awaiter(subagent_thread_id: str, status: str) -> None:
-            await self._on_subagent_wait_finished(
-                instance, subagent_thread_ids, collected, subagent_thread_id, status
-            )
+            if subagent_thread_id not in subagent_thread_ids or resumed.is_set():
+                return
+            inst = await self.runtime.get_instance(subagent_thread_id)
+            with resume_lock:
+                if resumed.is_set():
+                    return
+                collected[subagent_thread_id] = {
+                    "status": status,
+                    "result": (inst.result_preview if inst is not None else "") or "",
+                }
+                if len(collected) < len(subagent_thread_ids):
+                    return
+                resumed.set()
+            await self._resume_subagent_after_wait(instance, subagent_thread_ids, collected)
 
         return _awaiter
-
-    async def _on_subagent_wait_finished(
-        self,
-        instance: Any,
-        subagent_thread_ids: list[str],
-        collected: dict[str, dict],
-        subagent_thread_id: str,
-        status: str,
-    ) -> None:
-        """单个孙代理终态回调：累积结果，全部终态后恢复子代理 graph（批量 fan-in）。"""
-        if subagent_thread_id not in subagent_thread_ids:
-            return
-        inst = await self.runtime.get_instance(subagent_thread_id)
-        collected[subagent_thread_id] = {
-            "status": status,
-            "result": (inst.result_preview if inst is not None else "") or "",
-        }
-        if len(collected) < len(subagent_thread_ids):
-            return
-        await self._resume_subagent_after_wait(instance, subagent_thread_ids, collected)
 
     async def _resume_subagent_after_wait(
         self, instance: Any, subagent_thread_ids: list[str], results: dict[str, dict]
@@ -498,6 +601,7 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             cfg["user_id"] = getattr(agent_config, "user_id", None)
             cfg["session_id"] = getattr(agent_config, "session_id", None)
             cfg["model_name"] = getattr(agent_config, "model_name", None)
+            cfg["provider_id"] = getattr(agent_config, "provider_id", None)
             cfg["store"] = getattr(agent_config, "store", None)
             cfg["enable_deep_thinking"] = bool(
                 getattr(agent_config, "enable_deep_thinking", False)
@@ -688,4 +792,5 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             user_id=user_id,
             session_id=meta.get("session_id"),
             model_name=meta.get("model_name"),
+            provider_id=meta.get("provider_id"),
         )

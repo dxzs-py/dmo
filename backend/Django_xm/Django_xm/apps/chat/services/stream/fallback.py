@@ -91,12 +91,17 @@ class FallbackStreamService:
         # 走 ChatService 的公开 API（原为 _apply_context_engineering 私有方法，
         # 跨对象依赖私有成员会在重构时静默破坏，已统一改为公开入口）。
         # 异步变体（D1/P2-7）：经 to_thread 移出事件循环，避免同步 embed/KG 阻塞
-        chat_history, _ce_metadata = await self._chat_service.aapply_context_engineering(
+        chat_history, ce_metadata = await self._chat_service.aapply_context_engineering(
             chat_history,
             data.get("message", ""),
             mode=data.get("mode", ChatMode.AGENT),
             model_name=data.get("model_name"),
         )
+        # 4.4/4.8：回退流同样透出上下文工程降级提示（降级摘要保留/历史裁剪）
+        from Django_xm.apps.chat.services.context_service import build_context_degradation_events
+
+        for degradation in build_context_degradation_events(ce_metadata):
+            yield {"type": "degradation", "data": degradation}
         langchain_chat_history = convert_chat_history(chat_history)
 
         messages = []

@@ -8,6 +8,8 @@ import re
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from Django_xm.common.messages import content_to_str
+
 
 def _needs_completion(text: str) -> bool:
     """
@@ -113,6 +115,14 @@ def convert_chat_history(messages: list[dict]) -> list:
             langchain_messages.append(AIMessage(content=content, **ai_kwargs))
         elif role == "system":
             langchain_messages.append(SystemMessage(content=content))
+        elif role == "tool":
+            # 4.8 非 checkpointer 路径工具历史不灭：ToolMessage 必须与 AIMessage
+            # tool_calls 配对，纯历史重放时配对信息不可靠（直接转 ToolMessage 会
+            # 触发 OpenAI 400）。转为带工具名前缀的可读文本消息保留工具结果。
+            tool_name = str(msg.get("name") or "").strip()
+            label = f"[工具 {tool_name} 结果]" if tool_name else "[工具结果]"
+            tool_text = content_to_str(content) if isinstance(content, list) else str(content or "")
+            langchain_messages.append(HumanMessage(content=f"{label} {tool_text}".strip()))
 
     return langchain_messages
 

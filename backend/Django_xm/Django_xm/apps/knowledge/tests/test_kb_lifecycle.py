@@ -73,7 +73,10 @@ class KnowledgeBaseLifecycleTests(TestCase):
         self.manager_cls.return_value.create_empty_index.assert_called_once_with(
             name=f"user_{self.user.id}_kb-new", description="描述"
         )
-        self.invalidate_cache.assert_called_once_with(user_id=self.user.id)
+        # B5：失效必须带 user_index_name（否则 QueryCache/VectorSearchCache 失效空转）
+        self.invalidate_cache.assert_called_once_with(
+            user_id=self.user.id, user_index_name=f"user_{self.user.id}_kb-new"
+        )
 
     def test_list_filters_tombstones_and_derives_counts(self):
         """列表：软删墓碑不可见；document_count 派生 vs chunk_count 镜像。"""

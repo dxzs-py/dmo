@@ -76,7 +76,12 @@ async function detectContext() {
       context.value = res.data.data || {}
     }
   } catch (e) {
-    logger.error('检测项目上下文失败:', e)
+    // 401：token 尚未恢复/已过期的冷启动时序（后续请求会重试成功），静默不打扰
+    if (e?.response?.status === 401) {
+      logger.debug('检测项目上下文跳过（未认证）')
+    } else {
+      logger.error('检测项目上下文失败:', e)
+    }
   } finally {
     loading.value = false
   }

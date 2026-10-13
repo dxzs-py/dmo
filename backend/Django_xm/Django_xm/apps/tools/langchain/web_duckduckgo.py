@@ -1,7 +1,10 @@
+import asyncio
 import logging
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
+
+from Django_xm.apps.tools.langchain.external_content import wrap_external_content
 
 logger = logging.getLogger(__name__)
 
@@ -90,21 +93,26 @@ class DuckDuckGoSearchTool(BaseTool):
         logger.info(f"🔍 DuckDuckGo 搜索: {query}")
 
         try:
-            return _search_via_ddgs(query, max_results)
+            # CT-04：搜索快照属外部内容，进模型上下文前按 B4 语义包裹
+            #（单点包裹覆盖 ddgs/langchain 两条路径；含"未找到相关结果"
+            # 空结果快照，零行为影响；错误分支为系统生成文案，不包裹）
+            return wrap_external_content("网页搜索 DuckDuckGo", _search_via_ddgs(query, max_results))
         except ImportError:
             logger.warning("⚠️ ddgs 未安装，尝试使用 langchain-community 工具")
         except Exception as e:
             logger.warning(f"⚠️ DDGS 搜索失败: {e}，尝试 langchain-community 工具")
 
         try:
-            return _search_via_langchain(query, max_results)
+            return wrap_external_content("网页搜索 DuckDuckGo", _search_via_langchain(query, max_results))
         except Exception as e:
             error_msg = f"搜索失败: {e!s}。请安装 ddgs: pip install ddgs"
             logger.exception(error_msg)
             return error_msg
 
     async def _arun(self, query: str, max_results: int = 5) -> str:
-        return self._run(query=query, max_results=max_results)
+        # R3 1.8：同步 _run（ddgs/langchain-community 网络 I/O）经 to_thread
+        # 移入线程池，不再直接在事件循环内阻塞
+        return await asyncio.to_thread(self._run, query=query, max_results=max_results)
 
 
 duckduckgo_search = DuckDuckGoSearchTool()

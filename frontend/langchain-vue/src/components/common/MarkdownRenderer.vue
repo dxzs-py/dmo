@@ -97,10 +97,12 @@ marked.use({
 </script>
 
 <script setup>
-import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import { normalizeGfmTables } from '@/utils/markdownTable'
 import { copyToClipboard } from '@/utils/dom'
+import { rafThrottle } from '@/utils/async'
+import { escapeHtmlAttr, sanitizeCitationHref } from '@/utils/citationLinks'
 
 const props = defineProps({
   content: {
@@ -162,20 +164,23 @@ onUnmounted(() => {
     lazyObserver.disconnect()
     lazyObserver = null
   }
+  // D-6：取消未执行的尾帧渲染，防止卸载后写入
+  scheduleRender.cancel()
 })
 
-watch(() => props.content, () => {
-  nextTick(() => setupLazyLoading())
-})
+const renderedHtml = ref('')
 
-const renderedContent = computed(() => {
-  let text = props.content
+/** 从 content prop 解析待渲染文本（对象取 content/text 字段，兜底 JSON 序列化） */
+const resolveContentText = (val) => {
+  let text = val
   if (typeof text === 'object' && text !== null) {
     text = text.content ?? text.text ?? JSON.stringify(text)
   }
-  if (!text || typeof text !== 'string') {
-    return ''
-  }
+  return typeof text === 'string' ? text : ''
+}
+
+/** 全量渲染管线：表格规范化 → marked → 引用角标 → DOMPurify 净化 */
+const renderMarkdown = (text) => {
   // 规范化畸形 GFM 表格（列数不一致）后再交由 marked 解析：
   // 否则 marked 严格 GFM 会整块降级为纯文本段落
   let rawHtml = marked(normalizeGfmTables(text))
@@ -184,8 +189,10 @@ const renderedContent = computed(() => {
       const idx = parseInt(num) - 1
       const citation = props.citations[idx]
       if (!citation) return match
-      const href = citation.href || citation.url || ''
-      const title = citation.title || `来源 ${num}`
+      // citations 为后端外部数据：href 经白名单过滤（限 http/https/#/同源相对路径），
+      // title 做 HTML 属性转义——拼接发生在 DOMPurify 净化之前，不得裸拼进属性位
+      const href = sanitizeCitationHref(citation.href || citation.url)
+      const title = escapeHtmlAttr(citation.title || `来源 ${num}`)
       return href
         ? `<sup class="inline-citation"><a href="${href}" target="_blank" title="${title}">[${num}]</a></sup>`
         : `<sup class="inline-citation" title="${title}">[${num}]</sup>`
@@ -195,7 +202,36 @@ const renderedContent = computed(() => {
     USE_PROFILES: { html: true },
     ADD_ATTR: ['target', 'data-code', 'title', 'data-src']
   })
+}
+
+// D-6 性能修复：流式期间 token 高频追加，原 computed 每次变更都全量执行
+// marked + 正则 + DOMPurify 并整体替换 v-html（长回复 O(n²)）。改为 rAF 节流：
+// 每帧最多渲染一次，尾帧始终携带最新文本（流结束后的最后一次变更必被渲染，
+// 终态正确）；取消时机由 onUnmounted 的 cancel 保证，无卸载后写入。
+const scheduleRender = rafThrottle((text) => {
+  renderedHtml.value = renderMarkdown(text)
 })
+
+const requestRender = () => {
+  const text = resolveContentText(props.content)
+  if (!text) {
+    scheduleRender.cancel()
+    renderedHtml.value = ''
+    return
+  }
+  scheduleRender(text)
+}
+
+watch(() => resolveContentText(props.content), () => {
+  requestRender()
+  nextTick(() => setupLazyLoading())
+}, { immediate: true })
+
+// citations 原为 computed 深度依赖（读取 length 与元素字段），此处以 deep watch
+// 等价保持：引用列表原位变更也触发重渲染（数组规模小，开销可忽略）
+watch(() => props.citations, () => {
+  requestRender()
+}, { deep: true })
 
 function handleClick(e) {
   const img = e.target.closest('img')
@@ -220,8 +256,8 @@ function handleClick(e) {
 
 <template>
   <!--
-    v-html 使用说明：renderedContent 由 marked 渲染 Markdown 后，
-    经 DOMPurify.sanitize 白名单净化（见脚本 renderedContent 计算属性），
+    v-html 使用说明：renderedHtml 由 marked 渲染 Markdown 后，
+    经 DOMPurify.sanitize 白名单净化（见脚本 renderMarkdown 渲染管线），
     原始 AI/用户输入不会直接注入 DOM，此处 v-html 是渲染净化后 HTML 的唯一入口。
   -->
   <!-- eslint-disable vue/no-v-html -->
@@ -229,7 +265,7 @@ function handleClick(e) {
     ref="rendererRef"
     class="markdown-renderer"
     @click="handleClick"
-    v-html="renderedContent"
+    v-html="renderedHtml"
   ></div>
   <!-- eslint-enable vue/no-v-html -->
   <el-image-viewer

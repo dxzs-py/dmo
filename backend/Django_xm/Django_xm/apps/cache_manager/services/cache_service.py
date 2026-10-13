@@ -172,6 +172,46 @@ class CacheService:
             return False
 
     @classmethod
+    def get_many(cls, keys: list[str]) -> dict[str, Any]:
+        """批量读取缓存（单次 Redis 往返，RP-11）
+
+        Args:
+            keys: 缓存键列表
+
+        Returns:
+            {key: value}，仅包含命中的键；后端故障时返回 {}（降级为未命中，
+            不阻塞调用方——与逐条 get 的故障语义一致）
+        """
+        if not keys:
+            return {}
+        try:
+            values = cache.get_many(keys)
+        except Exception:
+            logger.exception(f"缓存批量读取失败: {len(keys)} 个键")
+            return {}
+        with cls._stats_lock:
+            cls._hit_count += len(values)
+            cls._miss_count += len(keys) - len(values)
+        return values
+
+    @classmethod
+    def set_many(cls, data: dict[str, Any], ttl: int | None = CacheTTL.QUERY_MEDIUM) -> int:
+        """批量写入缓存（单次 Redis 往返，RP-11）
+
+        Returns:
+            提交写入的键数（后端批量接口不返回逐键失败明细；异常时整体计 0）
+        """
+        if not data:
+            return 0
+        try:
+            cache.set_many(data, timeout=ttl)
+            logger.debug(f"缓存批量设置: {len(data)} 个键, TTL={ttl}s")
+            return len(data)
+        except Exception:
+            logger.exception(f"缓存批量设置失败: {len(data)} 个键")
+            return 0
+
+    @classmethod
     def delete(cls, key: str) -> bool:
         """删除缓存"""
         try:
@@ -230,14 +270,32 @@ class CacheService:
 # ==================== 缓存键生成器 ====================
 
 
-def generate_query_cache_key(query: str, index_name: str, k: int = 4) -> str:
+def generate_query_cache_key(
+    query: str,
+    index_name: str,
+    k: int = 4,
+    model_name: str = "default",
+    rag_mode: str = "default",
+) -> str:
     """
     生成 RAG 查询缓存键
+
+    键结构（B5 起）::
+
+        rag_query:{index_name}:{query_hash}:k{k}:m{model_name}:r{rag_mode}
+
+    模型/模式段（B5）：同一查询在不同 chat 模型或 RAG 模式下答案可能不同，
+    旧键缺这两段时换模型/换模式会命中过期答案缓存。取不到真实值时调用方传
+    "default" 占位（键结构变化后旧键自然失配，随 TTL 过期，无需迁移）。
+    按索引失效（invalidate_index_queries 的 ``rag_query:{index}:*`` 通配）
+    不受段追加影响。
 
     Args:
         query: 查询文本
         index_name: 索引名称
         k: 检索文档数
+        model_name: 当前 chat 模型标识（如 "openai:gpt-4o"），取不到传 "default"
+        rag_mode: RAG 模式标识（如 "strict"），取不到传 "default"
 
     Returns:
         缓存键
@@ -245,7 +303,7 @@ def generate_query_cache_key(query: str, index_name: str, k: int = 4) -> str:
     # 哈希策略统一为 SHA256 前 24 位（96 bit）：
     # MD5[:12] 仅 48 bit，生日碰撞临界点约 1600 万条目，碰撞会静默返回错误缓存值
     query_hash = hashlib.sha256(query.encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
-    return f"{CACHE_PREFIX_QUERY}:{index_name}:{query_hash}:k{k}"
+    return f"{CACHE_PREFIX_QUERY}:{index_name}:{query_hash}:k{k}:m{model_name}:r{rag_mode}"
 
 
 def generate_model_cache_key(
@@ -294,7 +352,9 @@ def generate_vector_search_cache_key(
 ) -> str:
     """生成向量搜索缓存键"""
     query_hash = hashlib.sha256(query.encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
-    threshold_part = f":th{score_threshold}" if score_threshold else ""
+    # B15：显式 is not None——threshold=0.0 为 falsy 但与"未设阈值"语义不同，
+    # 须区分缓存键，避免 0.0 阈值请求命中无阈值结果
+    threshold_part = f":th{score_threshold}" if score_threshold is not None else ""
     return f"{CACHE_PREFIX_VECTOR}:{index_name}:{query_hash}:k{k}{threshold_part}"
 
 
@@ -309,17 +369,26 @@ class QueryCacheService:
     """
 
     @classmethod
-    def get_cached_query(cls, query: str, index_name: str, k: int = 4) -> dict | None:
-        """获取缓存的查询结果"""
-        key = generate_query_cache_key(query, index_name, k)
+    def get_cached_query(
+        cls, query: str, index_name: str, k: int = 4, model_name: str = "default", rag_mode: str = "default"
+    ) -> dict | None:
+        """获取缓存的查询结果（model_name/rag_mode 须与写入时一致，否则未命中）"""
+        key = generate_query_cache_key(query, index_name, k, model_name=model_name, rag_mode=rag_mode)
         return CacheService.get(key)
 
     @classmethod
     def cache_query_result(
-        cls, query: str, result: dict, index_name: str, k: int = 4, ttl: int = CacheTTL.QUERY_MEDIUM
+        cls,
+        query: str,
+        result: dict,
+        index_name: str,
+        k: int = 4,
+        ttl: int = CacheTTL.QUERY_MEDIUM,
+        model_name: str = "default",
+        rag_mode: str = "default",
     ) -> bool:
         """缓存查询结果"""
-        key = generate_query_cache_key(query, index_name, k)
+        key = generate_query_cache_key(query, index_name, k, model_name=model_name, rag_mode=rag_mode)
 
         cache_data = {
             "query": query,
@@ -428,6 +497,27 @@ class VectorSearchCacheService:
         """缓存 embedding"""
         key = generate_embedding_cache_key(text, model)
         return CacheService.set(key, embedding, ttl)
+
+    @classmethod
+    def get_cached_embeddings_batch(cls, texts: list[str], model: str = "default") -> dict[str, list[float]]:
+        """批量获取缓存 embedding（RP-11：单次 Redis 往返替代逐条 GET）
+
+        Returns:
+            {text: vector}，仅包含命中的文本
+        """
+        if not texts:
+            return {}
+        key_to_text = {generate_embedding_cache_key(text, model): text for text in texts}
+        found = CacheService.get_many(list(key_to_text))
+        return {key_to_text[key]: vector for key, vector in found.items()}
+
+    @classmethod
+    def cache_embeddings_batch(
+        cls, items: list[tuple[str, list[float]]], model: str = "default", ttl: int = CacheTTL.EMBEDDING
+    ) -> int:
+        """批量缓存 embedding（RP-11：单次 Redis 往返替代逐条 SET）"""
+        data = {generate_embedding_cache_key(text, model): vector for text, vector in items}
+        return CacheService.set_many(data, ttl)
 
     @classmethod
     def invalidate_index_queries(cls, index_name: str) -> int:

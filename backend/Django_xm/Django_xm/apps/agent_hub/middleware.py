@@ -26,7 +26,13 @@ def build_middleware(config) -> list:
         config: AgentConfig（读取 middleware/capabilities/agent_type 等）。
 
     Returns:
-        中间件实例列表（保底注入失败时降级返回不含该中间件的栈，不抛异常）。
+        中间件实例列表。安全类注入失败（ApprovalMiddleware / guardrails 能力）
+        向上抛异常使 agent 创建失败（round3 2.3 fail-closed）；非安全类
+        （ContextManager / ToolExecutionTimeout）失败降级返回不含该中间件的栈。
+
+    Raises:
+        RuntimeError: ApprovalMiddleware 注入失败 / guardrails 能力或
+            SAFE_RAG guardrails 栈构建失败（安全边界缺口，fail-closed）。
     """
     middleware_stack = []
 
@@ -36,34 +42,44 @@ def build_middleware(config) -> list:
 
     try:
         from Django_xm.apps.ai_engine.capabilities import registry
-
-        capabilities = config.capabilities
-        if capabilities is None:
-            capabilities = registry.get_default_capabilities(resolve_agent_type_str(config))
-
-        auto_middleware = registry.build_middleware_for_agent(
-            resolve_agent_type_str(config),
-            capabilities,
-            user_id=config.user_id,
-            model_name=config.model_name,
-            store=config.store,
-            enable_guardrails=config.enable_guardrails,
-            guardrails_strict_mode=config.guardrails_strict_mode,
-            enable_pii=config.enable_pii,
-            enable_human_in_loop=config.enable_human_in_loop,
-            thread_id=config.session_id,
-        )
-        if auto_middleware:
-            existing_types = {type(m) for m in middleware_stack}
-            for m in auto_middleware:
-                if type(m) not in existing_types:
-                    middleware_stack.append(m)
-                    existing_types.add(type(m))
-            logger.info(f"通过 CapabilityRegistry 追加 {len(auto_middleware)} 个中间件")
     except Exception as e:
-        logger.warning(f"CapabilityRegistry 中间件构建失败: {e}")
+        # fail-closed（round3 2.3）：能力注册表模块加载失败意味着安全能力
+        # （guardrails）与其他治理能力全部不可用，静默降级会让所有 agent
+        # 带缺口运行——向上抛出使 agent 创建失败。
+        raise RuntimeError(f"CapabilityRegistry 模块加载失败（fail-closed）: {e}") from e
+
+    capabilities = config.capabilities
+    if capabilities is None:
+        capabilities = registry.get_default_capabilities(resolve_agent_type_str(config))
+
+    # 逐能力安全分类在 registry.build_middleware_for_agent 内实施（round3 2.3）：
+    # - 安全类（guardrails）构建失败向上抛（fail-closed）；
+    # - 非安全类（context_management/tool_injection/rate_limit）降级跳过。
+    # 故此处不再整体吞异常——仅安全类失败会到达此处并使 agent 创建失败。
+    auto_middleware = registry.build_middleware_for_agent(
+        resolve_agent_type_str(config),
+        capabilities,
+        user_id=config.user_id,
+        model_name=config.model_name,
+        store=config.store,
+        enable_guardrails=config.enable_guardrails,
+        guardrails_strict_mode=config.guardrails_strict_mode,
+        enable_pii=config.enable_pii,
+        enable_human_in_loop=config.enable_human_in_loop,
+        thread_id=config.session_id,
+    )
+    if auto_middleware:
+        existing_types = {type(m) for m in middleware_stack}
+        for m in auto_middleware:
+            if type(m) not in existing_types:
+                middleware_stack.append(m)
+                existing_types.add(type(m))
+        logger.info(f"通过 CapabilityRegistry 追加 {len(auto_middleware)} 个中间件")
 
     if config.agent_type.value == "safe_rag":
+        # safe_rag 专属 guardrails 栈：safe_rag 的核心承诺即强制护栏
+        # （AgentConfig.validate 强制 enable_guardrails=True），构建失败
+        # 静默降级会让 safe_rag 名不副实——fail-closed 抛出（round3 2.3）。
         try:
             from Django_xm.apps.ai_engine.guardrails import create_standard_guardrails
 
@@ -80,19 +96,24 @@ def build_middleware(config) -> list:
                     middleware_stack.append(m)
             logger.info("SAFE_RAG 模式已注入 guardrails 栈")
         except Exception as e:
-            logger.warning(f"Guardrails 栈构建失败: {e}")
+            raise RuntimeError(f"SAFE_RAG guardrails 栈构建失败（fail-closed）: {e}") from e
 
     # ── 收敛点保底注入（spec: unify-context-injection）──
     # 在役路径（BASE/DEEP_RESEARCH）栈中已含同类型实例时幂等跳过（零行为变化）；
     # 死路径（SubAgentBuilder 等）与未来新增构建路径自动获得基础能力。
     # 追加位置在栈末，与 base/deep 现有手动 ensure 的追加位置等效。
-    try:
-        from Django_xm.apps.agent_hub.builders.middleware_utils import ensure_approval_middleware
+    #
+    # 安全分类（round3 2.3，逐中间件核定）：
+    # - ApprovalMiddleware：审批是工具执行的安全边界（HIGH/CONTROLLED 工具
+    #   必须人工确认）→ 注入失败 fail-closed 抛出（与 approval/middleware
+    #   内部 fail-closed 语义对齐），不得降级为无审批 agent；
+    # - ContextManagerMiddleware / ToolExecutionTimeoutMiddleware：非安全类
+    #   （上下文治理 / 资源保护），注入失败降级 warning，agent 仍可运行。
+    # 安全类：fail-closed
+    from Django_xm.apps.agent_hub.builders.middleware_utils import ensure_approval_middleware
 
-        ensure_approval_middleware(middleware_stack)
-    except Exception as e:
-        logger.warning(f"ApprovalMiddleware 收敛点保底注入失败(非致命): {e}")
-
+    ensure_approval_middleware(middleware_stack)
+    # 非安全类：维持降级
     try:
         ensure_context_middleware(middleware_stack, config)
     except Exception as e:
@@ -159,8 +180,6 @@ def ensure_context_middleware(middleware_stack: list, config) -> bool:
         middleware_stack.append(
             ContextManagerMiddleware(
                 model_name=config.model_name,
-                user_id=config.user_id,
-                store=config.store,
                 thread_id=config.session_id,
             )
         )

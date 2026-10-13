@@ -44,6 +44,10 @@ def create_embedding(
     cfg = get_provider_config()
     init_kwargs: dict[str, Any] = {
         "qianfan_ak": cfg["qianfan_ak"],
+        # E5-06：qianfan SDK 无独立 per-request timeout，LLM_API_RETRY_TIMEOUT 是
+        # 其 http 层消费的请求总超时（qianfan/resources/http_client.py retry_config.timeout），
+        # 默认 300s 过长，对齐 openai provider 的 60s
+        "init_kwargs": {"LLM_API_RETRY_TIMEOUT": 60},
     }
     if model:
         init_kwargs["model"] = model

@@ -37,13 +37,19 @@ def broadcast_stream_completed(
     message_id: str | None = None,
     user_id: int | None = None,
     content: str = "",
+    stopped: bool = False,
 ):
     """广播 stream_completed 事件到 session + task 双频道。
 
-    深度研究完成（成功/失败）时由执行服务（services/fastapi_service SessionExecutor）调用，
+    深度研究完成（成功/失败/取消）时由执行服务（services/fastapi_service SessionExecutor）调用，
     作为权威完成事件。
     与聊天流式连接结束时发布的 stream_completed（finalized=false，无 task_id）不同，
     本事件始终携带 task_id 和 finalized=true，前端据此进入深度研究回写逻辑。
+
+    取消语义（stopped=true，2026-10-06 缺陷修复）：与 chat 侧用户停止生成的
+    stream_completed(stopped=true)（chat_executor_core._finalize_chat_session）语义
+    对齐——前端据此映射 CANCELLED 终态（区别于 success=false 的 FAILED），且不写
+    "深度研究执行失败"文案。
 
     统一底层：同时广播到 session + task 双频道，确保所有模块订阅者都能收到：
     - session:{chat_session_id} 频道：聊天模块深度研究模式订阅，触发
@@ -52,7 +58,7 @@ def broadcast_stream_completed(
       researchStore.updateTaskFromEvent 更新任务状态（status/final_report/error）。
       独立深度研究模式（无 chat_session_id）下，task 频道是唯一事件源。
     - user:{user_id} 频道：任务进入终态时发布 task_status_changed，
-      深度研究模块任务列表据此自动刷新状态（completed/failed），
+      深度研究模块任务列表据此自动刷新状态（completed/failed/cancelled），
       避免列表停留在旧状态（awaiting_approval/running）需手动刷新。
 
     Args:
@@ -63,6 +69,7 @@ def broadcast_stream_completed(
         error: 错误信息（失败时）
         error_code: 分类错误码（失败时与 error 同透，空字符串不透传）
         message_id: 关联的 ChatMessage ID（可选，用于前端精确定位消息）
+        stopped: 是否用户取消（取消终态标记，透传前端映射 CANCELLED）
     """
     payload = {
         "source": EventSource.DEEP_RESEARCH,
@@ -72,6 +79,8 @@ def broadcast_stream_completed(
         "final_report": final_report,
         "finalized": True,
     }
+    if stopped:
+        payload["stopped"] = True
     if error:
         payload["error"] = error
     # 分类错误码（整改 A1.4）：失败时与 error 文案同透，对齐 chat 链失败终态
@@ -108,16 +117,20 @@ def broadcast_stream_completed(
         logger.warning(f"[Writeback] 广播 STREAM_COMPLETED 失败: {e}")
 
     # 任务进入终态：发布 task_status_changed 到 user 频道，通知深度研究模块任务列表
-    # 自动刷新状态（completed/failed）。与 stream_completed（session+task 频道，业务事件）
+    # 自动刷新状态（completed/failed/cancelled）。与 stream_completed（session+task 频道，业务事件）
     # 分离：task_status_changed 仅 user 频道，是用户级列表刷新通知（非业务数据）。
     # 发布失败不影响主流程（stream_completed 已广播），仅记录日志。
     if user_id:
         try:
+            if stopped:
+                terminal_status = "cancelled"
+            else:
+                terminal_status = "completed" if success else "failed"
             publish_event_sync(
                 EventType.TASK_STATUS_CHANGED,
                 {
                     "task_id": task_id,
-                    "status": "completed" if success else "failed",
+                    "status": terminal_status,
                 },
                 user_id=user_id,
             )
@@ -314,8 +327,10 @@ def writeback_to_chat_message(
         )
         from Django_xm.apps.research.models import ResearchTask
 
-        # 优先通过 ResearchTask.chat_message_id 查找关联的 ChatMessage（稳定正向关联，前端无法触及）
-        # 回退到 ChatMessage.research_task_id 查询（向后兼容旧数据）
+        # 定位关联 ChatMessage：ChatMessage.research_task_id（指向
+        # ResearchTask.task_id 的 CharField）是唯一关联方向——ResearchTask 侧的
+        # chat_message_id 正向字段已于迁移 0009 删除，旧正向查找未跟删导致
+        # getattr 恒 None（静默失效，2026-10-06 深研冒烟修复）。
         chat_msg_data = None
         chat_session_id_from_task = None
 
@@ -323,26 +338,10 @@ def writeback_to_chat_message(
         try:
             research_task = ResearchTask.objects.get(task_id=task_id)
             chat_session_id_from_task = research_task.session_id
-            chat_message_id = getattr(research_task, "chat_message_id", None)
-            if chat_message_id:
-                chat_msg_data = get_chat_message_for_writeback(message_id=chat_message_id)
-                if chat_msg_data is None:
-                    logger.warning(
-                        f"[Writeback] chat_message_id={chat_message_id} 存在但 ChatMessage 未找到,"
-                        f"回退到 research_task_id 查询: task_id={task_id}"
-                    )
         except ResearchTask.DoesNotExist:
             logger.warning(f"[Writeback] ResearchTask 不存在: task_id={task_id}")
 
-        # 回退：通过 research_task_id 查询（向后兼容旧数据，记录 warning）
-        if chat_msg_data is None:
-            chat_msg_data = get_chat_message_for_writeback(research_task_id=task_id)
-            if chat_msg_data is not None:
-                logger.info(
-                    f"[Writeback] 通过 research_task_id 回退查询成功(旧数据): task_id={task_id}, "
-                    f"建议迁移设置 chat_message_id"
-                )
-
+        chat_msg_data = get_chat_message_for_writeback(research_task_id=task_id)
         if chat_msg_data is None:
             logger.warning(f"[Writeback] 未找到关联 ChatMessage: task_id={task_id}")
             return None
@@ -483,6 +482,12 @@ def writeback_to_chat_message(
             tool_calls = []
 
         try:
+            payload_extra: dict = {}
+            # 阶段 2（权威恢复源闭合）：message_updated 携带子代理图层正文终态，
+            # 供前端 mergeMessageFromBackend 覆盖恢复（断线期间错过的快照帧，
+            # 经此入历史权威事件收敛）；为空 dict 时不携带（前端按 undefined 跳过）。
+            if isinstance(msg.subagent_contents, dict) and msg.subagent_contents:
+                payload_extra["subagent_contents"] = msg.subagent_contents
             publish_event_sync(
                 EventType.MESSAGE_UPDATED,
                 {
@@ -492,6 +497,7 @@ def writeback_to_chat_message(
                     "is_streaming": False,
                     "research_task_id": task_id,
                     "tool_calls": tool_calls,
+                    **payload_extra,
                 },
                 session_id=chat_session_id,
             )
@@ -509,6 +515,211 @@ def writeback_to_chat_message(
     except Exception:
         logger.exception(f"[Writeback] 回写 ChatMessage 失败: task_id={task_id}")
         return None
+
+
+def finalize_chat_message_cancelled(
+    task_id: str,
+    error_message: str = "用户已取消该研究任务",
+) -> str | None:
+    """研究取消的聊天侧收尾（2026-10-06 缺陷修复公共单源）。
+
+    背景：执行器取消级联（_finalize_research_cancelled）此前零 chat 侧收尾——
+    无 ChatMessage 落库、无会话频道广播，聊天模块对取消毫无反应；刷新后聊天
+    消息卡片也因缺少取消语义分支误显"深度研究已完成"。本函数与完成路径
+    writeback_to_chat_message + broadcast_stream_completed 对称，被两条取消路径
+    共用（session_executor 级联 / session_manager 无执行器 DB 兜底）。
+
+    职责（与既有设施的关系）：
+    - ChatMessage 终止语义落库：is_streaming=False；content 为空时补
+      「深度研究已取消。」（对齐失败分支「深度研究执行失败：{...}」文案风格），
+      非空保留已抢救过程正文（取消=部分成果保留展示，persist_research_progress
+      已在级联前置步骤抢救增量，本函数不覆盖）；补写时同步 versions[0].content
+      （B5 语义对齐）。
+    - MESSAGE_UPDATED 广播（session + task 双频道，携带 research_task_id）：
+      通知所有浏览器拉取终态快照。
+    - broadcast_stream_completed(stopped=True) 广播：前端据此把聊天消息流状态
+      收尾 + taskInfo 映射 CANCELLED（区别于 success=false 的 FAILED），user 频道
+      任务列表同步刷新为 cancelled。
+
+    Args:
+        task_id: 深度研究任务 ID（= ChatMessage.research_task_id 关联值）
+        error_message: 取消说明文案（透传 stream_completed.error）
+
+    Returns:
+        收尾的 ChatMessage ID（字符串）；ResearchTask 或关联 ChatMessage 不存在
+        （独立深度研究场景，status_change 已覆盖 task 频道）时返回 None，静默跳过。
+    """
+    try:
+        from django.apps import apps
+
+        from Django_xm.apps.research.models import ResearchTask
+
+        try:
+            research_task = ResearchTask.objects.get(task_id=task_id)
+        except ResearchTask.DoesNotExist:
+            logger.warning(f"[Writeback] 取消收尾 ResearchTask 不存在: task_id={task_id}")
+            return None
+        chat_session_id = research_task.session_id
+        user_id = research_task.created_by_id
+
+        # 唯一关联方向 = ChatMessage.research_task_id（迁移 0009 后，同 writeback_to_chat_message）
+        ChatMessage = apps.get_model("chat", "ChatMessage")
+        msg = ChatMessage.objects.filter(research_task_id=task_id).first()
+        if msg is None:
+            logger.info(f"[Writeback] 取消收尾无关联 ChatMessage（独立深研场景）: task_id={task_id}")
+            return None
+
+        # 终止语义落库（幂等：已收尾则跳过 save，广播照发——前端可能错过先前终态事件）
+        save_fields: list[str] = []
+        final_content = msg.content or ""
+        if not final_content.strip():
+            final_content = "深度研究已取消。"
+            msg.content = final_content
+            save_fields.append("content")
+            versions = msg.versions
+            if versions:
+                ver0 = versions[0] if isinstance(versions[0], dict) else {}
+                if ver0.get("content") != final_content:
+                    ver0["content"] = final_content
+                    versions[0] = ver0
+                    msg.versions = versions
+                    save_fields.append("versions")
+        if msg.is_streaming:
+            msg.is_streaming = False
+            save_fields.append("is_streaming")
+        if save_fields:
+            msg.save(update_fields=[*save_fields, "updated_at"])
+        chat_msg_id = str(msg.id)
+
+        # MESSAGE_UPDATED 广播（session + task 双频道）：对齐 persist_research_progress
+        # 的广播结构（content/is_streaming/research_task_id/tool_calls）
+        try:
+            try:
+                tool_calls = ChatMessage.objects.only("tool_calls").get(id=msg.id).tool_calls
+            except ChatMessage.DoesNotExist:
+                tool_calls = []
+            publish_event_sync(
+                EventType.MESSAGE_UPDATED,
+                {
+                    "message_id": chat_msg_id,
+                    "session_id": chat_session_id,
+                    "content": final_content,
+                    "is_streaming": False,
+                    "research_task_id": task_id,
+                    "tool_calls": tool_calls,
+                },
+                session_id=chat_session_id,
+                task_id=task_id,
+            )
+        except PayloadValidationError:
+            logger.exception(
+                f"[Writeback] 取消收尾 MESSAGE_UPDATED payload 校验失败，跳过广播（落库仍生效）: "
+                f"task_id={task_id}, message_id={chat_msg_id}",
+            )
+        except Exception as e:
+            logger.warning(f"[Writeback] 取消收尾 MESSAGE_UPDATED 广播失败: task_id={task_id}, err={e}")
+
+        # 权威取消终态事件（session + task + user 频道）：前端映射 CANCELLED
+        broadcast_stream_completed(
+            chat_session_id,
+            task_id,
+            success=False,
+            error=error_message,
+            message_id=chat_msg_id,
+            user_id=user_id,
+            stopped=True,
+        )
+
+        logger.info(
+            f"[Writeback] 取消收尾完成: task_id={task_id}, session={chat_session_id}, "
+            f"message_id={chat_msg_id}, content_backfilled={'content' in save_fields}"
+        )
+        return chat_msg_id
+    except Exception:
+        logger.exception(f"[Writeback] 取消收尾 ChatMessage 失败: task_id={task_id}")
+        return None
+
+
+def persist_research_subagent_contents(
+    thread_id: str,
+    subagent_thread_id: str,
+    content: str,
+    reasoning_content: str,
+) -> None:
+    """运行期落库单条子代理图层正文快照（阶段 2，2.1 权威源补缺）。
+
+    背景：research 链挂起前落库（persist_research_progress）与完成回写
+    （writeback_to_chat_message）之间存在运行期落库空窗——独立深研运行中
+    刷新浏览器时 getStatus 返回的 ResearchTask.subagent_contents 陈旧/为空，
+    且快照帧（persist_history=False）不进回放历史，"断线期间该子代理已完成 +
+    任务未终态"场景正文空洞到任务完成。本函数由 STREAM_SUBAGENT_CONTENT
+    节流广播器调用（与广播同频合流，≤2 次/s per subagent），补齐运行期权威源。
+
+    合并语义：按 subagent_thread_id 单键合并（其余线程条目保留），相同则跳过；
+    仅写 subagent_contents 字段，**不广播 MESSAGE_UPDATED**（挂起/完成落库点
+    专用——运行期高频广播会引发前端快照校对风暴）；tool_calls 恢复仍走回放
+    历史（persist_history=True），本函数不合并工具条目。
+
+    Args:
+        thread_id: 深度研究任务 ID。
+        subagent_thread_id: 子代理 thread_id。
+        content: 该子代理累积全量正文（快照）。
+        reasoning_content: 该子代理累积全量中间思考（快照）。
+    """
+    if not thread_id or not subagent_thread_id:
+        return
+    incoming = {"content": content or "", "reasoning_content": reasoning_content or ""}
+    research_task = None
+    try:
+        from Django_xm.apps.research.models import ResearchTask
+
+        research_task = ResearchTask.objects.filter(task_id=thread_id, is_deleted=False).first()
+    except Exception:
+        logger.warning(
+            f"[Writeback] 运行期落库子代理正文查询 ResearchTask 失败: task_id={thread_id}",
+            exc_info=True,
+        )
+
+    if research_task is not None:
+        try:
+            existing_sub = research_task.subagent_contents or {}
+            if not isinstance(existing_sub, dict):
+                existing_sub = {}
+            merged = {**existing_sub, subagent_thread_id: incoming}
+            if merged.get(subagent_thread_id) != existing_sub.get(subagent_thread_id):
+                research_task.subagent_contents = merged
+                research_task.save(update_fields=["subagent_contents", "updated_at"])
+        except Exception:
+            logger.warning(
+                f"[Writeback] 运行期落库子代理正文失败: task_id={thread_id}, "
+                f"subagent={subagent_thread_id}",
+                exc_info=True,
+            )
+
+    # 关联 ChatMessage 同步（chat 深度研究模式运行中刷新可见）。
+    # 唯一关联方向 = ChatMessage.research_task_id（指向 ResearchTask.task_id 的
+    # CharField）；ResearchTask 侧的 chat_message_id 正向字段已于迁移 0009 删除，
+    # 旧正向查找代码未跟删 → FieldDoesNotExist 被 except 吞成 warning、本段同步
+    # 从不生效（2026-10-06 深研冒烟实测修复）。
+    try:
+        from django.apps import apps
+
+        ChatMessage = apps.get_model("chat", "ChatMessage")
+        msg = ChatMessage.objects.filter(research_task_id=thread_id).first()
+        if msg is None:
+            return
+        existing_msg_sub = msg.subagent_contents or {}
+        if not isinstance(existing_msg_sub, dict):
+            existing_msg_sub = {}
+        merged_msg = {**existing_msg_sub, subagent_thread_id: incoming}
+        if merged_msg.get(subagent_thread_id) != existing_msg_sub.get(subagent_thread_id):
+            msg.subagent_contents = merged_msg
+            msg.save(update_fields=["subagent_contents", "updated_at"])
+    except Exception:
+        logger.warning(
+            f"[Writeback] 运行期落库子代理正文（关联 ChatMessage）失败: task_id={thread_id}",
+            exc_info=True,
+        )
 
 
 def persist_research_progress(

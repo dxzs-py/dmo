@@ -24,11 +24,11 @@ django.setup()
 
 from langchain_core.messages import AIMessageChunk
 
+from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
+from Django_xm.apps.ai_engine.services.usage_tracker import SessionTokenBudgetGuard
 from Django_xm.apps.chat.services.stream.context import StreamContext
 from Django_xm.apps.chat.services.stream.loop import run_stream_loop
 from Django_xm.apps.chat.services.stream.strategy import NormalStreamStrategy
-from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
-from Django_xm.apps.ai_engine.services.usage_tracker import SessionTokenBudgetGuard
 from Django_xm.common.event_schema import EventType, validate_payload
 
 _LOOP_MODULE = "Django_xm.apps.chat.services.stream.loop"
@@ -53,6 +53,8 @@ def _make_guard(enabled: bool, exceeded: bool) -> tuple[mock.MagicMock, list]:
         }
 
     guard.check.side_effect = _check
+    # loop.py 经 await acheck(...)（基线离环变体）——AsyncMock 使 await 可用，同一 info
+    guard.acheck = mock.AsyncMock(side_effect=_check)
     return guard, calls
 
 
@@ -176,6 +178,97 @@ class SessionBudgetGuardTests(unittest.TestCase):
             guard.check(3)
         total_mock.assert_called_once_with("s-1")
 
+    def test_acheck_loads_baseline_off_loop_and_caches(self) -> None:
+        """acheck（async 变体）：基线经 to_thread 离环加载且仅一次，行为与 check 等价。
+
+        冒烟实测（fastapi.log）：执行器事件循环内调 sync check 触发
+        SynchronousOnlyOperation，基线恒按 0 处理（COST-01 运行时失效）；
+        本用例锁定 async 调用方（loop.py / research adapter）唯一入口。
+        """
+
+        async def _run() -> tuple[dict, dict]:
+            guard = SessionTokenBudgetGuard("s-1")
+            first = await guard.acheck(current_request_tokens=50)
+            second = await guard.acheck(current_request_tokens=5)
+            return first, second
+
+        with (
+            mock.patch(f"{_USAGE_MODULE}.get_session_token_budget_limit", return_value=120),
+            mock.patch(f"{_USAGE_MODULE}.get_session_total_tokens", return_value=100) as total_mock,
+        ):
+            first, second = asyncio.run(_run())
+        total_mock.assert_called_once_with("s-1")
+        self.assertTrue(first["exceeded"])
+        self.assertEqual(first["session_used"], 100)
+        self.assertEqual(first["total"], 150)
+        self.assertFalse(second["exceeded"])
+        self.assertEqual(second["total"], 105)
+
+    def test_acheck_disabled_short_circuits(self) -> None:
+        """acheck：预算未配置/无 session_id 时不启用，不触发聚合。"""
+
+        async def _run() -> dict:
+            guard = SessionTokenBudgetGuard("")
+            return await guard.acheck(10)
+
+        with (
+            mock.patch(f"{_USAGE_MODULE}.get_session_token_budget_limit", return_value=120),
+            mock.patch(f"{_USAGE_MODULE}.get_session_total_tokens") as total_mock,
+        ):
+            info = asyncio.run(_run())
+        self.assertFalse(info["enabled"])
+        total_mock.assert_not_called()
+
+
+class SessionTotalTokensProviderTests(unittest.TestCase):
+    """阶段 7 票②豁免清零：get_session_total_tokens 经运行期 provider 聚合。
+
+    聚合实现归位 chat/services/cross_app.aggregate_session_total_tokens，
+    组合根在 chat AppConfig.ready() 注册；此处仅锁定消费层契约
+    （取值 / 聚合失败→0+warning / 未注册→0 / 空 session 短路）。
+    """
+
+    def setUp(self) -> None:
+        from Django_xm.apps.ai_engine.services import usage_tracker
+
+        self.usage_tracker = usage_tracker
+        self._original = usage_tracker.get_session_total_tokens_provider()
+        self.addCleanup(self._restore)
+
+    def _restore(self) -> None:
+        self.usage_tracker.set_session_total_tokens_provider(self._original)
+
+    def test_returns_provider_value(self) -> None:
+        """已注册：返回聚合实现结果。"""
+        self.usage_tracker.set_session_total_tokens_provider(lambda _sid: 42)
+        self.assertEqual(self.usage_tracker.get_session_total_tokens("s-1"), 42)
+
+    def test_provider_none_result_coerced_to_zero(self) -> None:
+        """聚合实现返回 None（异常聚合结果）：按 0 处理。"""
+        self.usage_tracker.set_session_total_tokens_provider(lambda _sid: None)
+        self.assertEqual(self.usage_tracker.get_session_total_tokens("s-1"), 0)
+
+    def test_provider_failure_returns_zero(self) -> None:
+        """聚合实现抛异常（DB 不可用等）：降级 0，不阻塞主流程。"""
+
+        def _boom(_sid: str) -> int:
+            raise RuntimeError("db down")
+
+        self.usage_tracker.set_session_total_tokens_provider(_boom)
+        self.assertEqual(self.usage_tracker.get_session_total_tokens("s-1"), 0)
+
+    def test_unregistered_returns_zero(self) -> None:
+        """未注册（组合根接线缺失）：降级 0。"""
+        self.usage_tracker.set_session_total_tokens_provider(None)
+        self.assertEqual(self.usage_tracker.get_session_total_tokens("s-1"), 0)
+
+    def test_empty_session_id_short_circuits(self) -> None:
+        """空 session_id：短路返回 0，不触达聚合实现。"""
+        calls: list[str] = []
+        self.usage_tracker.set_session_total_tokens_provider(calls.append)
+        self.assertEqual(self.usage_tracker.get_session_total_tokens(""), 0)
+        self.assertEqual(calls, [])
+
 
 class RunStreamLoopBudgetTests(unittest.TestCase):
     """执行循环接入：超限终止 + 事件发布 / 未超限正常 / 未配置不启用。"""
@@ -224,7 +317,7 @@ class RunStreamLoopBudgetTests(unittest.TestCase):
         graph = _FakeGraph([_chunk("a", with_usage=True), _chunk("b", with_usage=True)])
         data = {"session_id": "s-1"}
 
-        events, published = _run_loop(graph, guard, data)
+        _events, published = _run_loop(graph, guard, data)
 
         self.assertEqual(graph.consumed, 2)
         self.assertEqual(calls, [])  # 未启用时连 check 都不触发

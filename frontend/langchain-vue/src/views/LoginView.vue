@@ -2,7 +2,7 @@
   <div class="login-container">
     <div class="login-box">
       <div class="login-header">
-        <h1 class="title">LC-StudyLab</h1>
+        <h1 class="title">DX-Study-Agent</h1>
         <p class="subtitle">智能学习 & 研究助手</p>
       </div>
 

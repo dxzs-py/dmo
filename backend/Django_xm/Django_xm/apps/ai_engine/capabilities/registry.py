@@ -9,6 +9,11 @@ from .base import AgentCapability
 
 logger = logging.getLogger(__name__)
 
+# 安全类能力清单（fix-review-round3 2.3）：构建失败 fail-closed 向上抛。
+# - guardrails：输入/输出校验 + PII 脱敏，安全边界中间件，缺失即带缺口运行；
+# 非安全类（context_management/tool_injection/rate_limit/groq_compat）维持降级。
+_SAFETY_CAPABILITIES = frozenset({"guardrails"})
+
 
 class CapabilityRegistry:
     def __init__(self) -> None:
@@ -45,6 +50,16 @@ class CapabilityRegistry:
         capabilities: Sequence[str],
         **kwargs,
     ) -> list[AgentMiddleware]:
+        """按能力清单构建中间件栈（fix-review-round3 2.3 安全分类）。
+
+        逐能力分类处置：
+        - 安全类（_SAFETY_CAPABILITIES，当前 guardrails：输入/输出校验、PII
+          脱敏——安全边界）：构建失败向上抛出（fail-closed），由调用方使
+          agent 创建失败；缺失即 agent 带安全缺口运行，不可静默降级。
+        - 非安全类（context_management / tool_injection / rate_limit /
+          groq_compat 等）：构建失败 logger.exception 后降级跳过（丢失只影响
+          上下文治理/注入检测/限额，不构成安全缺口）。
+        """
         result: list[AgentMiddleware] = []
         for cap_name in capabilities:
             cap = self.get(cap_name)
@@ -62,8 +77,16 @@ class CapabilityRegistry:
                 middleware = cap.build_middleware(**kwargs)
                 result.extend(middleware)
             except Exception:
+                if cap_name in _SAFETY_CAPABILITIES:
+                    # 安全能力构建失败：fail-closed 向上抛（round3 2.3，
+                    # 与 ApprovalMiddleware 内部 fail-closed 语义对齐）
+                    logger.exception(
+                        "Safety capability '%s' middleware build failed (fail-closed)",
+                        cap_name,
+                    )
+                    raise
                 logger.exception(
-                    "Failed to build middleware for capability '%s'",
+                    "Failed to build middleware for capability '%s'（非安全能力，降级跳过）",
                     cap_name,
                 )
         return result

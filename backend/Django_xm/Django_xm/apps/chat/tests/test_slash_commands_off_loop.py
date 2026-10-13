@@ -1,12 +1,10 @@
 """E11（D1 遗留，审计 PF-05/P2-7）：slash 命令链同步上下文工程移出事件循环。
 
 修复前缺口：
-- 斜杠命令链两条调用路径均在 FastAPI 执行服务事件循环上**同步**执行
+- 生产链（流式主链）在 FastAPI 执行服务事件循环上**同步**执行
   ``execute_command``（纯分发器，handler 含阻塞路径）：
-  1. 流式主链：``run_agent_session`` → ``_dispatch_by_mode`` →
-     ``_handle_slash_command``（async gen 内同步调用）；
-  2. 非流式链：``process_chat_request`` → ``_precheck_chat_request``（sync def
-     内同步调用）。
+  ``run_agent_session`` → ``_dispatch_by_mode`` → ``_handle_slash_command``
+  （async gen 内同步调用）。
 - 重活根因 ``/compact`` → ``build_structured_context``：``_ensure_store``
   （store 懒加载连接）+ ``store.search``（store IO）+ 跨会话逐条相关性评分的
   同步 ``embed_query``（远程 API——``get_injection_context`` 的 KG/跨会话两个
@@ -19,15 +17,16 @@
 - ``slash_commands.aexecute_command``：asyncio.to_thread 调度变体，
   execute_command 保持同步签名（轻命令随重命令一并移出循环，避免逐命令
   维护"是否需要调度"的判定面）；
-- 两个调用点统一改走 ``aexecute_command``；``_precheck_chat_request`` 随之
-  async 化（唯一生产调用点同步更新，cache/rag 段行为不变）。
+- 流式调用点改走 ``aexecute_command``。
+  （注：原"非流式链 process_chat_request → _precheck_chat_request"调用点
+  属生产零调用孤儿链，已随 CT-01=A 删除，其接线用例一并移除。）
 
 测试证明方式（参照 D1 test_context_engineering_off_loop）：
 1. 时序死锁式断言——同步重活阻塞在 threading.Event 上，只有事件循环上的
    心跳协程置位后才能结束；若重活直接跑在循环上则心跳永远无法先于重活
    完成（断言必败）；
 2. 线程身份断言——命令执行线程 ≠ 事件循环线程；
-3. 调用点接线断言——流式/非流式两链均经异步入口调度，返回结构不变；
+3. 调用点接线断言——流式链经异步入口调度，返回结构不变；
 4. 命令行为回归——7 个命令 aexecute 与 sync 输出逐一相等（仅改调度不改编排）。
 
 附带项（N-6 关联面，本任务顺手修）：``_run_stream_execution`` 的
@@ -48,9 +47,9 @@ from unittest import mock
 
 from django.test import SimpleTestCase
 
+from Django_xm.apps.ai_engine.services import llm_factory as llm_factory_module
 from Django_xm.apps.ai_engine.services import llm_fallback as llm_fallback_module
 from Django_xm.apps.ai_engine.services import registry_service as registry_service_module
-from Django_xm.apps.ai_engine.services import llm_factory as llm_factory_module
 from Django_xm.apps.chat.services import slash_commands as slash_commands_module
 from Django_xm.apps.chat.services.chat_service import ChatService
 from Django_xm.apps.chat.services.slash_commands import aexecute_command, execute_command
@@ -151,7 +150,7 @@ class SlashStreamWiringTests(SimpleTestCase):
             with mock.patch.object(slash_commands_module, "execute_command", _spy_execute):
                 return await _collect(
                     service._handle_slash_command(
-                        data, ("status", ""), SimpleNamespace(get_summary=lambda: {})
+                        data, ("status", ""), SimpleNamespace(get_summary=dict)
                     )
                 )
 
@@ -177,7 +176,7 @@ class SlashStreamWiringTests(SimpleTestCase):
         data = {"message": "/nope", "session_id": "s1", "chat_history": []}
         events = asyncio.run(
             _collect(
-                service._handle_slash_command(data, ("nope", ""), SimpleNamespace(get_summary=lambda: {}))
+                service._handle_slash_command(data, ("nope", ""), SimpleNamespace(get_summary=dict))
             )
         )
         self.assertEqual(events[0]["data"]["type"], "error")
@@ -185,79 +184,7 @@ class SlashStreamWiringTests(SimpleTestCase):
 
 
 # ---------------------------------------------------------------------------
-# 3. 调用点接线：非流式链 _precheck_chat_request（async 化）
-# ---------------------------------------------------------------------------
-
-
-class PrecheckSlashWiringTests(SimpleTestCase):
-    def _make_service(self):
-        service = ChatService.__new__(ChatService)
-        service.user_id = 1
-        return service
-
-    def test_precheck_slash_branch_executes_off_loop(self):
-        """非流式链：命令命中时 execute_command 经 to_thread 执行，返回结构不变"""
-        timeline = {}
-        service = self._make_service()
-        data = {
-            "message": "/status",
-            "session_id": "s1",
-            "mode": "agent",
-            "chat_history": [{"role": "user", "content": "hi"}],
-        }
-
-        def _spy_execute(command_name, context):
-            timeline["work_thread"] = threading.current_thread()
-            return {"type": "info", "content": "📊 会话状态"}
-
-        async def scenario():
-            timeline["loop_thread"] = threading.current_thread()
-            with mock.patch.object(slash_commands_module, "execute_command", _spy_execute):
-                return await service._precheck_chat_request(data)
-
-        result = asyncio.run(scenario())
-
-        self.assertIsNot(timeline["work_thread"], timeline["loop_thread"])
-        # 返回结构与修复前完全一致（is_command 提前返回，不进 cache/rag 分流）
-        self.assertEqual(
-            result,
-            {
-                "message": "📊 会话状态",
-                "mode": "agent",
-                "tools_used": [],
-                "success": True,
-                "is_command": True,
-                "command_type": "info",
-            },
-        )
-
-    def test_precheck_command_short_circuits_cache_and_rag(self):
-        """命令命中 → 直接返回，不再触发模型响应缓存与 RAG 分流（编排顺序不变）"""
-        service = self._make_service()
-        data = {"message": "/clear", "session_id": "s1", "mode": "agent", "chat_history": []}
-        with mock.patch.object(
-            slash_commands_module, "execute_command", lambda name, ctx: {"type": "action", "content": "ok"}
-        ):
-            from Django_xm.apps.cache_manager.services.cache_service import ModelResponseCacheService
-
-            with mock.patch.object(
-                ModelResponseCacheService, "get_cached_response", side_effect=AssertionError("不应触达缓存")
-            ):
-                result = asyncio.run(service._precheck_chat_request(data))
-        self.assertTrue(result["is_command"])
-
-    def test_precheck_unknown_command_returns_error_response(self):
-        """非流式链：未知命令 → is_command=True 的 error 响应（与同步版一致）"""
-        service = self._make_service()
-        data = {"message": "/nope", "session_id": "s1", "mode": "agent", "chat_history": []}
-        result = asyncio.run(service._precheck_chat_request(data))
-        self.assertTrue(result["is_command"])
-        self.assertEqual(result["command_type"], "error")
-        self.assertIn("未知命令", result["message"])
-
-
-# ---------------------------------------------------------------------------
-# 4. 命令行为回归：aexecute 与 sync 输出逐一相等（仅改调度不改编排）
+# 3. 命令行为回归：aexecute 与 sync 输出逐一相等（仅改调度不改编排）
 # ---------------------------------------------------------------------------
 
 
@@ -348,7 +275,7 @@ class CommandBehaviorParityTests(SimpleTestCase):
 
 
 # ---------------------------------------------------------------------------
-# 5. 附带项：_run_stream_execution expected_provider 兜底（N-6 关联面）
+# 4. 附带项：_run_stream_execution expected_provider 兜底（N-6 关联面）
 # ---------------------------------------------------------------------------
 
 

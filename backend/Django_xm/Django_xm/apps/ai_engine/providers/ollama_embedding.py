@@ -50,6 +50,9 @@ def create_embedding(
     init_kwargs: dict[str, Any] = {
         "model": model or cfg["model"],
         "base_url": cfg["base_url"],
+        # E5-06：httpx 客户端显式 60s 超时（OllamaEmbeddings 无 timeout 字段，
+        # client_kwargs 透传给 sync/async Client），对齐 openai provider 的 60s
+        "client_kwargs": {"timeout": 60.0},
     }
     # OllamaEmbeddings 原生支持 dimensions（MRL 截断）
     if dimensions is not None and dimensions > 0:

@@ -461,8 +461,10 @@ async def publish_event(
             历史席位；seq 照常生成，同频道严格单调递增（允许跳号）语义不变，
             前端 lastSeq/dedupe/replay-barrier 契约不受影响。适用对象：高频
             全量快照类中间态事件（如 STREAM_CONTENT_UPDATE 正文快照、
-            STREAM_REASONING 进行中推理快照）——重连回放的终态恢复由入历史
-            的权威事件承担（message_updated / 完成态推理 / stream_completed）。
+            STREAM_REASONING 进行中推理快照、STREAM_SUBAGENT_CONTENT 子代理
+            正文全量快照）——重连回放的终态恢复由入历史的权威事件承担
+            （message_updated / 完成态推理 / stream_completed）与落库快照
+            （含子代理正文运行期落库）承担。
 
     频道路由规则：
         1. session_id 非空 → session:{session_id}

@@ -50,6 +50,14 @@ logger = logging.getLogger(__name__)
 # 子代理进程级并发上限默认值。settings.AGENT_SUBAGENT_CONCURRENCY 可覆盖。
 DEFAULT_SUBAGENT_CONCURRENCY: int = 8
 
+# 并发槽排队等待超时默认值（秒）。settings.AGENT_SUBAGENT_ACQUIRE_TIMEOUT 可覆盖；
+# <=0 / None 表示无限等待（维持旧排队语义）。取 30s 依据（round3 2.5）：
+# 槽位生命周期受 recursion_limit/工具超时约束为分钟级，正常排队在秒级得到
+# 调度；超过 30s 仍未获得槽位说明并发面已饱和，继续无限排队会让子代理
+# 线程悬挂且父会话 fan-in 等待者一直收不到终态（挂到 watchdog 7200s）。
+# 超时后实例置 FAILED 并触发 _notify_finished，父会话立即感知失败。
+DEFAULT_SUBAGENT_ACQUIRE_TIMEOUT: float = 30.0
+
 
 def get_subagent_concurrency_limit() -> int:
     """读取子代理并发上限（settings 覆盖 → 代码默认；非法值防呆回退）。
@@ -80,6 +88,37 @@ def get_subagent_concurrency_limit() -> int:
 
 _semaphore: threading.BoundedSemaphore | None = None
 _semaphore_lock = threading.Lock()
+
+
+def get_subagent_concurrency_acquire_timeout() -> float | None:
+    """读取并发槽排队等待超时（settings 覆盖 → 代码默认）。
+
+    Returns:
+        超时秒数（>0）；settings 显式 <=0 / None 或非法值时返回 None
+        （无限等待，维持旧排队语义——禁用语义须显式声明而非缺省）。
+    """
+    try:
+        from django.conf import settings
+
+        raw = getattr(settings, "AGENT_SUBAGENT_ACQUIRE_TIMEOUT", DEFAULT_SUBAGENT_ACQUIRE_TIMEOUT)
+    except Exception as e:
+        logger.warning(
+            f"[SubAgentConcurrency] 读取 AGENT_SUBAGENT_ACQUIRE_TIMEOUT 失败，"
+            f"回退默认值 {DEFAULT_SUBAGENT_ACQUIRE_TIMEOUT}: {e}"
+        )
+        return DEFAULT_SUBAGENT_ACQUIRE_TIMEOUT
+    if raw is None:
+        return None
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            f"[SubAgentConcurrency] AGENT_SUBAGENT_ACQUIRE_TIMEOUT={raw!r} 非法（非数值），按无限等待处理"
+        )
+        return None
+    if timeout <= 0:
+        return None
+    return timeout
 
 
 def get_subagent_concurrency_semaphore() -> threading.BoundedSemaphore:

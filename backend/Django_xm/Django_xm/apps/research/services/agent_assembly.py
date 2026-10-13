@@ -201,7 +201,6 @@ async def build_research_agent(params: dict, *, thread_id: str, user_id: int | N
         from Django_xm.apps.research.prompts import DEEP_RESEARCH_SYSTEM_PROMPT
 
         system_prompt = f"{DEEP_RESEARCH_SYSTEM_PROMPT}\n\n---\n\n{research_context}"
-
     # 5. 组装工具列表与 AgentConfig
     # 三分类组合加载（与 chat 代理模式 ToolService.get_tools 对齐）：
     #   系统自带（standard 层，visibility=core）+ 按开关（网络搜索，
@@ -236,6 +235,15 @@ async def build_research_agent(params: dict, *, thread_id: str, user_id: int | N
         "use_doc_analysis": params.get("enable_doc_analysis", False),
         "user_id": user_id,
     }
+    # deep_research 业务默认物料注入（环 3 破除，spec 任务 4.3）：
+    # builder 不再 import research.prompts（agent_hub → research 反向边归零），
+    # 默认 prompt 与文档分析引导由本组装方（research 域）经 AgentConfig 注入，
+    # 权威源 apps/research/prompts.py 不变。
+    from Django_xm.apps.research.prompts import (
+        DOC_ANALYSIS_PROMPT_SUFFIX,
+        get_deep_research_prompt,
+    )
+
     config = AgentConfig(
         agent_type=AgentType.DEEP_RESEARCH,
         provider_id=params.get("provider_id"),
@@ -251,6 +259,8 @@ async def build_research_agent(params: dict, *, thread_id: str, user_id: int | N
         session_id=thread_id,
         skills=skills,
         debug=False,
+        prompt_factory=get_deep_research_prompt,
+        doc_analysis_prompt_suffix=DOC_ANALYSIS_PROMPT_SUFFIX,
     )
 
     # 6. 注入异步 Checkpointer
@@ -262,5 +272,25 @@ async def build_research_agent(params: dict, *, thread_id: str, user_id: int | N
         logger.info("[SessionExecutor] 使用异步 Checkpointer")
 
     agent = await agent_hub_create(config)
+
+    # 7. OfficialDeepAgentAdapter 包装（环 3 破除，spec 任务 4.3：包装上移 research）：
+    # deep_builder 现返回 AgentWrapper 元数据载体（graph + thread_id / work_dir /
+    # model / original_tools / original_config），由 research 消费 wrapper 组装
+    # adapter——元数据逐字段原样贯通，韧性降级 _rebuild_with_degraded_tools 与
+    # 回退 _fallback_direct_answer 行为不变（af_16 保持修复态）。
+    # chat_session_id 维持原 builder 组装语义（None，由 adapter 内部从
+    # ResearchTask.session_id 反查）。
+    from Django_xm.apps.agent_hub.factory import AgentWrapper
+    from Django_xm.apps.research.services.adapter import OfficialDeepAgentAdapter
+
+    if isinstance(agent, AgentWrapper) and agent.original_config is not None:
+        agent = OfficialDeepAgentAdapter(
+            graph=agent.graph,
+            thread_id=agent.thread_id or thread_id,
+            work_dir=agent.work_dir,
+            model=agent.model,
+            original_tools=agent.original_tools,
+            original_config=agent.original_config,
+        )
 
     return agent

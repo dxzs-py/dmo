@@ -715,6 +715,9 @@ class SessionExecutor:
             "use_mcp": self.params.get("use_mcp"),
             "user_id": self.user_id,
             "session_id": self.thread_id,
+            # 模型选择双字段透传：缺 provider_id 时子代理 resolve_model 会回退
+            # SystemConfig 默认模型（用户 UI 选择失效的经典根因）
+            "provider_id": self.params.get("provider_id"),
             "model_name": self.params.get("model_name"),
             "store": self.params.get("store"),
             "enable_deep_thinking": bool(self.params.get("enable_deep_thinking", False)),
@@ -1078,6 +1081,20 @@ class ResearchSessionExecutor(SessionExecutor):
                 getattr(agent, "subagent_contents", None),
                 getattr(agent, "_tool_entries", None),
                 getattr(agent, "_main_content", "") or None,
+            )
+        # 4.5 chat 侧收尾（2026-10-06 缺陷修复）：取消即时同步聊天模块——回写关联
+        #     ChatMessage 终止语义 + 广播 stream_completed(stopped=true) 到
+        #     session+task 频道（对齐完成路径 _writeback_and_broadcast 的 chat 收尾；
+        #     此前取消路径零 chat 广播 → 聊天侧"毫无反应"）。与 session_manager
+        #     兜底路径共用 finalize_chat_message_cancelled 单源；失败不中断级联。
+        try:
+            from Django_xm.apps.research.services.writeback import finalize_chat_message_cancelled
+
+            await sync_to_async(finalize_chat_message_cancelled)(thread_id)
+        except Exception:
+            logger.warning(
+                f"[SessionExecutor] 取消 chat 收尾失败（非致命）: thread_id={thread_id}",
+                exc_info=True,
             )
         # 5. 挂起审批批次收尾（B4 设施复用：source=DEEP_RESEARCH 传参即可）
         try:

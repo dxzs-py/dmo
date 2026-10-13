@@ -8,9 +8,10 @@
  * 覆盖分支：
  * 1. applySubagentContent：subagentThreadId 缺失丢弃（含 data.subagentThreadId 次级来源）；
  *    会话未加载丢弃；目标消息定位（payload.messageId 命中 / 未命中回退最后 assistant /
- *    无 assistant 丢弃）；content/reasoningContent 幂等追加合并（首片动态初始化、
- *    连续分片累计、空分片不追加、agentName/depth 透传与保留、多线程隔离、平铺 payload 读取）；
- *    活跃版本引用收敛（引用不一致时恢复为同一引用、别名成立时不二次追加）；
+ *    无 assistant 丢弃）；content/reasoningContent 全量快照覆盖渲染（阶段 2 BREAKING：
+ *    后端 payload 为该子代理累积全量正文快照，整帧替换不再追加累计、空帧跳过、
+ *    agentName/depth 透传与保留、多线程隔离、平铺 payload 读取）；
+ *    活跃版本引用收敛（引用不一致时恢复为同一引用、别名成立时不二次写入）；
  * 2. handleSubagentStatusChange：subagentThreadId 存在触发 scheduleSubagentsRefresh
  *    （父线程 payload.sourceId 优先、回退 sessionId），缺失不触发；
  * 3. handleResearchStatusChange：sourceId 存在调用 researchStore.setTaskStatus，缺失不调用。
@@ -140,24 +141,35 @@ describe('createSubagentHandlers', () => {
       })
     })
 
-    it('连续分片：content/reasoningContent 各自追加累计（幂等合并）', () => {
+    it('连续快照帧：整帧覆盖替换（阶段 2 全量快照语义，不再追加累计）', () => {
       const msg = buildAssistantMessage()
       const { applySubagentContent } = buildHandlers([buildSession('s1', [msg])])
 
+      // 后端全量快照：第二帧携带"该子代理累积全量正文"，直接替换第一帧
       applySubagentContent('s1', { subagentThreadId: 'sa-1', data: { content: 'a', reasoningContent: 'r1' } })
-      applySubagentContent('s1', { subagentThreadId: 'sa-1', data: { content: 'b', reasoningContent: 'r2' } })
+      applySubagentContent('s1', { subagentThreadId: 'sa-1', data: { content: 'ab', reasoningContent: 'r1r2' } })
 
       expect(msg.subagentContents['sa-1']).toStrictEqual({ content: 'ab', reasoningContent: 'r1r2' })
     })
 
-    it('单字段分片：仅 content / 仅 reasoningContent 时另一字段保持原值', () => {
+    it('旧增量帧不会二次拼接：与全量帧内容相同时结果幂等（覆盖语义下无重复累计）', () => {
+      const msg = buildAssistantMessage()
+      const { applySubagentContent } = buildHandlers([buildSession('s1', [msg])])
+
+      applySubagentContent('s1', { subagentThreadId: 'sa-1', data: { content: '全文', reasoningContent: '' } })
+      applySubagentContent('s1', { subagentThreadId: 'sa-1', data: { content: '全文', reasoningContent: '' } })
+
+      expect(msg.subagentContents['sa-1'].content).toBe('全文')
+    })
+
+    it('单字段帧：缺席字段按空覆盖（payload 为权威全量）', () => {
       const msg = buildAssistantMessage()
       const { applySubagentContent } = buildHandlers([buildSession('s1', [msg])])
 
       applySubagentContent('s1', { subagentThreadId: 'sa-1', data: { content: 'a' } })
       applySubagentContent('s1', { subagentThreadId: 'sa-1', data: { reasoningContent: 'r' } })
 
-      expect(msg.subagentContents['sa-1']).toStrictEqual({ content: 'a', reasoningContent: 'r' })
+      expect(msg.subagentContents['sa-1']).toStrictEqual({ content: '', reasoningContent: 'r' })
     })
 
     it('空分片：content 与 reasoningContent 均为空时直接返回，不追加也不初始化', () => {
@@ -172,7 +184,7 @@ describe('createSubagentHandlers', () => {
       expect(msg.subagentContents['sa-1']).toStrictEqual({ content: 'a', reasoningContent: '' })
     })
 
-    it('元数据保留：后续分片缺 agentName/depth 时保留已有值（展开合并）', () => {
+    it('元数据保留：后续帧缺 agentName/depth 时保留已有值（正文按全量覆盖）', () => {
       const msg = buildAssistantMessage()
       const { applySubagentContent } = buildHandlers([buildSession('s1', [msg])])
 
@@ -180,7 +192,7 @@ describe('createSubagentHandlers', () => {
         subagentThreadId: 'sa-1',
         data: { content: 'a', agentName: '研究员', depth: 1 },
       })
-      applySubagentContent('s1', { subagentThreadId: 'sa-1', data: { content: 'b' } })
+      applySubagentContent('s1', { subagentThreadId: 'sa-1', data: { content: 'ab' } })
 
       expect(msg.subagentContents['sa-1']).toStrictEqual({
         content: 'ab',
@@ -201,13 +213,13 @@ describe('createSubagentHandlers', () => {
       expect('depth' in msg.subagentContents['sa-2']).toBe(false)
     })
 
-    it('多线程隔离：不同 subagentThreadId 各自独立累计', () => {
+    it('多线程隔离：不同 subagentThreadId 各自独立覆盖', () => {
       const msg = buildAssistantMessage()
       const { applySubagentContent } = buildHandlers([buildSession('s1', [msg])])
 
       applySubagentContent('s1', { subagentThreadId: 'sa-1', data: { content: 'a1' } })
       applySubagentContent('s1', { subagentThreadId: 'sa-2', data: { content: 'a2' } })
-      applySubagentContent('s1', { subagentThreadId: 'sa-1', data: { content: 'b1' } })
+      applySubagentContent('s1', { subagentThreadId: 'sa-1', data: { content: 'a1b1' } })
 
       expect(msg.subagentContents['sa-1'].content).toBe('a1b1')
       expect(msg.subagentContents['sa-2'].content).toBe('a2')

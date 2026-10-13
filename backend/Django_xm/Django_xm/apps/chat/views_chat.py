@@ -498,14 +498,14 @@ class ChatStreamView(BaseChatAPIView):
         assistant_message_id = None
         user_message_id = None
         if session_id:
-            # 会话获取失败仅告警（沿用原实现：message_id 保持 None，不阻断主流程）
-            try:
-                session_obj = ChatSession.objects.get(session_id=session_id)
-                _user = request.user if request.user.is_authenticated else None
-            except Exception as e:
-                logger.warning(f"[ChatStream] 获取会话失败: {e}")
-                session_obj = None
-                _user = None
+            # D-3 安全修复：会话获取必须带 user 过滤（复用 get_session_or_404 →
+            # get_user_session，user + is_deleted 过滤）。原裸查询允许对他人会话
+            # 触发重新生成校验/创建消息对（越权写）。会话不存在或不属于当前用户
+            # 一律 404，与本文件其余端点（ChatStreamStopView 等）语义一致。
+            session_obj = self.get_session_or_404(session_id, request.user)
+            if not session_obj:
+                raise NotFound("会话不存在")
+            _user = request.user if request.user.is_authenticated else None
 
             if session_obj is not None and data.get("regenerate"):
                 # ── 重新生成分支：复用已有消息对，不新建 user/assistant ──

@@ -2,7 +2,8 @@
  * sessionTransformers 单元测试（Task 7.4）
  *
  * 覆盖：深层嵌套转换、数组内对象转换、Date/RegExp/File/Blob/FormData 不被遍历、
- * null/undefined/原始值原样返回、type 字符串值不被转换（只转键名）、toSnakeCase 对称性。
+ * null/undefined/原始值原样返回、type 字符串值不被转换（只转键名）、toSnakeCase 对称性、
+ * preserveKeys 键名豁免（headers/env 自由字典 + subagent_contents 协议标识符）。
  *
  * 运行方式（vitest）：
  *   npm run test
@@ -130,6 +131,63 @@ describe('sessionTransformers', () => {
     expect(convertSnakeToCamel('waiting_for_answers')).toBe('waitingForAnswers')
     expect(convertSnakeToCamel('workflow_step')).toBe('workflowStep')
     expect(convertSnakeToCamel('alreadyCamel')).toBe('alreadyCamel')
+  })
+})
+
+describe('preserveKeys 键名豁免（C5：用户自由字典 / 协议标识符）', () => {
+  it('toSnakeCase 不摧毁 headers：Authorization / X-API-Key / 大小写混合键原样保留', () => {
+    const input = {
+      name: 'srv',
+      transport: 'http',
+      headers: { Authorization: 'Bearer tok', 'X-API-Key': 'k-1', 'X_Custom-Header': 'v' },
+    }
+    const out = toSnakeCase(input)
+    expect(out.name).toBe('srv')
+    expect(out.headers).toStrictEqual(input.headers)
+  })
+
+  it('env 自由字典同样豁免（subtree 模式，深层嵌套键名均保留）', () => {
+    const input = { command: 'npx', env: { API_KEY: 'v', nested: { INNER_KEY: 'x' } } }
+    expect(toSnakeCase(input).env).toStrictEqual(input.env)
+    expect(toCamelCase(input).env).toStrictEqual(input.env)
+  })
+
+  it('嵌套在深层对象中的 headers 同样豁免（任意层级按父键名命中）', () => {
+    const input = { servers: [{ name: 'a', headers: { 'X-API-Key': 'k' } }] }
+    expect(toSnakeCase(input).servers[0].headers['X-API-Key']).toBe('k')
+  })
+
+  it('往返不变：snake 输入经 toCamelCase→toSnakeCase 还原（保存→编辑→保存场景）', () => {
+    const input = {
+      name: 'srv',
+      headers: { Authorization: 'Bearer tok', 'X-API-Key': 'k', 'Mixed-Case_Key': 'v' },
+      env: { TOKEN: 't', mixedKey: 'v2' },
+    }
+    expect(toSnakeCase(toCamelCase(input))).toStrictEqual(input)
+  })
+
+  it('往返不变：camel 输入经 toSnakeCase→toCamelCase 还原', () => {
+    const input = {
+      name: 'srv',
+      headers: { Authorization: 'Bearer tok', 'X-API-Key': 'k' },
+      env: { TOKEN: 't' },
+    }
+    expect(toCamelCase(toSnakeCase(input))).toStrictEqual(input)
+  })
+
+  it('subagent_contents 统一为 children 模式：子键保留、内部字段双向正常转换', () => {
+    const input = { subagent_contents: { subagent_abc: { reasoning_content: 'r', agent_name: 'planner' } } }
+    const camel = toCamelCase(input)
+    expect(camel.subagentContents.subagent_abc).toStrictEqual({ reasoningContent: 'r', agentName: 'planner' })
+    const snake = toSnakeCase(camel)
+    expect(snake.subagent_contents.subagent_abc).toStrictEqual({ reasoning_content: 'r', agent_name: 'planner' })
+  })
+
+  it('豁免不外溢：headers_info 等普通键名照常转换', () => {
+    const out = toCamelCase({ headers_info: { user_name: 'a' }, auth_token: 't', environment: { db_host: 'x' } })
+    expect(out.headersInfo).toStrictEqual({ userName: 'a' })
+    expect(out.authToken).toBe('t')
+    expect(out.environment).toStrictEqual({ dbHost: 'x' })
   })
 })
 

@@ -615,8 +615,8 @@ class SandboxExecutor:
 # ── HIGH 级命令权威词表（单一真源，B3）────────────────────────────
 # 消费方（必须同源，禁止各自维护副本）：
 # - 本模块 should_sandbox / is_high_risk_command（沙箱路由兜底）
-# - apps/tools/langchain/shell.py _assess_command_risk_level（审批风险评级，
-#   经 agent_hub ApprovalPolicy.assess_risk 委托）
+# - apps/tools/langchain/shell.py assess_command_risk_level（审批风险评级，
+#   经 agent_hub ApprovalPolicy.assess_risk 委托；CT-09 转正公开 API）
 # 语义：全部为小写子串匹配（command.lower() 后 any(pattern in cmd)）。
 # 2026-10-05 扩展（deep-audit §8.1/补充审计）：合并原 shell 侧 5 个宽泛关键字
 # （install/remove/delete/format/write），并新增解释器/计划任务/证书工具等
@@ -689,9 +689,12 @@ def is_high_risk_command(command: str) -> bool:
         True 表示命令匹配 HIGH 级模式
     """
     cmd_lower = command.lower().strip()
-    # 模式同样归一小写（修复既有潜在缺陷：原表 "chmod -R 777" 含大写 R，
-    # 在小写化命令上永远无法命中）
-    return any(pattern.lower() in cmd_lower for pattern in HIGH_RISK_COMMAND_PATTERNS)
+    # F3：空白归一化（连续空白/制表符 → 单空格）后再匹配——修复
+    # "python\t-c" / "python  -c" 等以空白变体绕过字面子串匹配的绕过；
+    # 模式同样归一小写与空白（修复既有潜在缺陷：原表 "chmod -R 777" 含
+    # 大写 R，在小写化命令上永远无法命中）
+    cmd_normalized = " ".join(cmd_lower.split())
+    return any(" ".join(pattern.lower().split()) in cmd_normalized for pattern in HIGH_RISK_COMMAND_PATTERNS)
 
 
 # 兼容别名（历史引用；新代码一律使用公开名）

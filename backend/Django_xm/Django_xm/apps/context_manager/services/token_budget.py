@@ -9,10 +9,11 @@
 import json
 import threading
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from Django_xm.apps.context_manager.config import context_settings
 from Django_xm.apps.context_manager.services.compression import TokenEstimator
+from Django_xm.apps.context_manager.services.context_pruner import _is_protected
 from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -60,65 +61,77 @@ VALID_SECTIONS = frozenset(SECTION_RATIOS.keys())
 OUTPUT_RESERVE_RATIO = 0.10
 
 
-class ContextEfficiencyMetrics:
-    """上下文使用效率度量"""
+@dataclass
+class BudgetTrimResult:
+    """最终裁剪兜底结果（A12）：trimmed=True 表示实际发生了消息截断。"""
 
-    def __init__(self) -> None:
-        self._total_injected_tokens: int = 0  # 注入的总token数
-        self._total_retrieved_tokens: int = 0  # 检索结果token数
-        self._total_compressed_tokens: int = 0  # 压缩后保留token数
-        self._compression_count: int = 0  # 压缩次数
-        self._retrieval_hit_count: int = 0  # 检索命中次数
-        self._retrieval_miss_count: int = 0  # 检索未命中次数
-        # 压缩前总量（用于计算压缩保留率）
-        self._total_original_tokens_before_compression: int = 0
+    trimmed: bool = False
+    removed_count: int = 0
+    original_tokens: int = 0
+    trimmed_tokens: int = 0
 
-    def record_injection(self, injected_tokens: int, retrieved_tokens: int = 0) -> None:
-        """记录上下文注入"""
-        self._total_injected_tokens += injected_tokens
-        self._total_retrieved_tokens += retrieved_tokens
 
-    def record_compression(self, original_tokens: int, compressed_tokens: int) -> None:
-        """记录压缩"""
-        self._total_original_tokens_before_compression += original_tokens
-        self._total_compressed_tokens += compressed_tokens
-        self._compression_count += 1
+def trim_messages_to_budget(
+    messages: list[dict[str, Any]],
+    budget_tokens: int,
+    keep_recent: int = 6,
+    model_name: str = "",
+) -> tuple[list[dict[str, Any]], BudgetTrimResult]:
+    """最终裁剪兜底（A12）：压缩/相关性筛选后仍超预算时，按预算截断最旧消息。
 
-    @property
-    def compression_retention_rate(self) -> float:
-        """压缩保留率：压缩后/压缩前"""
-        if self._total_original_tokens_before_compression <= 0:
-            return 0.0
-        return self._total_compressed_tokens / self._total_original_tokens_before_compression
+    固定保留（不参与裁剪）：
+    - 结构化保护消息：system 角色 / pinned / memory_tier=long_term（复用
+      context_pruner._is_protected，与压缩层分层语义一致）；
+    - 最近 keep_recent 条消息（时序上的近因窗口，无论是否受保护）。
 
-    @property
-    def retrieval_hit_rate(self) -> float:
-        """检索命中率"""
-        total = self._retrieval_hit_count + self._retrieval_miss_count
-        if total <= 0:
-            return 0.0
-        return self._retrieval_hit_count / total
+    裁剪顺序：从最旧的非保留消息开始逐条移除，直至预算内或无可裁剪消息。
+    protected 消息本身即超预算时裁无可裁（trimmed=False），由调用方决定后续。
 
-    @property
-    def effective_info_ratio(self) -> float:
-        """有效信息比：检索结果/总注入（近似）"""
-        if self._total_injected_tokens <= 0:
-            return 0.0
-        return self._total_retrieved_tokens / self._total_injected_tokens
+    model_name（fix-review-round2 4.4）：透传给 TokenEstimator 做 token 校准，
+    调用链（manager.allocate_budget → 本函数）在 allocate 之后取
+    ``resolved_model``；空串时估算器退回 cl100k_base 近似（原行为）。
 
-    def get_summary(self) -> dict[str, float]:
-        """获取效率摘要"""
-        return {
-            "compression_retention_rate": round(self.compression_retention_rate, 4),
-            "retrieval_hit_rate": round(self.retrieval_hit_rate, 4),
-            "effective_info_ratio": round(self.effective_info_ratio, 4),
-            "total_injected_tokens": float(self._total_injected_tokens),
-            "total_retrieved_tokens": float(self._total_retrieved_tokens),
-            "total_compressed_tokens": float(self._total_compressed_tokens),
-            "compression_count": float(self._compression_count),
-            "retrieval_hit_count": float(self._retrieval_hit_count),
-            "retrieval_miss_count": float(self._retrieval_miss_count),
-        }
+    Returns:
+        (裁剪后消息列表, BudgetTrimResult)
+    """
+    result = BudgetTrimResult()
+    if not messages:
+        return messages, result
+
+    result.original_tokens = TokenEstimator.estimate_dict_messages(messages, model_name)
+    if budget_tokens <= 0 or result.original_tokens <= budget_tokens:
+        return messages, result
+
+    keep_recent = max(0, keep_recent)
+    recent_start = max(0, len(messages) - keep_recent)
+    per_message_tokens = [TokenEstimator.estimate_dict_messages([msg], model_name) for msg in messages]
+    keep_flags = [
+        _is_protected(msg) or i >= recent_start for i, msg in enumerate(messages)
+    ]
+
+    total_tokens = result.original_tokens
+    removed = 0
+    for i in range(len(messages)):  # 最旧优先
+        if total_tokens <= budget_tokens:
+            break
+        if keep_flags[i]:
+            continue
+        total_tokens -= per_message_tokens[i]
+        keep_flags[i] = False
+        removed += 1
+
+    if removed == 0:
+        return messages, result
+
+    result.trimmed = True
+    result.removed_count = removed
+    result.trimmed_tokens = total_tokens
+    logger.info(
+        f"Token 预算最终裁剪: 移除 {removed} 条最旧消息, "
+        f"{result.original_tokens} -> {total_tokens} tokens (budget={budget_tokens})"
+    )
+    trimmed_messages = [msg for i, msg in enumerate(messages) if keep_flags[i]]
+    return trimmed_messages, result
 
 
 @dataclass
@@ -203,6 +216,12 @@ class TokenBudgetManager:
             requested=token_count,
             over_by=over_by,
         )
+
+    def get_section_budget(self, section_name: str) -> int:
+        """查询分区预算上限（A12 最终裁剪兜底的目标预算）；分区未分配时返回 0"""
+        with self._lock:
+            allocation = self._allocations.get(section_name)
+            return allocation.budget if allocation is not None else 0
 
     def get_usage(self) -> dict[str, dict[str, int]]:
         with self._lock:

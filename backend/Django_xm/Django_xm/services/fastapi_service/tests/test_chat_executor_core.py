@@ -8,6 +8,8 @@
 修复后行为：
 - 异常分支经 build_user_facing_error 分类（error_code + 用户可行动中文文案），
   广播 data.success=False + error（文案）+ error_code；
+- 落库失败（persist_chat_tool_calls/_mark_not_streaming 抛异常）不再被吞成
+  假成功：广播 data.success=False + PERSIST_FAILED（D-1）；
 - 成功路径 data 与现状完全一致：{success: True, stopped, incomplete}。
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
@@ -47,8 +49,9 @@ def _make_executor():
     return executor
 
 
-def _run_session(exc: Exception | None):
-    """执行 run_chat_session：exc 非 None 时让 run_agent_session 抛出该异常。
+def _run_session(exc: Exception | None, persist_exc: Exception | None = None):
+    """执行 run_chat_session：exc 非 None 时让 run_agent_session 抛出该异常，
+    persist_exc 非 None 时让 persist_chat_tool_calls 抛出该异常（D-1 落库失败）。
 
     返回 publish_event 的 AsyncMock，供断言广播内容。所有 DB/Redis/LLM 依赖
     全 mock（SimpleTestCase 无 DB），仅验证执行器编排与广播语义。
@@ -56,7 +59,7 @@ def _run_session(exc: Exception | None):
     executor = _make_executor()
     with patch(
         f"{_MODULE}.persist_chat_tool_calls", new_callable=AsyncMock
-    ), patch(_CHAT_SERVICE) as mock_chat_service, patch(
+    ) as mock_persist, patch(_CHAT_SERVICE) as mock_chat_service, patch(
         _PUBLISH_EVENT, new_callable=AsyncMock
     ) as mock_publish, patch(
         _CHECKPOINTER, new_callable=AsyncMock
@@ -65,6 +68,8 @@ def _run_session(exc: Exception | None):
     ) as mock_objects, patch(
         _ABANDON, return_value=0
     ):
+        if persist_exc is not None:
+            mock_persist.side_effect = persist_exc
         mock_objects.filter.return_value.first.return_value = None
         if exc is not None:
             mock_chat_service.return_value.run_agent_session = AsyncMock(side_effect=exc)
@@ -136,3 +141,48 @@ class TestRunChatSessionSuccessBroadcast(SimpleTestCase):
         self.assertIs(data["success"], True)
         self.assertNotIn("error", data)
         self.assertNotIn("error_code", data)
+
+
+class TestPersistFailureBroadcast(SimpleTestCase):
+    """落库失败不再假成功（D-1）：广播 success=False + PERSIST_FAILED。
+
+    修复前缺口：落库（persist_chat_tool_calls/_mark_not_streaming）异常仅记
+    warning 日志即被吞，:277-302 无条件继续广播 success=True → 用户侧"执行
+    成功"但内容未持久化，刷新即丢。
+    """
+
+    def test_persist_failure_broadcasts_success_false_with_persist_code(self):
+        """执行成功但落库失败 → success=False + error 文案 + PERSIST_FAILED。"""
+        mock_publish = _run_session(None, persist_exc=RuntimeError("db connection lost"))
+        data = _find_completed_payload(mock_publish)["data"]
+        self.assertIs(data["success"], False)
+        self.assertEqual(data["error_code"], "PERSIST_FAILED")
+        self.assertTrue(data.get("error"), "落库失败终态必须携带用户可读错误文案")
+
+    def test_persist_failure_does_not_leak_raw_exception(self):
+        """落库失败终态 error 字段不透出裸异常原文（str(exc) 不直达用户）。"""
+        raw_detail = "psycopg2.OperationalError: server closed the connection unexpectedly"
+        mock_publish = _run_session(None, persist_exc=RuntimeError(raw_detail))
+        data = _find_completed_payload(mock_publish)["data"]
+        self.assertNotIn(raw_detail, str(data.get("error", "")))
+
+    def test_execution_failure_takes_priority_over_persist_failure(self):
+        """执行失败 + 落库同时失败 → error_info 优先（执行失败为主因）。"""
+        mock_publish = _run_session(
+            TimeoutError("request timed out after 120s"),
+            persist_exc=RuntimeError("db down"),
+        )
+        data = _find_completed_payload(mock_publish)["data"]
+        self.assertIs(data["success"], False)
+        self.assertEqual(data["error_code"], "MODEL_CALL_ERROR")
+
+    def test_persist_failure_with_user_stop_still_failure(self):
+        """用户停止 + 落库失败 → stopped=True 但 success=False（内容未持久化为真）。"""
+        import asyncio
+
+        mock_publish = _run_session(asyncio.CancelledError(), persist_exc=RuntimeError("db down"))
+        data = _find_completed_payload(mock_publish)["data"]
+        self.assertIs(data["success"], False)
+        self.assertIs(data["stopped"], True)
+        self.assertEqual(data["error_code"], "PERSIST_FAILED")
+

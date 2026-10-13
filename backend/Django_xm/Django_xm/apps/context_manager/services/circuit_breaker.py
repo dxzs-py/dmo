@@ -1,10 +1,17 @@
+"""
+上下文熔断器 - 指令注入检测与用户输入消毒
+
+（A15 死链清理：原 record_tool_call 工具死循环检测与 save_checkpoint/rollback
+检查点回滚链路无真实驱动方——record_tool_call 全仓零调用（tripped 恒 False）、
+save_checkpoint 仅被 manager 每次构建上下文时调用一次且产物永不回滚（deepcopy
+全量消息纯开销），已整体移除；注入检测与输入消毒为存活能力保留。）
+"""
+
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
-from Django_xm.apps.context_manager.config import context_settings
 from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -33,24 +40,16 @@ _INJECTION_PHRASE_PATTERNS = [
     re.compile(r"DAN\s+mode", re.IGNORECASE),
 ]
 
-_LOOP_THRESHOLD = context_settings.loop_same_call_terminate_threshold
-
 
 @dataclass
 class CircuitBreakerState:
-    tripped: bool = False
-    trip_reason: str | None = None
-    tool_call_history: list[dict[str, Any]] = field(default_factory=list)
-    consecutive_same_calls: int = 0
-    last_tool_name: str | None = None
-    last_tool_args: str | None = None
-    checkpoint_stack: list[list[dict[str, Any]]] = field(default_factory=list)
+    """熔断器状态（A15 瘦身后仅剩注入检测标记）"""
+
     injection_detected: bool = False
 
 
 class ContextCircuitBreaker:
-    def __init__(self, loop_threshold: int = _LOOP_THRESHOLD) -> None:
-        self._loop_threshold = loop_threshold
+    def __init__(self) -> None:
         self._state = CircuitBreakerState()
 
     @property
@@ -77,45 +76,6 @@ class ContextCircuitBreaker:
             return "<user_input></user_input>"
         escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return f"<user_input>{escaped}</user_input>"
-
-    def record_tool_call(self, tool_name: str, args: Any) -> bool:
-        args_repr = str(args)
-        self._state.tool_call_history.append(
-            {
-                "tool_name": tool_name,
-                "args": args_repr,
-            }
-        )
-
-        if tool_name == self._state.last_tool_name and args_repr == self._state.last_tool_args:
-            self._state.consecutive_same_calls += 1
-        else:
-            self._state.consecutive_same_calls = 1
-
-        self._state.last_tool_name = tool_name
-        self._state.last_tool_args = args_repr
-
-        if self._state.consecutive_same_calls >= self._loop_threshold:
-            self._state.tripped = True
-            self._state.trip_reason = f"死循环检测: 工具 {tool_name} 连续调用 {self._state.consecutive_same_calls} 次"
-            logger.warning(self._state.trip_reason)
-            return False
-
-        return True
-
-    def save_checkpoint(self, messages: list[dict[str, Any]]) -> None:
-        import copy
-
-        self._state.checkpoint_stack.append(copy.deepcopy(messages))
-        logger.debug(f"安全检查点已保存, 栈深度={len(self._state.checkpoint_stack)}")
-
-    def rollback(self) -> list[dict[str, Any]]:
-        if not self._state.checkpoint_stack:
-            logger.warning("无可用检查点，回滚返回空列表")
-            return []
-        messages = self._state.checkpoint_stack.pop()
-        logger.info(f"已回滚至安全检查点, 剩余栈深度={len(self._state.checkpoint_stack)}")
-        return messages
 
     def reset(self) -> None:
         self._state = CircuitBreakerState()

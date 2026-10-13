@@ -16,12 +16,14 @@
     middleware = ApprovalMiddleware()  # 使用默认策略集
 """
 
-from .middleware import ApprovalMiddleware
+from .middleware import ApprovalMiddleware, SyncApprovalNotSupportedError
 from .policies import (
     ApprovalPolicy,
     FileReaderApprovalPolicy,
     FsWriteFileApprovalPolicy,
+    ReadOnlyApprovalPolicy,
     ShellExecApprovalPolicy,
+    UnregisteredToolApprovalPolicy,
 )
 from .timeout_handler import (
     TIMEOUT_DECISION,
@@ -34,6 +36,9 @@ __all__ = [
     "ApprovalPolicy",
     "FileReaderApprovalPolicy",
     "FsWriteFileApprovalPolicy",
+    "ReadOnlyApprovalPolicy",
     "ShellExecApprovalPolicy",
+    "SyncApprovalNotSupportedError",
+    "UnregisteredToolApprovalPolicy",
     "build_timeout_tool_message",
 ]

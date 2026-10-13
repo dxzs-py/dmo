@@ -1,262 +1,57 @@
 """
 RAG 模式聊天服务
 
-从 chat_service.py 拆分出的 RAG 查询相关逻辑：
-- RAG 流式查询
-- RAG 检索器获取
-- RAG 评估闭环（检索质量 + 生成质量评估，低分触发重检索）
+从 chat_service.py 拆分出的 RAG 检索器构建逻辑：
+- RAG 检索器获取（agent/deep-research 模式的工具注入生产消费）
+
+说明：本类曾承载 rag 分流编排（process_rag_request：strict chain 查询 →
+二次检索评估 → 低分重试）及其评估链（_evaluate_rag_result 等）。该链唯一
+调用点 _precheck_chat_request 属生产零调用的非流式孤儿链，已随 CT-01=A
+（用户裁决删除）移除；知识库问答由 RAG 独立页面承载。
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-from langchain_core.documents import Document
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from Django_xm.apps.knowledge.services.retrieval_service import SearchType
 
 from Django_xm.apps.core.logging_utils import get_logger
-from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
 
 logger = get_logger(__name__)
 
-# RAG 评估阈值配置
-RETRIEVAL_QUALITY_THRESHOLD: float = 0.5
-GENERATION_QUALITY_THRESHOLD: float = 0.6
-MAX_RETRY_COUNT: int = 1
-
 
 class RAGChatService:
-    """RAG 模式聊天服务"""
+    """RAG 检索器服务（agent/deep-research 工具注入）"""
 
     def __init__(self, user_id: int | None = None, chat_service=None):
-        from Django_xm.apps.knowledge.services.rag_evaluation import RAGEvaluator
-
         self.user_id = user_id
         self._chat_service = chat_service
-        self._evaluator = RAGEvaluator()
-
-    def _get_user_index_name(self, index_name: str) -> str:
-        return f"user_{self.user_id}_{index_name}" if self.user_id else index_name
 
     def get_rag_retriever(
         self, index_name: str, k: int = 4, search_type: SearchType = "similarity", retrieval_mode: str = "precise"
     ):
-        from Django_xm.apps.ai_engine.config import settings as app_cfg
-        from Django_xm.apps.knowledge.services.cross_app import get_index_manager
-        from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
-        from Django_xm.apps.knowledge.services.retrieval_service import (
-            create_multi_query_retriever,
-            create_retriever,
-        )
+        from Django_xm.apps.knowledge.services.retrieval_service import build_user_retriever
 
         if not self.user_id:
             logger.warning("get_rag_retriever: user_id 为空，跳过")
             return None
         try:
-            user_index_name = self._get_user_index_name(index_name)
-            logger.info(
-                f"get_rag_retriever: index_name={index_name}, user_index_name={user_index_name}, user_id={self.user_id}"
+            logger.info(f"get_rag_retriever: index_name={index_name}, user_id={self.user_id}")
+            # B-1/D-1：检索器构建编排（index_exists/空索引/metadata/维度探测/
+            # load_index/create_retriever + comprehensive 参数映射 D-3）单源委托
+            # knowledge.build_user_retriever；索引全名规则经 views_utils 单源
+            retriever = build_user_retriever(
+                self.user_id,
+                index_name,
+                k=k,
+                mode=retrieval_mode,
+                search_type=search_type,
             )
-            manager = get_index_manager()
-            if not manager.index_exists(user_index_name):
-                logger.warning(f"索引不存在: {user_index_name}")
-                return None
-            metadata = manager.load_metadata(user_index_name)
-            num_documents = metadata.get("num_documents", 0) if metadata else 0
-            if num_documents == 0:
-                logger.warning(f"索引中无文档: {user_index_name}")
-                return None
-            embeddings = get_embeddings()
-            vector_store = manager.load_index(user_index_name, embeddings)
-
-            if retrieval_mode == "comprehensive":
-                comp_k = app_cfg.retriever_comprehensive_k
-                comp_fetch_k = max(comp_k * 3, 30)
-                retriever = create_retriever(
-                    vector_store,
-                    k=comp_k,
-                    search_type="mmr",
-                    fetch_k=comp_fetch_k,
-                )
-
-                if app_cfg.retriever_use_multi_query:
-                    try:
-                        from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model, get_helper_model
-
-                        mq_llm = get_helper_model() or get_chat_model(streaming=False)
-                        retriever = create_multi_query_retriever(retriever, llm=mq_llm, include_original=True)
-                        logger.info(f"comprehensive 检索器已叠加 MultiQuery (k={comp_k})")
-                    except Exception as e:
-                        logger.warning(f"MultiQuery 叠加失败，使用基础 MMR 检索器: {e}")
-
-                logger.info(f"创建 comprehensive 检索器: k={comp_k}, search_type=mmr, fetch_k={comp_fetch_k}")
-                return retriever
-
-            retriever = create_retriever(vector_store, k=k, search_type=search_type)
+            if retriever is None:
+                logger.warning(f"get_rag_retriever: 索引不可用: index_name={index_name}")
             return retriever
         except Exception:
             logger.exception("获取 RAG 检索器失败")
             return None
-
-    def _compute_retrieval_quality(self, query: str, docs: list[Document]) -> float:
-        """计算检索质量：基于查询与检索文档的关键词重叠度均值"""
-        from Django_xm.apps.knowledge.services.rag_evaluation import keyword_overlap
-
-        if not docs:
-            return 0.0
-        overlaps = [keyword_overlap(query, doc.page_content) for doc in docs]
-        return sum(overlaps) / len(overlaps)
-
-    def _compute_generation_quality(self, evaluation_result) -> float:
-        """计算生成质量：faithfulness、relevance、completeness 的加权平均"""
-        gen = evaluation_result.generation
-        return gen.faithfulness * 0.4 + gen.relevance * 0.35 + gen.completeness * 0.25
-
-    def _evaluate_rag_result(
-        self,
-        query: str,
-        answer: str,
-        retrieved_docs: list[Document],
-    ) -> dict[str, Any]:
-        """
-        评估 RAG 结果质量
-
-        Returns:
-            包含 retrieval_quality、generation_quality、evaluation_result 的字典
-        """
-        # 评估检索质量（关键词重叠度）
-        retrieval_quality = self._compute_retrieval_quality(query, retrieved_docs)
-
-        # 评估生成质量（忠实度、相关性、完整性）
-        evaluation_result = self._evaluator.evaluate(
-            query=query,
-            response=answer,
-            retrieved_docs=retrieved_docs,
-        )
-        generation_quality = self._compute_generation_quality(evaluation_result)
-
-        logger.info(
-            f"RAG 评估结果: 检索质量={retrieval_quality:.4f}, "
-            f"生成质量={generation_quality:.4f}, "
-            f"综合评分={evaluation_result.overall_score:.4f}"
-        )
-        logger.info(
-            f"  生成详情: faithfulness={evaluation_result.generation.faithfulness:.4f}, "
-            f"relevance={evaluation_result.generation.relevance:.4f}, "
-            f"completeness={evaluation_result.generation.completeness:.4f}"
-        )
-
-        return {
-            "retrieval_quality": retrieval_quality,
-            "generation_quality": generation_quality,
-            "evaluation_result": evaluation_result,
-        }
-
-    def process_rag_request(self, data: dict[str, Any]) -> dict[str, Any]:
-        from Django_xm.apps.knowledge.services.strict_rag_chain import query_strict_rag
-
-        selected_kb = data.get("selected_knowledge_base")
-        if not selected_kb:
-            return None
-
-        retriever = self.get_rag_retriever(selected_kb)
-        if not retriever:
-            return None
-
-        query = data["message"]
-        logger.info(f"使用知识库 {selected_kb} 进行 RAG 查询")
-
-        # Strict Chain 模式：强制检索 -> 注入上下文 -> 生成（防幻觉）
-        result = query_strict_rag(retriever, query, k=4, collection_name=self._get_user_index_name(selected_kb))
-        answer = result.get("answer", "")
-
-        # 获取检索文档用于评估
-        try:
-            pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-            retrieved_docs = pipeline.retrieve_documents_from_retriever(
-                retriever=retriever,
-                query=query,
-                vector_store=None,
-            )
-        except Exception as e:
-            logger.warning(f"获取检索文档失败: {e}")
-            retrieved_docs = []
-
-        # 评估 RAG 结果
-        eval_info = self._evaluate_rag_result(query, answer, retrieved_docs)
-        retrieval_quality = eval_info["retrieval_quality"]
-        generation_quality = eval_info["generation_quality"]
-
-        # 低分触发重检索（最多重试 1 次）
-        retry_count = 0
-        final_answer = answer
-        final_eval = eval_info
-
-        if retrieval_quality < RETRIEVAL_QUALITY_THRESHOLD or generation_quality < GENERATION_QUALITY_THRESHOLD:
-            retry_count += 1
-            logger.info(
-                f"RAG 评估低分，触发重检索 (第{retry_count}次): "
-                f"检索质量={retrieval_quality:.4f}, 生成质量={generation_quality:.4f}"
-            )
-
-            # 根据低分类型调整检索策略
-            new_k = 8 if retrieval_quality < RETRIEVAL_QUALITY_THRESHOLD else 4
-            new_search_type = "mmr" if generation_quality < GENERATION_QUALITY_THRESHOLD else "similarity"
-
-            # 创建新检索器并重新查询
-            new_retriever = self.get_rag_retriever(selected_kb, k=new_k, search_type=new_search_type)
-            if new_retriever:
-                new_result = query_strict_rag(
-                    new_retriever,
-                    query,
-                    k=new_k,
-                    collection_name=self._get_user_index_name(selected_kb),
-                )
-                new_answer = new_result.get("answer", "")
-
-                # 重新评估
-                try:
-                    pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-                    new_docs = pipeline.retrieve_documents_from_retriever(
-                        retriever=new_retriever,
-                        query=query,
-                        vector_store=None,
-                    )
-                except Exception:
-                    new_docs = []
-
-                new_eval = self._evaluate_rag_result(query, new_answer, new_docs)
-
-                # 使用重检索后的结果
-                final_answer = new_answer
-                final_eval = new_eval
-                result = new_result
-
-                logger.info(
-                    f"重检索评估结果: 检索质量={new_eval['retrieval_quality']:.4f}, "
-                    f"生成质量={new_eval['generation_quality']:.4f}"
-                )
-
-        # 记录最终评估结果到日志和 analytics
-        logger.info(
-            f"RAG 查询最终评估: 检索质量={final_eval['retrieval_quality']:.4f}, "
-            f"生成质量={final_eval['generation_quality']:.4f}, "
-            f"综合评分={final_eval['evaluation_result'].overall_score:.4f}, "
-            f"重试次数={retry_count}"
-        )
-
-        return {
-            "message": final_answer,
-            "mode": "rag",
-            "tools_used": ["rag_retrieve"],
-            "success": True,
-            "sources": result.get("sources", []),
-            "evaluation": {
-                "retrieval_quality": round(final_eval["retrieval_quality"], 4),
-                "generation_quality": round(final_eval["generation_quality"], 4),
-                "overall_score": final_eval["evaluation_result"].overall_score,
-                "retry_count": retry_count,
-            },
-        }

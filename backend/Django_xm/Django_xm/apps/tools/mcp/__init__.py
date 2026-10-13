@@ -45,7 +45,6 @@ MCP (Model Context Protocol) 工具集成模块
 import asyncio
 import os
 import sys
-from collections.abc import Callable
 from contextlib import contextmanager
 from typing import Any
 
@@ -110,41 +109,8 @@ def _nullcontext():
     yield
 
 
-_mcp_client_pool: dict[str, Any] = {}
-_mcp_client_timestamps: dict[str, float] = {}
-_mcp_pool_lock: Any | None = None
-_MCP_CLIENT_TTL_SECONDS = 600
-
-
-import threading
-
-_mcp_pool_lock = threading.Lock()
-
-
-def _get_pool_lock():
-    return _mcp_pool_lock
-
-
-def _sync_cleanup_on_exit():
-    import asyncio
-
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            return
-        loop.run_until_complete(cleanup_mcp_clients())
-    except RuntimeError:
-        try:
-            asyncio.run(cleanup_mcp_clients())
-        except Exception:  # noqa: S110  # cleanup, atexit 时 MCP 客户端清理失败可忽略
-            pass
-    except Exception:  # noqa: S110  # cleanup, atexit 时事件循环清理失败可忽略
-        pass
-
-
 import atexit
 
-atexit.register(_sync_cleanup_on_exit)
 atexit.register(_close_devnull_handles)
 
 
@@ -174,67 +140,6 @@ def is_mcp_available() -> bool:
         return False
 
 
-async def _get_or_create_client(
-    server_key: str,
-    transport_config: dict[str, Any],
-    server_name: str | None = None,
-) -> Any:
-    import time
-
-    from langchain_mcp_adapters.client import MultiServerMCPClient
-
-    with _get_pool_lock():
-        if server_key in _mcp_client_pool:
-            created_at = _mcp_client_timestamps.get(server_key, 0)
-            if time.time() - created_at > _MCP_CLIENT_TTL_SECONDS:
-                old_client = _mcp_client_pool.pop(server_key)
-                _mcp_client_timestamps.pop(server_key, None)
-                try:
-                    if hasattr(old_client, "close"):
-                        await old_client.close()
-                except Exception:  # noqa: S110  # cleanup, 过期 MCP 客户端关闭失败可忽略
-                    pass
-                logger.info(f"MCP 过期客户端已移除 (TTL={_MCP_CLIENT_TTL_SECONDS}s): {server_key}")
-            else:
-                return _mcp_client_pool[server_key]
-
-        client = MultiServerMCPClient({server_key: transport_config})
-        _mcp_client_pool[server_key] = client
-        _mcp_client_timestamps[server_key] = time.time()
-        logger.info(f"MCP 客户端已创建并缓存: {server_key}")
-        return client
-
-
-async def _remove_stale_client(server_key: str) -> None:
-    with _get_pool_lock():
-        if server_key in _mcp_client_pool:
-            old_client = _mcp_client_pool.pop(server_key)
-            _mcp_client_timestamps.pop(server_key, None)
-            try:
-                if hasattr(old_client, "close"):
-                    await old_client.close()
-            except Exception:  # noqa: S110  # cleanup, 失效 MCP 客户端关闭失败可忽略
-                pass
-            logger.info(f"MCP 过期客户端已移除: {server_key}")
-
-
-async def cleanup_mcp_clients() -> None:
-    with _get_pool_lock():
-        for key, client in list(_mcp_client_pool.items()):
-            try:
-                if hasattr(client, "close"):
-                    await client.close()
-            except Exception as e:
-                logger.warning(f"关闭 MCP 客户端 {key} 失败: {e}")
-        _mcp_client_pool.clear()
-        _mcp_client_timestamps.clear()
-        logger.info("MCP 客户端池已清理")
-
-
-def get_pooled_client_count() -> int:
-    return len(_mcp_client_pool)
-
-
 async def get_mcp_tools(
     server_url: str | None = None,
     server_name: str | None = None,
@@ -244,7 +149,6 @@ async def get_mcp_tools(
     command: str | None = None,
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
-    interceptors: list[Callable] | None = None,
 ) -> list[BaseTool]:
     if not is_mcp_available():
         logger.warning("langchain-mcp-adapters 未安装，无法获取 MCP 工具")
@@ -275,9 +179,7 @@ async def get_mcp_tools(
         return []
 
     try:
-        from langchain_mcp_adapters.client import (
-            MultiServerMCPClient,  # noqa: F401  # 延迟导入 + 可用性检测，实际使用在 _get_or_create_client
-        )
+        from langchain_mcp_adapters.client import MultiServerMCPClient
 
         if transport == "stdio":
             transport_config: dict[str, Any] = {
@@ -305,32 +207,22 @@ async def get_mcp_tools(
 
             server_key = f"{transport}:{server_url}"
 
-        client = await _get_or_create_client(server_key, transport_config, server_name=server_name)
-        _need_stdio_fix = transport == "stdio"
-        # 根据传输类型设置超时：stdio 本地进程 15s，远程 HTTP/SSE 50s
-        _timeout = 15 if transport == "stdio" else 50
-        try:
-            with _celery_stdio_fix() if _need_stdio_fix else _nullcontext():
-                tools = await asyncio.wait_for(client.get_tools(), timeout=_timeout)
-        except TimeoutError:
-            logger.warning(f"MCP 客户端 get_tools 超时 ({_timeout}s)，尝试重建连接: {server_key}")
-            await _remove_stale_client(server_key)
-            client = await _get_or_create_client(server_key, transport_config, server_name=server_name)
-            with _celery_stdio_fix() if _need_stdio_fix else _nullcontext():
-                tools = await asyncio.wait_for(client.get_tools(), timeout=_timeout)
-        except BaseException as tool_err:
-            logger.warning(f"MCP 客户端 get_tools 失败，尝试重建连接: {tool_err}")
-            await _remove_stale_client(server_key)
-            try:
-                client = await _get_or_create_client(server_key, transport_config, server_name=server_name)
-                with _celery_stdio_fix() if _need_stdio_fix else _nullcontext():
-                    tools = await asyncio.wait_for(client.get_tools(), timeout=_timeout)
-            except BaseException:
-                logger.exception("MCP 客户端重建后 get_tools 仍失败")
-                raise
+        # langchain-mcp-adapters 0.2.x 的 MultiServerMCPClient 仅持有连接配置字典，
+        # get_tools() 每次调用现场建立 session（client 对象无连接可复用、无 close()），
+        # 因此不做任何客户端池化：每次现场建连，配置（含 headers/auth_token）时效性
+        # 由"每次现场读取 resolve_servers 最新配置"天然保证，凭证轮换/更新即时生效。
+        client = MultiServerMCPClient({server_key: transport_config})
+        # 单 server 工具拉取超时（2.7：可配置，默认与原硬编码一致——
+        # stdio 本地进程 15s，远程 HTTP/SSE 50s；ai_engine settings 提供）
+        from Django_xm.apps.ai_engine.config import settings as ai_settings
 
-        if interceptors:
-            tools = _apply_interceptors(tools, interceptors)
+        timeout = (
+            ai_settings.mcp_tool_fetch_timeout_stdio
+            if transport == "stdio"
+            else ai_settings.mcp_tool_fetch_timeout_remote
+        )
+        with _celery_stdio_fix() if transport == "stdio" else _nullcontext():
+            tools = await asyncio.wait_for(client.get_tools(), timeout=timeout)
 
         for tool in tools:
             if not hasattr(tool, "metadata") or tool.metadata is None:
@@ -347,35 +239,8 @@ async def get_mcp_tools(
         return tools
 
     except Exception:
-        if "server_key" in dir() and server_key in _mcp_client_pool:
-            await _remove_stale_client(server_key)
         logger.exception("从 MCP Server 获取工具失败")
         return []
-
-
-def _apply_interceptors(
-    tools: list[BaseTool],
-    interceptors: list[Callable],
-) -> list[BaseTool]:
-    from langchain_core.tools import tool as lc_tool
-
-    wrapped_tools = []
-    for original_tool in tools:
-        original_name = original_tool.name
-        original_description = original_tool.description or ""
-
-        def _make_wrapper(ot, on, od):
-            @lc_tool(name=on, description=od)
-            def wrapped_tool(**kwargs):
-                for interceptor in interceptors:
-                    kwargs = interceptor(on, kwargs) or kwargs
-                return ot.invoke(kwargs)
-
-            return wrapped_tool
-
-        wrapped_tools.append(_make_wrapper(original_tool, original_name, original_description))
-
-    return wrapped_tools
 
 
 def get_server_info_list() -> list[dict[str, Any]]:
@@ -398,9 +263,7 @@ def get_server_info_list() -> list[dict[str, Any]]:
 
 __all__ = [
     "_get_mcp_servers_config",
-    "cleanup_mcp_clients",
     "get_mcp_tools",
-    "get_pooled_client_count",
     "get_server_info_list",
     "is_mcp_available",
 ]

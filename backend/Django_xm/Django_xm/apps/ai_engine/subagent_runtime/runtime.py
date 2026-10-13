@@ -25,35 +25,23 @@ from Django_xm.apps.ai_engine.subagent_runtime.exceptions import (
     SubAgentNestingLimitError,
     SubAgentNotFoundError,
 )
+from Django_xm.common.agent_limits import DEFAULT_MAX_AGENT_DEPTH, get_max_agent_depth
 
 logger = logging.getLogger(__name__)
 
-# 子 Agent 最大嵌套深度（0=主 agent，1=子 agent，2=孙 agent，3=曾孙 agent）。
-# 与 tools.langchain.agent_context.MAX_AGENT_DEPTH 语义一致（同一配置源
-# settings.AGENT_MAX_DEPTH），但此处独立维护读取逻辑，
-# 避免 ai_engine → tools 的跨 app 反向依赖。
-MAX_SUBAGENT_DEPTH: int = 3
+# 子 Agent 最大嵌套深度：C14 收敛后常量与判定函数唯一实现在
+# Django_xm/common/agent_limits.py（settings.AGENT_MAX_DEPTH，默认 3）。
+# ai_engine 禁止 import tools（反向依赖），故单源放 common 包；
+# 本名仅为 subagent_runtime/__init__.py 导出面保留的别名。
+MAX_SUBAGENT_DEPTH: int = DEFAULT_MAX_AGENT_DEPTH
 
 # 子 Agent 单实例最大轮次（LangGraph recursion_limit，超限抛 GraphRecursionError）。
 # 取值依据（3A-P2-1）：子代理任务面窄而浅（见 ai_engine/config.py 常量注释）；
 # 本名保留为对外导出别名（subagent_runtime/__init__.py 导出面不变）。
 MAX_SUBAGENT_ROUNDS = AGENT_RECURSION_LIMIT_SUBAGENT
 
-
-def _get_max_subagent_depth() -> int:
-    """读取子 Agent 最大嵌套深度（settings.AGENT_MAX_DEPTH，异常回退默认值）。
-
-    lazy 读取：避免 import 期强依赖 Django settings（如独立 unittest 上下文）。
-    """
-    try:
-        from django.conf import settings
-
-        return int(getattr(settings, "AGENT_MAX_DEPTH", MAX_SUBAGENT_DEPTH))
-    except Exception as e:
-        # 配置读取失败时深度上限静默变为默认值，会让过深的子代理嵌套通过；
-        # 留 debug 日志便于排查（与 tools/langchain/agent_context 同源模式）
-        logger.debug(f"[SubAgentRuntime] 读取 settings.AGENT_MAX_DEPTH 失败，回退默认值 {MAX_SUBAGENT_DEPTH}: {e}")
-        return MAX_SUBAGENT_DEPTH
+# 判定函数别名：兼容既有内部调用点（原 _get_max_subagent_depth）。
+_get_max_subagent_depth = get_max_agent_depth
 
 
 class SubAgentRuntime:
@@ -186,6 +174,14 @@ class SubAgentRuntime:
                 f"子代理嵌套深度超限（max={_get_max_subagent_depth()}，当前将达={depth}）"
             )
 
+        # C14 协作式取消配套：已被终止（failed 终态）的父线程不得再派生子代理，
+        # 防止 terminate 后父图在下一个取消检查点前继续 spawn 孙代理
+        parent = await self._get_instance(parent_thread_id) if parent_thread_id else None
+        if parent is not None and parent.status == SubAgentStatus.FAILED:
+            raise SubAgentInvalidStateError(
+                f"父线程已终止，拒绝派生子代理: parent={parent_thread_id}"
+            )
+
         thread_id = f"subagent_{uuid.uuid4().hex[:16]}"
         agent_name = getattr(agent_config, "name", "") or "general-purpose"
         system_prompt = getattr(agent_config, "system_prompt", "") or ""
@@ -198,6 +194,7 @@ class SubAgentRuntime:
             "task": task or "",
             "system_prompt": system_prompt,
             "model_name": getattr(agent_config, "model_name", None),
+            "provider_id": getattr(agent_config, "provider_id", None),
             "user_id": getattr(agent_config, "user_id", None),
             "session_id": getattr(agent_config, "session_id", None),
             "tool_names": [getattr(t, "name", "") for t in (getattr(agent_config, "tools", None) or [])],
@@ -253,11 +250,37 @@ class SubAgentRuntime:
         await self._update_status(subagent_thread_id, SubAgentStatus.RUNNING)
         try:
             await self.adapter.resume(instance, resume_payload)
-        except Exception:
+        except Exception as e:
+            # 恢复失败（adapter 未消化异常，如执行线程启动失败）：
+            # 置终态并触发生命周期回调，父会话 fan-in 等待者立即收到失败
+            # （否则挂到 watchdog 超时）。终态通知失败原因仅落日志
+            # （ParentAwaiter 契约只携带 status），DB result/status 为权威记录。
             logger.exception(f"子代理恢复失败: {subagent_thread_id}")
             await self._update_status(subagent_thread_id, SubAgentStatus.FAILED)
+            await self._notify_failed(instance, reason=repr(e))
 
         return instance
+
+    async def _notify_failed(self, instance: Any, reason: str = "") -> None:
+        """resume 失败终态回调（对齐 adapter._notify_finished / spawn 异常路径）。
+
+        唤醒父会话等待者（lifecycle.on_subagent_finished）；通知本身失败不传播
+        （状态已落 DB，非致命）。
+        """
+        try:
+            from Django_xm.apps.ai_engine.subagent_runtime.lifecycle import get_lifecycle_manager
+
+            logger.error(
+                f"子代理 resume 终态为 failed: sub={instance.thread_id}, "
+                f"parent={instance.parent_thread_id}, reason={reason}"
+            )
+            await get_lifecycle_manager().on_subagent_finished(
+                subagent_thread_id=instance.thread_id,
+                parent_thread_id=instance.parent_thread_id,
+                status=SubAgentStatus.FAILED,
+            )
+        except Exception:
+            logger.exception(f"子代理 resume 失败回调异常（非致命）: {instance.thread_id}")
 
     async def get_instance(self, subagent_thread_id: str) -> SubAgentInstance | None:
         """查询子代理实例（供父 Agent 轮询 / 前端恢复）。"""

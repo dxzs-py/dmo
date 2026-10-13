@@ -26,10 +26,6 @@ class ContextManagementCapability(AgentCapability):
             middleware = ContextManagerMiddleware(
                 model_name=kwargs.get("model_name"),
                 trigger_tokens=kwargs.get("trigger_tokens"),
-                keep_messages=kwargs.get("keep_messages"),
-                strategy=kwargs.get("strategy", "hybrid"),
-                user_id=kwargs.get("user_id"),
-                store=kwargs.get("store"),
                 thread_id=kwargs.get("thread_id"),
             )
             return [middleware]
@@ -41,17 +37,10 @@ class ContextManagementCapability(AgentCapability):
         return []
 
     def build_config(self, **kwargs) -> dict[str, Any]:
-        try:
-            from Django_xm.apps.context_manager.config import context_settings
-
-            return {
-                "compression_enabled": context_settings.compression_enabled,
-                "compression_strategy": context_settings.compression_strategy,
-                "compression_threshold_ratio": context_settings.compression_threshold_ratio,
-                "compression_keep_recent": context_settings.compression_keep_recent,
-                "compression_summary_max_length": context_settings.compression_summary_max_length,
-            }
-        except Exception:
+        # 环 1 消边：context_settings 由调用方经 kwargs 传入（原为跨 app 直读
+        # context_manager.config；本方法当前无生产调用方，缺省回落历史兜底值）。
+        context_settings = kwargs.get("context_settings")
+        if context_settings is None:
             return {
                 "compression_enabled": True,
                 "compression_strategy": "hybrid",
@@ -59,6 +48,13 @@ class ContextManagementCapability(AgentCapability):
                 "compression_keep_recent": 6,
                 "compression_summary_max_length": 1500,
             }
+        return {
+            "compression_enabled": context_settings.compression_enabled,
+            "compression_strategy": context_settings.compression_strategy,
+            "compression_threshold_ratio": context_settings.compression_threshold_ratio,
+            "compression_keep_recent": context_settings.compression_keep_recent,
+            "compression_summary_max_length": context_settings.compression_summary_max_length,
+        }
 
     def is_compatible(self, agent_type: str) -> bool:
         return agent_type in ("base", "deep_research", "learning")
@@ -109,7 +105,7 @@ class ToolInjectionCapability(AgentCapability):
             return tools
 
         try:
-            from Django_xm.apps.context_manager.services.compression import TokenEstimator
+            from Django_xm.common.token_estimator import TokenEstimator
 
             selected_names = set(tool_config.get("selected_tools") or [])
             selected_mcp = set(tool_config.get("selected_mcp_servers") or [])
@@ -184,22 +180,23 @@ class GuardrailsCapability(AgentCapability):
         return "guardrails"
 
     def build_middleware(self, **kwargs) -> Sequence[AgentMiddleware]:
-        try:
-            from Django_xm.apps.ai_engine.guardrails import build_middleware_stack
+        # 安全能力（round3 2.3 fail-closed）：不内部吞异常，构建失败向
+        # registry.build_middleware_for_agent 传播（guardrails 在
+        # _SAFETY_CAPABILITIES 中 → 向上抛，agent 创建失败）。
+        # build_middleware_stack(enable_guardrails=False) 的"合法空栈"语义
+        # 不受影响——仅异常路径传播。
+        from Django_xm.apps.ai_engine.guardrails import build_middleware_stack
 
-            return build_middleware_stack(
-                enable_guardrails=kwargs.get("enable_guardrails", True),
-                enable_pii=kwargs.get("enable_pii", False),
-                enable_rate_limit=kwargs.get("enable_rate_limit", False),
-                guardrails_strict=kwargs.get("guardrails_strict", False),
-                pii_reject=kwargs.get("pii_reject", False),
-                approval_tools=kwargs.get("approval_tools"),
-                on_approval_request=kwargs.get("on_approval_request"),
-                extra_middleware=kwargs.get("extra_middleware"),
-            )
-        except Exception:
-            logger.exception("Failed to build guardrails middleware")
-            return []
+        return build_middleware_stack(
+            enable_guardrails=kwargs.get("enable_guardrails", True),
+            enable_pii=kwargs.get("enable_pii", False),
+            enable_rate_limit=kwargs.get("enable_rate_limit", False),
+            guardrails_strict=kwargs.get("guardrails_strict", False),
+            pii_reject=kwargs.get("pii_reject", False),
+            approval_tools=kwargs.get("approval_tools"),
+            on_approval_request=kwargs.get("on_approval_request"),
+            extra_middleware=kwargs.get("extra_middleware"),
+        )
 
     def build_tools(self, **kwargs) -> Sequence[BaseTool]:
         return []

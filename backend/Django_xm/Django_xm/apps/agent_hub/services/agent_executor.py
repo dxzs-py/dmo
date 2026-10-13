@@ -17,7 +17,7 @@
   避免 hard timeout 已触发却先 yield soft timeout 事件的逻辑倒置。
 
 行为：
-- GraphRecursionError → 优雅降级（用已收集内容），不重试
+- GraphRecursionError → 优雅降级（输出"未完成"结构化说明 + 已执行步骤摘要，不伪装成答案），不重试
 - 可恢复异常 → RETRY + 退避
 - 不可恢复但可降级 → DEGRADE（用减少的工具重试）
 - 不可恢复 → FALLBACK（无工具纯对话）
@@ -38,7 +38,7 @@ import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.errors import GraphRecursionError
 
 from Django_xm.apps.ai_engine.services.agent_resilience import (
@@ -53,12 +53,10 @@ from Django_xm.apps.ai_engine.services.agent_resilience import (
     get_degraded_tools,
     get_resilience_config,
 )
+from Django_xm.common.execution_loop import HardTimeoutSignaled as _HardTimeoutSignaled
+from Django_xm.common.execution_loop import iter_stream_events_with_timeout
 
 logger = logging.getLogger(__name__)
-
-
-class _HardTimeoutSignaled(Exception):
-    """内部信号：流式循环中触发 hard timeout"""
 
 
 class AgentExecutor:
@@ -255,46 +253,23 @@ class AgentExecutor:
         strategy: Any,
         data: dict,
     ) -> AsyncGenerator[dict, None]:
-        """带超时检查和审批 pause/resume 的事件迭代
+        """带超时检查和审批 pause/resume 的事件迭代（公共骨架薄委托）。
 
-        - hard timeout → 抛出 _HardTimeoutSignaled
-        - soft timeout → 警告一次
-        - approval 事件 → yield 前 pause()，yield 后 resume()
-          （避免用户审批等待时间计入 elapsed，RC17 修复）
-
-        注意：hard timeout 检查在 soft timeout 之前，避免 hard timeout 已触发
-        却先 yield soft timeout 事件的逻辑倒置。
+        实现下沉 ``common.execution_loop.iter_stream_events_with_timeout``
+        （spec 任务 4.3 环 3：research 执行器与 chat 执行器共用同一骨架实现）；
+        方法保留在类上维持签名与测试 patch 锚点稳定。
         """
-        async for event in loop_fn(agent, graph_input, config, ctx, strategy, data):
-            # Hard timeout 检查（优先）
-            if self.timeout_mgr.hard_timeout and self.timeout_mgr.elapsed >= self.timeout_mgr.hard_timeout:
-                raise _HardTimeoutSignaled()
-
-            # Soft timeout（仅警告一次）
-            if self.timeout_mgr.check_soft_timeout():
-                logger.warning(f"[AgentExecutor] 执行超时 (soft): {self.timeout_mgr.elapsed:.1f}s")
-                yield {
-                    "type": "timeout_warning",
-                    "data": {
-                        "elapsed": round(self.timeout_mgr.elapsed),
-                        "limit": self.timeout_mgr.soft_timeout,
-                    },
-                }
-
-            # 审批事件：暂停计时，避免用户思考时间惩罚 agent
-            # yield 期间若上游断开/异常（如 SSE 断开触发 GeneratorExit），
-            # finally 保证恢复计时，防止 pause 泄漏导致同一 executor 在重试/
-            # 降级复用本计时器时 elapsed 持续偏低、超时判定被推迟（边界审查修复）。
-            is_approval = isinstance(event, dict) and event.get("type") == "approval"
-            if is_approval:
-                self.timeout_mgr.pause()
-
-            try:
-                yield event
-            finally:
-                # 审批处理完毕（外部继续迭代），恢复计时
-                if is_approval:
-                    self.timeout_mgr.resume()
+        async for event in iter_stream_events_with_timeout(
+            loop_fn,
+            agent,
+            graph_input,
+            config,
+            ctx,
+            strategy,
+            data,
+            timeout_mgr=self.timeout_mgr,
+        ):
+            yield event
 
     async def _run_degrade(
         self,
@@ -350,24 +325,64 @@ class AgentExecutor:
             yield fb_event
 
     async def _handle_graph_recursion(self, ctx: Any) -> AsyncGenerator[dict, None]:
-        """GraphRecursionError 优雅降级：用已收集的内容生成回复"""
+        """GraphRecursionError 优雅降级：输出结构化"未完成"说明（round3 2.2）。
+
+        不再将历史 AIMessage.content 反向取用伪装成最终答案（中间轮的正文
+        可能是步骤性文本，冒充答案会误导用户与下游落库）；改为输出明确的
+        "任务达到递归上限未完成"结构化信息，附已执行步骤摘要。
+        """
         logger.warning(
             f"[AgentExecutor] Agent达到递归上限，优雅降级: 已收集 {len(ctx.all_messages)} 条消息, "
             f"内容长度={len(ctx.current_message_content)}"
         )
         if ctx.current_message_content:
-            yield {"type": "chunk", "content": ""}
-        else:
-            for msg in reversed(ctx.all_messages):
-                if isinstance(msg, AIMessage) and msg.content:
-                    ctx.current_message_content = msg.content
-                    yield {"type": "chunk", "content": msg.content}
-                    break
-            if not ctx.current_message_content:
-                yield {
-                    "type": "chunk",
-                    "content": "任务执行步骤较多，已达到单次执行上限。以上是已收集的部分结果。",
-                }
+            # 本轮正文已流式输出：不重复输出正文，仅追加未完成说明（不伪装成答案）
+            yield {
+                "type": "chunk",
+                "content": "\n\n[系统提示] 任务执行步骤较多，已达到单次执行上限，任务尚未完成。"
+                "以上为已生成的部分内容。\n",
+            }
+            return
+
+        steps_summary = self._summarize_executed_steps(ctx.all_messages)
+        content = (
+            "[系统提示] 任务执行步骤较多，已达到单次执行上限，任务未完成。\n"
+            "以下是本次执行已完成的步骤概要，可直接据此继续（拆分任务重试）或向用户说明当前进展与剩余工作。\n"
+        )
+        if steps_summary:
+            content += f"\n{steps_summary}\n"
+        yield {"type": "chunk", "content": content}
+
+    @staticmethod
+    def _summarize_executed_steps(all_messages: list) -> str:
+        """提取已执行步骤摘要：工具调用序列（按工具名聚合次数）+ 消息轮数。
+
+        Args:
+            all_messages: StreamContext 累积的消息列表（LangChain 消息对象）。
+
+        Returns:
+            多行文本摘要；无工具调用时返回空串。
+        """
+        tool_call_counts: dict[str, int] = {}
+        tool_result_count = 0
+        ai_rounds = 0
+        for msg in all_messages or []:
+            if isinstance(msg, AIMessage):
+                ai_rounds += 1
+                for tc in getattr(msg, "tool_calls", None) or []:
+                    name = tc.get("name", "") if isinstance(tc, dict) else ""
+                    if name:
+                        tool_call_counts[name] = tool_call_counts.get(name, 0) + 1
+            elif isinstance(msg, ToolMessage):
+                tool_result_count += 1
+
+        if not tool_call_counts:
+            return ""
+
+        lines = [f"- 已执行 {ai_rounds} 轮模型调用、{tool_result_count} 次工具结果返回："]
+        for name, count in tool_call_counts.items():
+            lines.append(f"  · {name}（{count} 次）")
+        return "\n".join(lines)
 
     async def _run_fallback(self) -> AsyncGenerator[dict, None]:
         """无工具纯对话回退"""

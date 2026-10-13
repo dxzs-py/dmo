@@ -229,6 +229,12 @@ class SessionManager:
                 error="用户已取消该研究任务",
                 cross_module_id=session_id,
             )
+            # chat 侧收尾（2026-10-06 缺陷修复，与执行器取消级联共用单源）：回写
+            # 关联 ChatMessage 终止语义 + 广播 stream_completed(stopped=true)，
+            # 兜底路径（执行器重启内存会话丢失）同样实时同步聊天模块
+            from Django_xm.apps.research.services.writeback import finalize_chat_message_cancelled
+
+            await sync_to_async(finalize_chat_message_cancelled)(thread_id)
             return True
         except Exception:
             logger.exception(f"[SessionManager] 兜底取消研究任务失败: thread_id={thread_id}")

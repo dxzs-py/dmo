@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Awaitable, Callable
 from typing import Any
+
+# TimeWindowThrottle 实现已下沉 common.stream_throttle（阶段 2：research 链
+# 子代理正文快照节流复用同一实现，research 禁止直连 chat.services）。
+from Django_xm.common.stream_throttle import TimeWindowThrottle
 
 logger = logging.getLogger(__name__)
 
@@ -56,58 +59,6 @@ def _is_final_reasoning(data: Any) -> bool:
         return float(data.get("duration") or 0) > 0
     except (TypeError, ValueError):
         return False
-
-
-class TimeWindowThrottle:
-    """时间窗合流节流器（可复用单点实现，D2）。
-
-    合流语义：窗口内的多次 ``submit`` 仅保留最新待发值——调用方保证 payload
-    为全量快照（前端消费为替换语义），丢弃中间帧不影响最终状态，最终一致性
-    由 ``flush``（边界强制冲刷）保证，节流不丢最终态。
-
-    节奏（leading edge 模式，与既有 content_state chunk 节流语义一致）：
-    - 窗口空闲（距上次广播 >= min_interval）时首个事件立即广播；
-    - 窗口内的后续事件只更新 pending（合流），不广播；
-    - ``flush`` 显式冲刷 pending（流收尾 / 语义边界事件 / 完成态事件前）。
-
-    Attributes:
-        min_interval: 最小广播间隔（秒）。
-        broadcaster: 广播回调 ``async fn(payload) -> None``，由接线方构造
-            （捕获 session_id / message_id 等 payload 上下文）。
-        clock: 单调时钟（默认运行时解析 time.monotonic，可注入替身便于测试）。
-    """
-
-    def __init__(
-        self,
-        min_interval: float,
-        broadcaster: Callable[[Any], Awaitable[None]],
-        clock: Callable[[], float] | None = None,
-    ) -> None:
-        self._min_interval = min_interval
-        self._broadcaster = broadcaster
-        self._clock = clock if clock is not None else time.monotonic
-        # -inf：首个事件必满足窗口条件（leading edge 立即广播），不受
-        # monotonic 起点影响（Windows 上起点不定，0.0 基线有首包吞没风险）
-        self._last_sent: float = float("-inf")
-        self._pending: Any = None
-
-    async def submit(self, payload: Any) -> None:
-        """提交一个全量快照：合流为最新 pending，窗口空闲时立即广播。"""
-        self._pending = payload
-        if self._clock() - self._last_sent >= self._min_interval:
-            await self._flush()
-
-    async def flush(self) -> None:
-        """强制冲刷窗口内未广播的 pending（边界红线：最终态必须送达）。幂等。"""
-        await self._flush()
-
-    async def _flush(self) -> None:
-        payload = self._pending
-        if payload is None:
-            return
-        self._pending = None
-        self._last_sent = self._clock()
-        await self._broadcaster(payload)
 
 
 def _normalize_error_event_data(event: dict[str, Any]) -> dict[str, Any]:
@@ -373,12 +324,14 @@ async def publish_stream_event(
     # 的流形态切换），不冲刷 reasoning 节流窗口（不加入 _REASONING_FLUSH_SUBTYPES）；
     # data 原样保形透传（无 error 帧规范化语义），前端暂无消费点——经
     # _handleGenericStreamEvent 未知子类型路径安全忽略，可观测性在 WS 层恢复。
+    # E5-02：degradation 纳入白名单（检索器注入失败等降级提示，chat_service
+    # _stream_degradation_events 产出），同属"流继续"类，不冲刷 reasoning 窗口。
     # reasoning 已在上分支节流处理，不再进入白名单。
     if event_type_str in (
         "sources", "suggestions", "context",
         "deep_research", "approval", "interrupted",
         "model_fallback", "research_task_id", "error",
-        "retry", "timeout_warning",
+        "retry", "timeout_warning", "degradation",
     ):
         try:
             stream_event_type_map = {

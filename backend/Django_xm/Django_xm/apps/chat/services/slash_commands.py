@@ -211,7 +211,7 @@ def _handle_version(context: dict[str, Any]) -> dict[str, Any]:
     return {
         "type": "info",
         "content": (
-            f"📌 **LC-StudyLab**\n"
+            f"📌 **DX-Study-Agent**\n"
             f"- 版本: {getattr(settings, 'app_version', '1.0.0')}\n"
             f"- LangChain: 1.2.13\n"
             f"- Django: 5.2"
@@ -310,8 +310,9 @@ def execute_command(
     - ``/compact``（重）：``build_structured_context`` 内 ``_ensure_store``（store
       懒加载连接）+ ``store.search``（store IO）+ 跨会话逐条相关性评分的同步
       ``embed_query``（远程 API，``query=""`` 不跳过——``get_injection_context``
-      两个分支仅以 ``user_id`` 为闸）；超预算压缩路径 ``prune_by_relevance`` 每
-      条消息再 2 次同步 ``embed_query``（最多 2N 次串行远程调用）。
+      两个分支仅以 ``user_id`` 为闸）；超预算压缩路径 ``prune_by_relevance``
+      已批量化（A10）：query embedding 1 次 + 消息批量 embed_documents 1 次，
+      不再是每条消息 2 次、最多 2N 次串行远程调用。
     - ``/model``（轻中）：``get_model_string``（SystemConfig DB 读）+ 带参分支
       ``get_model_registry``（首次 DB 读，模块级缓存后续纯内存）。
     - ``/help`` ``/status`` ``/clear`` ``/export`` ``/version``（轻）：纯 CPU /

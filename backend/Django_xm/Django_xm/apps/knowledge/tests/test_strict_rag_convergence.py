@@ -2,25 +2,30 @@
 
 覆盖 Django_xm.apps.knowledge.services.strict_rag_chain 三个在役入口：
 - query_strict_rag（同步字典）：正常路径 / embedding 降级（fallback 收到原始 query
-  与 k 关键字参数）/ 非 embedding 异常上抛 / 空结果走知识库降级管道 / 空结果且
-  知识库为空 / 步骤 1 已降级且步骤 2 未命中时 degraded 仍为 True（degraded or
-  used_kb 语义）/ HyDE 改写仅用于检索、prompt 用原始 query / use_hyde=False 跳过改写
+  与 k 关键字参数）/ 非 embedding 异常上抛 / 空结果受控应答（degraded 置位，
+  不再走全库降级管道）/ HyDE 改写仅用于检索、prompt 用原始 query / use_hyde=False
+  跳过改写
 - stream_strict_rag（同步生成器）：事件序列（heartbeat 检索 → heartbeat 生成 →
-  chunk → sources）/ 文档自带 degraded 标记触发 degradation 事件 / 空结果分支
-  （chunk + degradation 后终止，无 sources）/ use_hyde 时首个事件为改写 heartbeat
+  chunk → sources）/ 文档自带 degraded 标记触发 degradation 事件（B10：前置到
+  首个正文 chunk 之前）/ 空结果分支（degradation 前置 + 受控 chunk 后终止，
+  无 sources）/ use_hyde 时首个事件为改写 heartbeat
 - astream_strict_rag（异步生成器）：事件序列 / embedding 降级（fallback 经
   to_thread 位置传参 (query, collection_name, k)，与 sync 的关键字传参差异锁定）/
-  空结果分支（load_kb_documents 位置传参）
+  空结果分支（degradation 前置 + 受控应答）
 - 死符号契约：模块与 services 包不再导出 aquery_strict_rag /
   create_strict_rag_chain / STRICT_RAG_SYSTEM_PROMPT / _get_chat_model /
   STRICT_RAG_QA_PROMPT（re-export）
 
 mock 边界（与 test_retrieval_fallback.py 同风格，patch 源模块属性，函数内延迟
 导入在调用时解析）：
-- rag_retrieval.UnifiedRagPipeline / rag_retrieval.load_kb_documents
-- retrieval_service._keyword_search_fallback / _record_degradation_metric
-  （_is_embedding_error 用真实实现：ConnectionError 命中降级、ValueError 不命中）
+- rag_retrieval.UnifiedRagPipeline（空结果分支不得触达 pipeline.search /
+  load_kb_documents——Task 4/B3 死代码契约）
+- keyword_fallback.keyword_search_fallback / record_degradation_metric
+  （is_embedding_error 用真实实现：ConnectionError 命中降级、ValueError 不命中）
 - strict_rag_chain._resolve_chat_model / _hyde_rewrite_query(_sync)
+
+引用编号与 sources 同源生成、[n] 越界剔除的专项测试见
+test_strict_rag_citations.py。
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
     python -m unittest Django_xm.apps.knowledge.tests.test_strict_rag_convergence
@@ -39,9 +44,9 @@ django.setup()
 from langchain_core.documents import Document
 
 from Django_xm.apps.knowledge.services.strict_rag_chain import (
-    KB_DEGRADATION_NOTICE,
     KEYWORD_DEGRADATION_NOTICE,
     NO_RESULT_ANSWER,
+    NO_RESULT_NOTICE,
     astream_strict_rag,
     query_strict_rag,
     stream_strict_rag,
@@ -49,7 +54,7 @@ from Django_xm.apps.knowledge.services.strict_rag_chain import (
 from Django_xm.common.testing import create_fake_llm
 
 _STRICT_RAG = "Django_xm.apps.knowledge.services.strict_rag_chain"
-_RETRIEVAL_SERVICE = "Django_xm.apps.knowledge.services.retrieval_service"
+_KEYWORD_FALLBACK = "Django_xm.apps.knowledge.services.keyword_fallback"
 _RAG_RETRIEVAL = "Django_xm.apps.knowledge.services.rag_retrieval"
 
 _QUERY = "什么是 LangChain"
@@ -57,15 +62,14 @@ _COLLECTION = "test_collection"
 _K = 6
 
 
-def _make_pipeline(retrieve_docs=None, retrieve_exc=None, search_return="管道检索回答"):
-    """构造 UnifiedRagPipeline 替身：初始检索返回值 / 抛出异常 / search 返回值可控"""
+def _make_pipeline(retrieve_docs=None, retrieve_exc=None):
+    """构造 UnifiedRagPipeline 替身：初始检索返回值 / 抛出异常可控"""
     pipeline_cls = mock.MagicMock()
     instance = pipeline_cls.return_value
     if retrieve_exc is not None:
         instance.retrieve_documents_from_retriever.side_effect = retrieve_exc
     else:
         instance.retrieve_documents_from_retriever.return_value = list(retrieve_docs or [])
-    instance.search.return_value = search_return
     return pipeline_cls, instance
 
 
@@ -86,8 +90,6 @@ class QueryStrictRagTests(unittest.TestCase):
         retrieve_docs=None,
         retrieve_exc=None,
         fallback_docs=None,
-        kb_docs=None,
-        kb_tokens=0,
         use_hyde=False,
     ):
         pipeline_cls, instance = _make_pipeline(retrieve_docs=retrieve_docs, retrieve_exc=retrieve_exc)
@@ -95,24 +97,24 @@ class QueryStrictRagTests(unittest.TestCase):
         hyde_sync = mock.MagicMock(return_value="改写后的假设文档")
         with (
             mock.patch(f"{_RAG_RETRIEVAL}.UnifiedRagPipeline", pipeline_cls),
-            mock.patch(f"{_RAG_RETRIEVAL}.load_kb_documents", return_value=(list(kb_docs or []), kb_tokens)),
+            mock.patch(f"{_RAG_RETRIEVAL}.load_kb_documents") as load_kb,
             mock.patch(
-                f"{_RETRIEVAL_SERVICE}._keyword_search_fallback",
+                f"{_KEYWORD_FALLBACK}.keyword_search_fallback",
                 return_value=list(fallback_docs or []),
             ) as fallback,
-            mock.patch(f"{_RETRIEVAL_SERVICE}._record_degradation_metric") as record_metric,
+            mock.patch(f"{_KEYWORD_FALLBACK}.record_degradation_metric") as record_metric,
             mock.patch(f"{_STRICT_RAG}._resolve_chat_model", return_value=fake_llm),
             mock.patch(f"{_STRICT_RAG}._hyde_rewrite_query_sync", hyde_sync),
         ):
             result = query_strict_rag(
                 mock.MagicMock(), _QUERY, k=_K, use_hyde=use_hyde, collection_name=_COLLECTION
             )
-        return result, instance, fallback, record_metric, fake_llm, hyde_sync
+        return result, instance, fallback, record_metric, fake_llm, hyde_sync, load_kb
 
     def test_normal_path(self):
         """正常路径：answer/sources/retrieved_docs/success，无 degraded 键。"""
         doc = _normal_doc()
-        result, instance, fallback, _, fake_llm, hyde_sync = self._run(retrieve_docs=[doc])
+        result, instance, fallback, _, fake_llm, hyde_sync, _ = self._run(retrieve_docs=[doc])
 
         self.assertEqual(
             result,
@@ -133,7 +135,7 @@ class QueryStrictRagTests(unittest.TestCase):
     def test_embedding_error_falls_back_with_original_query(self):
         """embedding 故障：降级关键词检索收到原始 query（非改写查询）+ collection + k 关键字参数。"""
         doc = _degraded_doc()
-        result, _, fallback, record_metric, _, _ = self._run(
+        result, _, fallback, record_metric, _, _, _ = self._run(
             retrieve_exc=ConnectionError("Connection refused"), fallback_docs=[doc]
         )
 
@@ -151,40 +153,34 @@ class QueryStrictRagTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._run(retrieve_exc=ValueError("业务参数错误"))
 
-    def test_empty_docs_uses_kb_pipeline(self):
-        """空结果：走知识库全量降级管道，answer 来自 pipeline.search，degraded=True。"""
-        kb_docs = [_normal_doc()]
-        result, instance, _, _, _, _ = self._run(retrieve_docs=[], kb_docs=kb_docs, kb_tokens=42)
-
-        self.assertEqual(result["answer"], "管道检索回答")
-        self.assertEqual(result["sources"], [])
-        self.assertEqual(result["retrieved_docs"], [])
-        self.assertTrue(result["degraded"])
-        self.assertEqual(result["degradation_notice"], KB_DEGRADATION_NOTICE)
-        instance.search.assert_called_once_with(_QUERY, kb_docs, 42)
-
-    def test_empty_docs_without_kb_returns_default_answer(self):
-        """空结果且知识库无文档：默认未找到回答，不带 degraded。"""
-        result, _, _, _, _, _ = self._run(retrieve_docs=[], kb_docs=[])
+    def test_empty_docs_returns_controlled_answer(self):
+        """空结果（Task 4/B3）：受控应答 + degraded 置位；不再触达全库降级管道。"""
+        result, instance, _, _, _, _, load_kb = self._run(retrieve_docs=[])
 
         self.assertEqual(result["answer"], NO_RESULT_ANSWER)
         self.assertEqual(result["sources"], [])
-        self.assertNotIn("degraded", result)
+        self.assertEqual(result["retrieved_docs"], [])
+        self.assertTrue(result["degraded"])
+        self.assertEqual(result["degradation_notice"], NO_RESULT_NOTICE)
+        # 死代码契约：全库重嵌入降级路径已删除，不得触达
+        load_kb.assert_not_called()
+        instance.search.assert_not_called()
 
-    def test_degraded_retrieval_with_empty_fallback_keeps_degraded(self):
-        """步骤 1 降级且降级结果为空、知识库也无文档：degraded 仍为 True（degraded or used_kb 语义）。"""
-        result, _, fallback, _, _, _ = self._run(
-            retrieve_exc=ConnectionError("Connection refused"), fallback_docs=[], kb_docs=[]
+    def test_degraded_retrieval_with_empty_fallback_still_controlled(self):
+        """步骤 1 降级且降级结果为空：受控空应答，degraded 仍为 True。"""
+        result, _, fallback, _, _, _, load_kb = self._run(
+            retrieve_exc=ConnectionError("Connection refused"), fallback_docs=[]
         )
 
         fallback.assert_called_once()
         self.assertEqual(result["answer"], NO_RESULT_ANSWER)
         self.assertTrue(result["degraded"])
-        self.assertEqual(result["degradation_notice"], KB_DEGRADATION_NOTICE)
+        self.assertEqual(result["degradation_notice"], NO_RESULT_NOTICE)
+        load_kb.assert_not_called()
 
     def test_hyde_rewrites_retrieval_only(self):
         """HyDE 改写仅用于向量检索；prompt 与降级路径使用原始 query。"""
-        result, instance, _, _, fake_llm, hyde_sync = self._run(retrieve_docs=[_normal_doc()], use_hyde=True)
+        result, instance, _, _, fake_llm, hyde_sync, _ = self._run(retrieve_docs=[_normal_doc()], use_hyde=True)
 
         hyde_sync.assert_called_once_with(_QUERY, llm=None)
         # 检索使用改写后查询
@@ -197,7 +193,7 @@ class QueryStrictRagTests(unittest.TestCase):
 
     def test_hyde_disabled_skips_rewrite(self):
         """use_hyde=False：不调用改写，检索直接用原始 query。"""
-        _, instance, _, _, _, hyde_sync = self._run(retrieve_docs=[_normal_doc()], use_hyde=False)
+        _, instance, _, _, _, hyde_sync, _ = self._run(retrieve_docs=[_normal_doc()], use_hyde=False)
 
         hyde_sync.assert_not_called()
         retrieve_kwargs = instance.retrieve_documents_from_retriever.call_args.kwargs
@@ -207,15 +203,15 @@ class QueryStrictRagTests(unittest.TestCase):
 class StreamStrictRagTests(unittest.TestCase):
     """stream_strict_rag：同步生成器事件序列。"""
 
-    def _collect(self, *, retrieve_docs=None, retrieve_exc=None, kb_docs=None, kb_tokens=0, use_hyde=False):
+    def _collect(self, *, retrieve_docs=None, retrieve_exc=None, use_hyde=False):
         pipeline_cls, instance = _make_pipeline(retrieve_docs=retrieve_docs, retrieve_exc=retrieve_exc)
         fake_llm = create_fake_llm()
         hyde_sync = mock.MagicMock(return_value="改写后的假设文档")
         with (
             mock.patch(f"{_RAG_RETRIEVAL}.UnifiedRagPipeline", pipeline_cls),
-            mock.patch(f"{_RAG_RETRIEVAL}.load_kb_documents", return_value=(list(kb_docs or []), kb_tokens)),
-            mock.patch(f"{_RETRIEVAL_SERVICE}._keyword_search_fallback", return_value=[]),
-            mock.patch(f"{_RETRIEVAL_SERVICE}._record_degradation_metric"),
+            mock.patch(f"{_RAG_RETRIEVAL}.load_kb_documents") as load_kb,
+            mock.patch(f"{_KEYWORD_FALLBACK}.keyword_search_fallback", return_value=[]),
+            mock.patch(f"{_KEYWORD_FALLBACK}.record_degradation_metric"),
             mock.patch(f"{_STRICT_RAG}._resolve_chat_model", return_value=fake_llm),
             mock.patch(f"{_STRICT_RAG}._hyde_rewrite_query_sync", hyde_sync),
         ):
@@ -224,11 +220,11 @@ class StreamStrictRagTests(unittest.TestCase):
                     mock.MagicMock(), _QUERY, k=_K, use_hyde=use_hyde, collection_name=_COLLECTION
                 )
             )
-        return events, instance, fake_llm, hyde_sync
+        return events, instance, fake_llm, hyde_sync, load_kb
 
     def test_normal_event_sequence(self):
         """正常路径事件序列：heartbeat(检索) → heartbeat(生成) → chunk ×2 → sources。"""
-        events, _, _, _ = self._collect(retrieve_docs=[_normal_doc()])
+        events, _, _, _, _ = self._collect(retrieve_docs=[_normal_doc()])
 
         self.assertEqual(
             [e["type"] for e in events],
@@ -240,25 +236,27 @@ class StreamStrictRagTests(unittest.TestCase):
         self.assertEqual(len(events[4]["data"]), 1)
 
     def test_degraded_doc_triggers_degradation_event(self):
-        """文档自带 degraded 标记：chunk 后发 degradation 事件（KEYWORD 提示）。"""
-        events, _, _, _ = self._collect(retrieve_docs=[_degraded_doc()])
+        """文档自带 degraded 标记：degradation 前置到首个正文 chunk 之前（B10，KEYWORD 提示）。"""
+        events, _, _, _, _ = self._collect(retrieve_docs=[_degraded_doc()])
 
         types = [e["type"] for e in events]
-        self.assertEqual(types, ["heartbeat", "heartbeat", "chunk", "chunk", "degradation", "sources"])
+        self.assertEqual(types, ["heartbeat", "degradation", "heartbeat", "chunk", "chunk", "sources"])
         degradation_events = [e for e in events if e["type"] == "degradation"]
         self.assertEqual(degradation_events[0]["message"], KEYWORD_DEGRADATION_NOTICE)
 
     def test_empty_result_branch_events(self):
-        """空结果分支：chunk(降级文本) + degradation(KB 提示) 后终止，无 sources。"""
-        events, _, _, _ = self._collect(retrieve_docs=[], kb_docs=[_normal_doc()], kb_tokens=10)
+        """空结果分支（Task 4/B3 + B10）：degradation 前置 + 受控 chunk 后终止，无 sources、无假正文。"""
+        events, _, _, _, load_kb = self._collect(retrieve_docs=[])
 
-        self.assertEqual([e["type"] for e in events], ["heartbeat", "chunk", "degradation"])
-        self.assertEqual(events[1]["content"], "管道检索回答")
-        self.assertEqual(events[2]["message"], KB_DEGRADATION_NOTICE)
+        self.assertEqual([e["type"] for e in events], ["heartbeat", "degradation", "chunk"])
+        self.assertEqual(events[1]["message"], NO_RESULT_NOTICE)
+        self.assertEqual(events[2]["content"], NO_RESULT_ANSWER)
+        # 死代码契约：不再触达全库降级管道
+        load_kb.assert_not_called()
 
     def test_hyde_heartbeat_emitted_first(self):
         """use_hyde=True：首个事件为改写 heartbeat，随后检索 heartbeat。"""
-        events, _, _, hyde_sync = self._collect(retrieve_docs=[_normal_doc()], use_hyde=True)
+        events, _, _, hyde_sync, _ = self._collect(retrieve_docs=[_normal_doc()], use_hyde=True)
 
         hyde_sync.assert_called_once()
         self.assertEqual(events[0]["message"], "正在改写查询...")
@@ -268,17 +266,17 @@ class StreamStrictRagTests(unittest.TestCase):
 class AstreamStrictRagTests(unittest.IsolatedAsyncioTestCase):
     """astream_strict_rag：异步生成器事件序列与 async 降级路径。"""
 
-    async def _collect(self, *, retrieve_docs=None, retrieve_exc=None, fallback_docs=None, kb_docs=None, kb_tokens=0):
+    async def _collect(self, *, retrieve_docs=None, retrieve_exc=None, fallback_docs=None):
         pipeline_cls, instance = _make_pipeline(retrieve_docs=retrieve_docs, retrieve_exc=retrieve_exc)
         fake_llm = create_fake_llm()
         with (
             mock.patch(f"{_RAG_RETRIEVAL}.UnifiedRagPipeline", pipeline_cls),
-            mock.patch(f"{_RAG_RETRIEVAL}.load_kb_documents", return_value=(list(kb_docs or []), kb_tokens)) as load_kb,
+            mock.patch(f"{_RAG_RETRIEVAL}.load_kb_documents") as load_kb,
             mock.patch(
-                f"{_RETRIEVAL_SERVICE}._keyword_search_fallback",
+                f"{_KEYWORD_FALLBACK}.keyword_search_fallback",
                 return_value=list(fallback_docs or []),
             ) as fallback,
-            mock.patch(f"{_RETRIEVAL_SERVICE}._record_degradation_metric") as record_metric,
+            mock.patch(f"{_KEYWORD_FALLBACK}.record_degradation_metric") as record_metric,
             mock.patch(f"{_STRICT_RAG}._resolve_chat_model", return_value=fake_llm),
             mock.patch(f"{_STRICT_RAG}._hyde_rewrite_query", mock.MagicMock(return_value="改写后的假设文档")),
         ):
@@ -311,20 +309,51 @@ class AstreamStrictRagTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fallback.call_args.kwargs, {})
         record_metric.assert_called_once()
         types = [e["type"] for e in events]
-        self.assertEqual(types, ["heartbeat", "heartbeat", "chunk", "chunk", "degradation", "sources"])
-        self.assertEqual(events[4]["message"], KEYWORD_DEGRADATION_NOTICE)
+        self.assertEqual(types, ["heartbeat", "degradation", "heartbeat", "chunk", "chunk", "sources"])
+        self.assertEqual(events[1]["message"], KEYWORD_DEGRADATION_NOTICE)
 
-    async def test_empty_result_branch_positional_args(self):
-        """空结果分支：load_kb_documents 位置传参 ([collection],)，事件序列 chunk + degradation。"""
-        events, _, _, _, load_kb, _ = await self._collect(
-            retrieve_docs=[], kb_docs=[_normal_doc()], kb_tokens=7
-        )
+    async def test_empty_result_branch_controlled_events(self):
+        """空结果分支（Task 4/B3 + B10）：degradation 前置 + 受控 chunk，不触 load_kb_documents。"""
+        events, _, _, _, load_kb, _ = await self._collect(retrieve_docs=[])
 
-        load_kb.assert_called_once()
-        self.assertEqual(load_kb.call_args.args, ([_COLLECTION],))
-        self.assertEqual([e["type"] for e in events], ["heartbeat", "chunk", "degradation"])
-        self.assertEqual(events[1]["content"], "管道检索回答")
-        self.assertEqual(events[2]["message"], KB_DEGRADATION_NOTICE)
+        load_kb.assert_not_called()
+        self.assertEqual([e["type"] for e in events], ["heartbeat", "degradation", "chunk"])
+        self.assertEqual(events[1]["message"], NO_RESULT_NOTICE)
+        self.assertEqual(events[2]["content"], NO_RESULT_ANSWER)
+
+    async def test_initial_retrieval_runs_off_event_loop(self):
+        """RP-03：初始 Pipeline 检索经 asyncio.to_thread 在工作线程执行（线程标识非主线程）。
+
+        修复前初始检索在事件循环内同步执行（embed_query 远程调用 + 向量库查询
+        阻塞 loop 宿主）；修复后与降级分支同构离环，本用例锁定该执行上下文。
+        """
+        import threading
+
+        main_thread = threading.current_thread()
+        observed = {}
+
+        pipeline_cls, instance = _make_pipeline()
+
+        def _retrieve_probe(*args, **kwargs):
+            observed["thread"] = threading.current_thread()
+            return [_normal_doc()]
+
+        instance.retrieve_documents_from_retriever.side_effect = _retrieve_probe
+
+        with (
+            mock.patch(f"{_RAG_RETRIEVAL}.UnifiedRagPipeline", pipeline_cls),
+            mock.patch(
+                f"{_STRICT_RAG}._resolve_chat_model", return_value=create_fake_llm()
+            ),
+        ):
+            events = []
+            async for event in astream_strict_rag(
+                mock.MagicMock(), _QUERY, k=_K, use_hyde=False, collection_name=_COLLECTION
+            ):
+                events.append(event)
+
+        self.assertIsNot(observed["thread"], main_thread)
+        self.assertEqual([e["type"] for e in events], ["heartbeat", "heartbeat", "chunk", "chunk", "sources"])
 
 
 class DeadSymbolContractTests(unittest.TestCase):

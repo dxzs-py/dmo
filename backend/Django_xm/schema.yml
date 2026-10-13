@@ -698,6 +698,35 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/knowledge/knowledge-bases/{kb_id}/rebuild/:
+    post:
+      operationId: knowledge_knowledge_bases_rebuild_create
+      description: |-
+        重建索引用户侧入口（R-UX-07）。
+
+        从原始上传文件重建指定知识库的向量索引，编排完整复用
+        kb_service.rebuild_index_from_source_files（内部已含 IndexMetadata
+        按 user 归属过滤 → 不存在抛 FileNotFoundError、重建后两层查询缓存失效），
+        本视图只做错误翻译与重活调度。
+
+        RP-01 同款约束：重建为秒级~分钟级重操作（全量分块 + embedding），
+        经 sync_to_async(thread_sensitive=False) 调度进独立线程池，不占 daphne
+        主执行器串行化全站同步视图。
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
   /api/v1/knowledge/knowledge-bases/{kb_id}/search/:
     post:
       operationId: knowledge_knowledge_bases_search_create
@@ -731,6 +760,16 @@ paths:
   /api/v1/knowledge/query/:
     post:
       operationId: knowledge_query_create
+      description: |-
+        重活型 APIView 的 async 化基类（RP-01）。
+
+        重写 dispatch：DRF 管道轻活（initialize_request/initial——认证、权限、节流）
+        经 sync_to_async 默认 thread_sensitive=True 在主执行器执行；handler 本体
+        ``async def post`` 中由调用方以 ``sync_to_async(..., thread_sensitive=False)``
+        把重活调度进独立线程池。异常处理与响应收尾（handle_exception /
+        finalize_response 为纯内存操作，custom_exception_handler 无 DB/Redis 访问）
+        在事件循环线程内直接执行。视图内不得出现同步 ORM/长阻塞调用——一律
+        sync_to_async 包裹。
       tags:
       - knowledge
       requestBody:
@@ -789,6 +828,9 @@ paths:
         排序语义：各库绝对 score 跨库不可比，融合按排名倒数（RRF，k=60），
         融合分 = Σ 1/(rrf_k + 库内排名)；同库内相对顺序保持不变。
         单库异常计入 failed_indexes 不中断整体；全部失败/空结果返回 200 + 空数组。
+
+        RP-01：段1（归属校验/目标索引解析）走主执行器；段2（query embedding +
+        ThreadPoolExecutor 并发检索 + RRF 融合）经 thread_sensitive=False 进线程池。
       tags:
       - knowledge
       requestBody:
@@ -1512,6 +1554,9 @@ paths:
 
         仅能测试已保存且 status=active 的 Server（含系统级配置），
         name 经 URL path 传递。
+
+        限流：测试会真实向目标 Server 发起连接（资源消耗型敏感操作），
+        挂 SensitiveOperationRateThrottle 防滥用（C13 收尾）。
       parameters:
       - in: path
         name: name
@@ -2186,11 +2231,15 @@ components:
       - updated_at
     CreateKnowledgeBase:
       type: object
-      description: 创建知识库请求序列化器（views_kb.KnowledgeBaseListView.post）。
+      description: |-
+        创建知识库请求序列化器（views_kb.KnowledgeBaseListView.post）。
+
+        C-2：name 必须挂 IndexNameValidationMixin——名称经 get_user_index_name 拼接后
+        直达磁盘路径（kb_service.upload_dir），无白名单则 `../`/`\` 可穿越 uploads 根目录。
       properties:
         name:
           type: string
-          description: 知识库名称
+          description: 知识库名称（仅允许字母、数字、下划线、连字符、中文，最长 100）
           maxLength: 100
         description:
           type: string
@@ -2487,14 +2536,18 @@ components:
       - query
     RagResponse:
       type: object
-      description: RAG 查询响应序列化器。
+      description: |-
+        RAG 查询响应序列化器。
+
+        C-4：sources 必须是结构化子序列化器——原 ListField(child=CharField()) 会把
+        dict 逐元素 str() 成 repr 字符串，与流式端点形状漂移且前端渲染不可用。
       properties:
         answer:
           type: string
         sources:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/RagSourceItem'
         success:
           type: boolean
           default: true
@@ -2503,6 +2556,35 @@ components:
           nullable: true
       required:
       - answer
+    RagSourceItem:
+      type: object
+      description: |-
+        RAG 查询单条来源（C-4 结构化契约，与流式 sources 事件 data 同构）。
+
+        对应 strict_rag_chain._extract_sources 输出形状：
+        {content, source(显示名，C-7 白名单后非服务器路径), metadata, [degraded], [score]}。
+        score（R-UX-04）为检索内核归一相似度语义（越大越相关），无分数出口的检索
+        路径（MMR/MultiQuery/重排/关键词降级）不携带该键。
+      properties:
+        content:
+          type: string
+          description: 来源内容片段
+        source:
+          type: string
+          description: 来源显示名
+        metadata:
+          type: object
+          additionalProperties: {}
+          description: 来源元数据（白名单化）
+        degraded:
+          type: boolean
+          description: 是否为关键词降级检索结果
+        score:
+          type: number
+          format: double
+          description: 相关度分数（归一相似度语义，越大越相关）
+      required:
+      - content
     ResearchContinue:
       type: object
       properties:

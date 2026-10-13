@@ -1,11 +1,17 @@
 # import-linter 架构契约（治理接线：remediate-agent-audit-findings A2，2026-10-05）
 #
-# 现状：存在 3 处已知硬环，本批次不破环，只让检查工具真实生效并如实暴露：
-#   环1 {ai_engine, context_manager}
-#   环2 {ai_engine, knowledge}          —— settings_views 与 knowledge 索引/Embedding 深度耦合
-#   环3 agent_hub <-> research          —— 业务互依（+ research -> chat 软边）
+# 现状：环 1 {ai_engine, context_manager} 已于任务 4.1 破除（runtime_providers 注入反转）、
+#   环 2 {ai_engine, knowledge} 已于任务 4.2 破除（settings_views knowledge 视图组迁往
+#   knowledge/views_settings，URL 不变），`ai-engine-not-dependent-on-knowledge` 为真契约；
+#   环 3 agent_hub <-> research 已于任务 4.3 破除（prompt/常量注入化+下沉 common、
+#   执行骨架下沉 common.execution_loop、adapter 组装上移 research.agent_assembly），
+#   `agent-hub-not-dependent-on-research` 为真契约；research→agent_hub 剩余合法分层边
+#   （agent_assembly 消费 agent_hub.create 构建入口，与 chat_service 同性质）。
+#   research↔chat 双向门面为受控环（audit §4.4-4 定案：维持现状，partial contract
+#   `research-chat-via-facade-only` 固化 research 仅允许经 cross_app/stream_persistence 门面）。
+#   存量测试放置边（common.sandbox.tests→tools、ai_engine.tests→agent_hub）待任务 4.4 修复放置。
 # 因此 lint-imports 当前必然 violated（预期失败，非回归）；本检查的目的是"防新增环"：
-# 破环批次（批E/后续）完成前，新增环边会推高 violated 边数，review 时对照本文件豁免清单核查。
+# 破环批次（4.4）完成前，新增环边会推高 violated 边数，review 时对照本文件豁免清单核查。
 #
 # 豁免原则：只精确豁免"已决策保留"的模块对（每条附注释），禁止整包/整环豁免；
 # 豁免条目若与代码脱节（no match）会导致 import-linter 直接拒绝运行，必须随代码同步清理。
@@ -28,35 +34,66 @@ source_modules =
 forbidden_modules =
     Django_xm.apps.agent_hub
 
+[importlinter:contract:ai-engine-not-dependent-on-knowledge]
+name = ai_engine 引擎层禁止依赖 knowledge 业务应用（环 2 破除：AI 设置/索引重建视图已迁 knowledge/views_settings，任务 4.2）
+type = forbidden
+source_modules =
+    Django_xm.apps.ai_engine
+forbidden_modules =
+    Django_xm.apps.knowledge
+ignore_imports =
+    # 合法中间层首跳边（本契约为传递性检查，以下 ai_engine → 中间层的架构性依赖
+    # （tools 工具层 / context_manager 上下文层 / tasks 任务层）是既定分层，
+    # 由其自身管理对 knowledge 的依赖，不视为 ai_engine 反向依赖违规。
+    # 注：ai_engine → context_manager 的 TokenEstimator 消费边已于任务 4.1
+    # 破环时下沉 Django_xm.common.token_estimator 消除，不再需要豁免。
+    Django_xm.apps.ai_engine.capabilities.builtin -> Django_xm.apps.context_manager.middleware
+    Django_xm.apps.ai_engine.capabilities.builtin -> Django_xm.apps.tools
+    Django_xm.apps.ai_engine.subagent_runtime.adapters.langgraph_adapter -> Django_xm.apps.tools
+    Django_xm.apps.ai_engine.services.cross_app -> Django_xm.tasks.chat_tasks
+
 [importlinter:contract:ai-engine-not-dependent-on-domain-apps]
-name = ai_engine 引擎层禁止依赖 research/knowledge/learning 业务应用（依赖倒置：任务取消检查/子代理提示词/Embedding 缓存包装均由调用方注入）
+name = ai_engine 引擎层禁止依赖 research/learning 业务应用（依赖倒置：任务取消检查/子代理提示词均由调用方注入）
 type = forbidden
 source_modules =
     Django_xm.apps.ai_engine
 forbidden_modules =
     Django_xm.apps.research
-    Django_xm.apps.knowledge
     Django_xm.apps.learning
+
+[importlinter:contract:context-manager-not-dependent-on-ai-engine]
+name = context_manager 上下文层禁止依赖 ai_engine 引擎层（模型解析链/Store 工厂/ToolUsageGuard 经 runtime_providers 注入反转，环 1 破除）
+type = forbidden
+source_modules =
+    Django_xm.apps.context_manager
+forbidden_modules =
+    Django_xm.apps.ai_engine
+
+[importlinter:contract:agent-hub-not-dependent-on-research]
+name = agent_hub 构建层禁止依赖 research 业务层（环 3 破除：默认 prompt/doc suffix 经 AgentConfig 注入、SANDBOX_ALLOWED_DIRS 下沉 common/sandbox、子代理角色 prompt 上移 ai_engine 注册表、deep_builder 返回 AgentWrapper 元数据载体，adapter 组装上移 research.agent_assembly，任务 4.3）
+type = forbidden
+source_modules =
+    Django_xm.apps.agent_hub
+forbidden_modules =
+    Django_xm.apps.research
+
+[importlinter:contract:research-chat-via-facade-only]
+name = research 对 chat 仅允许经门面（audit §4.4-4 定案：chat↔research 双向门面为受控环不拆解；固化 research 仅允许 import chat.services.cross_app / chat.services.stream_persistence 两个门面模块，禁止绕门面新增直连边。注：审计预想的 partial 契约在 import-linter 2.13 不存在，等价表达为 forbidden+精确豁免——豁免清单即门面消费台账，绕门面新增边不受豁免会 broken）
+type = forbidden
+source_modules =
+    Django_xm.apps.research
+forbidden_modules =
+    Django_xm.apps.chat
 ignore_imports =
-    # 待后续批次（批E）：settings_views（AI 设置 API）与 knowledge 索引/Embedding 服务
-    # 深度耦合，拆分需将相关视图整体迁移至 knowledge app（涉及 URL 与前端契约），
-    # 本批次仅精确豁免以下模块对。
-    # 注意：settings_views -> knowledge.services.cross_app（get_index_manager，
-    # settings_views.py:27）【未豁免】——保留为环2 {ai_engine,knowledge} 的可见违反，
-    # 防止豁免扩张把环完全藏起来。
-    Django_xm.apps.ai_engine.settings_views -> Django_xm.apps.knowledge.services.embedding_service
-    Django_xm.apps.ai_engine.settings_views -> Django_xm.apps.knowledge.vector_store.pgvector_backend
-    Django_xm.apps.ai_engine.settings_views -> Django_xm.apps.knowledge.services.kb_service
-    # 合法中间层首跳边（本契约只约束 ai_engine 的直接反向依赖）：
-    # forbidden 契约为传递性检查，以下 ai_engine → 中间层的架构性依赖
-    # （tools 工具层 / context_manager 上下文层 / tasks 任务层）是既定分层，
-    # 由其自身管理对 knowledge 的依赖，不视为 ai_engine 反向依赖违规。
-    Django_xm.apps.ai_engine.capabilities.builtin -> Django_xm.apps.context_manager.middleware
-    Django_xm.apps.ai_engine.capabilities.builtin -> Django_xm.apps.context_manager.services.compression
-    Django_xm.apps.ai_engine.services.usage_tracker -> Django_xm.apps.context_manager.services.compression
-    Django_xm.apps.ai_engine.capabilities.builtin -> Django_xm.apps.tools
-    Django_xm.apps.ai_engine.subagent_runtime.adapters.langgraph_adapter -> Django_xm.apps.tools
-    Django_xm.apps.ai_engine.services.cross_app -> Django_xm.tasks.chat_tasks
+    # 门面消费台账（仅允许的两个门面模块；新增绕门面直连边不在此列会 broken）
+    Django_xm.apps.research.views -> Django_xm.apps.chat.services.cross_app
+    Django_xm.apps.research.services.cross_app -> Django_xm.apps.chat.services.cross_app
+    Django_xm.apps.research.services.writeback -> Django_xm.apps.chat.services.cross_app
+    Django_xm.apps.research.services.writeback -> Django_xm.apps.chat.services.stream_persistence
+    # （阶段 7 豁免清零：原中间层存量汇出边 ai_engine.services.usage_tracker →
+    # chat.models 与 tools.langchain.attachment_rag → chat.models 已依赖倒置
+    # ——聚合/校验实现归位 chat 侧，经运行期 provider 注入，组合根接线在
+    # chat AppConfig.ready()——豁免条目随代码同步删除，勿再新增同类豁免）
 
 [importlinter:contract:apps-not-dependent-on-services]
 name = apps 业务层禁止依赖 services 执行编排层

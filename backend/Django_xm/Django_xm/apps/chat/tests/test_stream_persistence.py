@@ -278,7 +278,7 @@ class PersistToolCallsChangedTests(unittest.TestCase):
 
     @staticmethod
     def _install_fakes(existing_tool_calls, existing_content=""):
-        """构造 ChatSession/ChatMessage/timezone 替身模块并返回。"""
+        """构造 ChatSession/ChatMessage/timezone 替身模块并返回（stub 链对齐 A17 行锁查询）。"""
         chat_models = types.ModuleType("Django_xm.apps.chat.models")
         chat_models.ChatSession = type("ChatSession", (), {})
         chat_models.ChatMessage = type("ChatMessage", (), {})
@@ -293,11 +293,17 @@ class PersistToolCallsChangedTests(unittest.TestCase):
             save=mock.MagicMock(),
         )
         chat_models.ChatSession.objects = mock.MagicMock()
-        chat_models.ChatSession.objects.filter.return_value.first.return_value = session_fake
-        chat_models.ChatSession.objects.filter.return_value.update.return_value = None
+        chat_models.ChatSession.objects.select_for_update.return_value.filter.return_value.first.return_value = (
+            session_fake
+        )
+        chat_models.ChatSession.objects.select_for_update.return_value.filter.return_value.update.return_value = None
         chat_models.ChatMessage.objects = mock.MagicMock()
-        chat_models.ChatMessage.objects.get.side_effect = chat_models.ChatMessage.DoesNotExist
-        chat_models.ChatMessage.objects.filter.return_value.order_by.return_value.first.return_value = message_fake
+        chat_models.ChatMessage.objects.select_for_update.return_value.get.side_effect = (
+            chat_models.ChatMessage.DoesNotExist
+        )
+        (
+            chat_models.ChatMessage.objects.filter.return_value.order_by.return_value.select_for_update.return_value.first
+        ).return_value = message_fake
 
         timezone_module = types.ModuleType("django.utils.timezone")
         timezone_module.now = mock.MagicMock(return_value="2026-01-01T00:00:00")
@@ -337,7 +343,7 @@ class PersistToolCallsChangedTests(unittest.TestCase):
                 "Django_xm.apps.chat.models": chat_models,
                 "django.utils.timezone": tz_module,
             },
-        ):
+        ), mock.patch("django.db.transaction.atomic"):
             # content 传空串，确保 save 仅由 tool_calls 演进触发
             result = _persist_to_db_sync("sess-1", None, "", new)
 
@@ -369,7 +375,7 @@ class PersistToolCallsChangedTests(unittest.TestCase):
                 "Django_xm.apps.chat.models": chat_models,
                 "django.utils.timezone": tz_module,
             },
-        ):
+        ), mock.patch("django.db.transaction.atomic"):
             result = _persist_to_db_sync("sess-1", None, "", [dict(entry)])
 
         self.assertEqual(result["tool_calls_changed"], False)
@@ -387,7 +393,7 @@ class PersistToolCallsChangedTests(unittest.TestCase):
                 "Django_xm.apps.chat.models": chat_models,
                 "django.utils.timezone": tz_module,
             },
-        ):
+        ), mock.patch("django.db.transaction.atomic"):
             result = _persist_to_db_sync("sess-1", None, "", new)
 
         self.assertEqual(result["tool_calls_changed"], True)
@@ -408,7 +414,7 @@ class PersistContentAppendTests(unittest.TestCase):
                 "Django_xm.apps.chat.models": chat_models,
                 "django.utils.timezone": tz_module,
             },
-        ):
+        ), mock.patch("django.db.transaction.atomic"):
             result = _persist_to_db_sync("sess-1", None, content, [])
         return result, message_fake
 

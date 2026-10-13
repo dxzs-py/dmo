@@ -124,7 +124,7 @@ export const createHandleTaskEvent = (ctx) => {
         researchStore.updateTaskFromEvent(taskId, payload)
         logger.info(
           `[Sync] task stream_completed: taskId=${taskId}, ` +
-          `success=${payload.success !== false}, source=${source}`
+          `success=${payload.success !== false}, stopped=${payload.stopped === true}, source=${source}`
         )
         break
       case EventType.TASK_STATUS_CHANGE: // 值 = 'status_change'

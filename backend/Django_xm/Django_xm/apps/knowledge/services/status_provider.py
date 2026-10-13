@@ -30,7 +30,8 @@ class VectorStoreStatusProvider(DatabaseStatusProvider):
     def get_status(self) -> dict[str, Any]:
         """获取向量存储状态"""
         try:
-            from Django_xm.apps.ai_engine.config import settings as app_cfg
+            # A-5：ai_engine 配置统一经 knowledge.config 门面
+            from Django_xm.apps.knowledge.config import settings as app_cfg
             from Django_xm.apps.knowledge.services.cross_app import get_index_manager
 
             manager = get_index_manager()
@@ -94,7 +95,8 @@ class VectorStoreStatusProvider(DatabaseStatusProvider):
             backend_type = "unknown"
             base_path_str = ""
             try:
-                from Django_xm.apps.ai_engine.config import settings as app_cfg
+                # A-5：ai_engine 配置统一经 knowledge.config 门面
+                from Django_xm.apps.knowledge.config import settings as app_cfg
 
                 backend_type = app_cfg.vector_store_type
                 base_path_str = str(Path(app_cfg.vector_store_path))

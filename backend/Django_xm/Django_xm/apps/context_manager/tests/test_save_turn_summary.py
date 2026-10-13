@@ -5,9 +5,11 @@
   实体/决策复用引擎规则抽取唯一实现（extract_decisions 公开别名），
   写入委托 save_session_context（session/user 维度参数完整）；
 - P2 增量合并：写入前读取旧摘要 → 摘要 LLM 输入 =「旧摘要 + 本轮摘要」→
-  合并输出落库；实体/决策新旧合并去重（旧值在前，截断至现有抽取上限）；
-- 降级链：无旧摘要 → 纯本轮摘要（现状逻辑）；合并 LLM 失败 → 保存本轮摘要
-  （本轮数据不丢）；本轮摘要 LLM 失败 → 跳过写入；全程异常不向外抛（P2 兜底）；
+  合并输出落库；实体/决策新旧合并去重（A14 新值优先：本轮新值排前并覆盖
+  旧权重，超限保序淘汰尾部旧值）；
+- 降级链：无旧摘要 → 纯本轮摘要（现状逻辑）；合并 LLM 失败/返回空 →
+  历史摘要+本轮摘要拼接保留累积（4.3）；本轮摘要 LLM 失败 → 跳过写入；
+  全程异常不向外抛（P2 兜底）；
 - 配置语义：cross_session_enabled=False（ContextManagementConfig）跳过写入；
 - 条件跳过：空输入 / 空摘要。
 
@@ -21,7 +23,10 @@ services/fastapi_service/tests/test_cross_session_memory_wiring.py。
 import unittest
 from unittest import mock
 
-from Django_xm.apps.context_manager.services.compression import ContextCompressionEngine
+from Django_xm.apps.context_manager.services.compression import (
+    ContextCompressionEngine,
+    EntityExtractor,
+)
 from Django_xm.apps.context_manager.services.manager import (
     ContextManagementConfig,
     ContextManager,
@@ -75,7 +80,9 @@ class SaveTurnSummaryTests(unittest.TestCase):
         self.assertIn("我决定使用 Vue3 组合式 API", turn_text)
         self.assertIn("好的。建议：优先使用 setup 语法。", turn_text)
 
-        mock_load.assert_called_once_with("sess-d2")
+        # round3 2.8 两阶段：prepare 与 commit 各读一次快照（commit 二次校验）
+        self.assertEqual(mock_load.call_count, 2)
+        mock_load.assert_called_with("sess-d2")
         mock_save.assert_called_once()
         save_kwargs = mock_save.call_args.kwargs
         self.assertEqual(save_kwargs.get("session_id"), "sess-d2")
@@ -166,18 +173,25 @@ class SaveTurnSummaryIncrementalMergeTests(unittest.TestCase):
 
         self.assertTrue(result)
         mock_summarize.assert_called_once()  # 仅本轮摘要一次调用，无合并调用
-        mock_load.assert_called_once_with("sess-p2")
+        # round3 2.8 两阶段：prepare 与 commit 各读一次快照（commit 二次校验）
+        self.assertEqual(mock_load.call_count, 2)
+        mock_load.assert_called_with("sess-p2")
         save_kwargs = mock_save.call_args.kwargs
         self.assertEqual(save_kwargs.get("summary"), _TURN_SUMMARY)
 
     def test_second_turn_merges_old_and_turn_summary(self):
-        """②第二轮：合并 LLM 输入含旧摘要 + 本轮摘要，保存合并输出；实体/决策新旧合并。"""
+        """②第二轮：合并 LLM 输入含旧摘要 + 本轮摘要，保存合并输出；
+        实体/决策新旧合并（A14 新值优先：本轮抽取值排前，旧值去重后追加）。"""
         manager = _make_manager()
         with mock.patch.object(
             ContextCompressionEngine,
             "summarize_long_text",
             side_effect=[_TURN_SUMMARY, _MERGED_SUMMARY],
         ) as mock_summarize, mock.patch.object(
+            EntityExtractor, "extract_from_messages", return_value=["导航守卫", "Vue3"]
+        ), mock.patch.object(
+            ContextCompressionEngine, "extract_decisions", return_value=["使用 beforeEach 守卫"]
+        ), mock.patch.object(
             ContextManager, "_load_session_context_data", return_value=_old_context_data()
         ), mock.patch.object(
             ContextManager, "save_session_context", return_value=True
@@ -204,17 +218,12 @@ class SaveTurnSummaryIncrementalMergeTests(unittest.TestCase):
         mock_save.assert_called_once()
         save_kwargs = mock_save.call_args.kwargs
         self.assertEqual(save_kwargs.get("summary"), _MERGED_SUMMARY)
-        # 实体/决策：旧值在前 + 本轮规则抽取追加，去重
-        entities = save_kwargs.get("key_entities")
-        decisions = save_kwargs.get("key_decisions")
-        self.assertEqual(entities[:2], _OLD_ENTITIES)
-        self.assertIn("Vue3", entities)
-        self.assertIn("Pinia", entities)
-        self.assertEqual(decisions[0], _OLD_DECISIONS[0])
-        self.assertTrue(any("beforeEach" in d for d in decisions[1:]))
+        # 实体/决策（A14 新值优先）：本轮新值在前，旧值去重后追加在后
+        self.assertEqual(save_kwargs.get("key_entities"), ["导航守卫", "Vue3", "Pinia"])
+        self.assertEqual(save_kwargs.get("key_decisions"), ["使用 beforeEach 守卫", "使用 Pinia 状态管理"])
 
-    def test_merge_llm_failure_degrades_to_turn_summary(self):
-        """③合并 LLM 失败 → 降级保存本轮摘要（本轮数据不丢），不抛异常。"""
+    def test_merge_llm_failure_degrades_to_concatenated_summary(self):
+        """③合并 LLM 失败 → 降级为「历史摘要+本轮摘要」拼接保留累积（4.3），不抛异常。"""
         manager = _make_manager()
         with mock.patch.object(
             ContextCompressionEngine,
@@ -230,10 +239,10 @@ class SaveTurnSummaryIncrementalMergeTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(mock_summarize.call_count, 2)
         save_kwargs = mock_save.call_args.kwargs
-        self.assertEqual(save_kwargs.get("summary"), _TURN_SUMMARY)
+        self.assertEqual(save_kwargs.get("summary"), f"{_OLD_SUMMARY}\n{_TURN_SUMMARY}")
 
-    def test_merge_empty_output_degrades_to_turn_summary(self):
-        """合并 LLM 返回空白 → 同样降级保存本轮摘要（不写入空摘要覆盖旧记忆）。"""
+    def test_merge_empty_output_degrades_to_concatenated_summary(self):
+        """合并 LLM 返回空白 → 同样降级为拼接保留累积（不写入空摘要覆盖旧记忆）。"""
         manager = _make_manager()
         with mock.patch.object(
             ContextCompressionEngine,
@@ -247,7 +256,7 @@ class SaveTurnSummaryIncrementalMergeTests(unittest.TestCase):
             result = manager.save_turn_summary("sess-p2", "问题", "回答")
 
         self.assertTrue(result)
-        self.assertEqual(mock_save.call_args.kwargs.get("summary"), _TURN_SUMMARY)
+        self.assertEqual(mock_save.call_args.kwargs.get("summary"), f"{_OLD_SUMMARY}\n{_TURN_SUMMARY}")
 
     def test_turn_summary_llm_failure_skips_write_silently(self):
         """本轮摘要 LLM 失败 → 跳过写入且不抛异常（短路于读取旧摘要之前）。"""

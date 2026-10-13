@@ -27,6 +27,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, Spec
 
 from Django_xm.apps.ai_engine.config import settings as app_cfg
 from Django_xm.apps.core.views import health_check as core_health_check
+from Django_xm.apps.knowledge.views_settings import AISettingsView, RebuildIndexesView
 
 
 def root_info(request):
@@ -87,6 +88,12 @@ urlpatterns = [
                             path("analytics/", include("Django_xm.apps.analytics.urls")),
                             path("core/", include("Django_xm.apps.core.urls")),
                             path("cache/", include("Django_xm.apps.cache_manager.urls")),
+                            path("ai-engine/settings/", AISettingsView.as_view(), name="ai_settings"),
+                            path(
+                                "ai-engine/settings/rebuild-indexes/",
+                                RebuildIndexesView.as_view(),
+                                name="rebuild_indexes",
+                            ),
                             path("ai-engine/", include("Django_xm.apps.ai_engine.urls")),
                             path("context/", include("Django_xm.apps.context_manager.urls")),
                             path("approvals/", include("Django_xm.apps.approvals.urls")),

@@ -8,6 +8,23 @@ class SystemConfigAdmin(admin.ModelAdmin):
     list_display = ("key", "updated_at")
     search_fields = ("key",)
     readonly_fields = ("updated_at",)
+    fieldsets = (
+        (
+            "配置项",
+            {
+                "fields": ("key", "value"),
+                "description": (
+                    "系统级 KV 配置，消费方见各 key 的引用。常用 key：<br>"
+                    "• <code>model_context_limits</code>：模型上下文窗口补档（TokenEstimator 优先读取，"
+                    '值形如 <code>{"模型名或前缀": 窗口tokens}</code>，'
+                    "如 <code>{\"gpt-oss-120b\": 131072, \"llama-3.3\": 128000}</code>），"
+                    "修改后 ≤60s 自动生效，无需改代码<br>"
+                    "• <code>default_chat_model</code> / <code>helper_model</code> / "
+                    "<code>fallback_chat_model</code> / <code>embedding_provider</code>：模型配置"
+                ),
+            },
+        ),
+    )
 
 
 class AIModelInline(admin.TabularInline):

@@ -96,6 +96,8 @@ function _approvalStatePriority(state) {
  * - toolCalls：后端数量 >= 本地时用 _mergeToolCalls 合并（保留本地更完整的 result/status），
  *   后端数量 < 本地时保留本地（快照滞后，本地更完整）
  * - reasoning：后端 reasoning.content 更长时覆盖
+ * - subagentContents：按线程提升——本地缺失该线程条目或后端正文更长时补齐
+ *   （阶段 2：快照帧不入回放历史，断线错过的帧经此收敛；权威源为落库快照）
  * - sources/suggestions/context：本地缺失时补充，否则保留本地
  *
  * @param {Object} localMsg - 本地消息（会被原地修改）
@@ -137,6 +139,31 @@ function _reconcileMessageField(localMsg, backendMsg) {
     const backendReasoningContent = backendMsg.reasoning?.content || ''
     if (backendReasoningContent.length > localReasoningContent.length) {
       localMsg.reasoning = backendMsg.reasoning
+    }
+  }
+
+  // subagentContents：按线程状态提升（阶段 2 权威恢复源）。
+  // stream_subagent_content 快照帧不入回放历史（persist_history=False），断线/
+  // 重连浏览器错过的帧经快照校对收敛：本地缺失该线程条目或后端正文更长（落库
+  // 快照更完整）时以快照补齐；本地更新（流式进行中，DB 落库滞后 ≤ 节流窗口）
+  // 时保留本地，与 content/reasoning 的"后端更长才覆盖"提升规则一致。
+  if (backendMsg.subagentContents && typeof backendMsg.subagentContents === 'object') {
+    const localSub = (localMsg.subagentContents && typeof localMsg.subagentContents === 'object')
+      ? localMsg.subagentContents
+      : {}
+    let subLifted = false
+    for (const [threadId, entry] of Object.entries(backendMsg.subagentContents)) {
+      if (!entry || typeof entry !== 'object') continue
+      const localEntry = localSub[threadId] || {}
+      const localContent = localEntry.content || ''
+      const backendContent = entry.content || ''
+      if (localSub[threadId] === undefined || backendContent.length > localContent.length) {
+        localSub[threadId] = { ...localEntry, ...entry }
+        subLifted = true
+      }
+    }
+    if (subLifted) {
+      localMsg.subagentContents = localSub
     }
   }
 

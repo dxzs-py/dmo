@@ -155,10 +155,14 @@ class ShellExecApprovalPolicy(ApprovalPolicy):
             return RiskLevel.SAFE  # 空命令，不执行
 
         # 延迟导入避免循环依赖；依赖方向 agent_hub→tools 合法
-        from Django_xm.apps.tools.langchain.shell import _assess_command_risk_level
+        # （CT-09 转正：消费 tools 侧公开 API assess_command_risk_level）
+        from Django_xm.apps.tools.langchain.shell import assess_command_risk_level
 
+        # R3 1.4：working_dir 同源透传——白名单相对路径参数按实际执行目录
+        # resolve 后校验（`cat .env` 类命令不得免审批）
+        working_dir = str(args.get("working_dir") or "")
         return self._apply_subagent_weighting(
-            _assess_command_risk_level(command), subagent_context
+            assess_command_risk_level(command, working_dir), subagent_context
         )
 
     def assess_danger(self, args: dict) -> str:
@@ -534,3 +538,104 @@ class AttachmentReaderApprovalPolicy(ApprovalPolicy):
 
     def assess_danger(self, args: dict) -> str:
         return "low"
+
+
+# ── fail-closed 兜底与只读白名单（安全修复 2.1）───────────────────
+# 修复前 middleware 对未注册策略的工具直接放行（fail-open），任何新增/动态
+# 装配的工具（MCP、技能管道、扩展注册表、用户自定义工具等）默认无审批执行。
+# 现在语义反转为 fail-closed：
+#   1. 未注册工具 → UnregisteredToolApprovalPolicy，默认 CONTROLLED（需审批）；
+#   2. 显式只读白名单 → ReadOnlyApprovalPolicy 实例，SAFE 自动通过 + 审计；
+#   3. 白名单必须逐个对照 tools/__init__.py 实际装配工具全集核定，未入白名单
+#      的一律走兜底审批——新增只读工具时应在此显式登记，而非依赖放行。
+
+
+class ReadOnlyApprovalPolicy(ApprovalPolicy):
+    """只读工具白名单策略（SAFE 自动通过，仅审计）。
+
+    适用于无副作用、不修改任何状态的纯只读工具（搜索/列表/翻译/技能
+    加载等）。实例化时绑定具体 tool_name，注册进 middleware 策略表。
+    is_write_operation=False：子 agent 中不上调风险等级。
+    """
+
+    def __init__(self, tool_name: str):
+        super().__init__()
+        self.tool_name = tool_name
+
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        return RiskLevel.SAFE
+
+    def assess_danger(self, args: dict) -> str:
+        return "low"
+
+
+class UnregisteredToolApprovalPolicy(ApprovalPolicy):
+    """未注册工具的 fail-closed 兜底策略（默认 CONTROLLED，需审批）。
+
+    覆盖所有动态名称工具：MCP 外部工具（server 前缀动态名）、技能管道
+    工具（skill_{name}，内部可编排 shell_exec 等副作用工具）、扩展注册表
+    工具、用户自定义工具及未来新增工具。语义：策略表未覆盖 = 风险未知 =
+    必须审批后才能执行。
+
+    is_write_operation=True：未知工具按"可能有副作用"处理，子 agent 中
+    上调一级（CONTROLLED → HIGH，受 risk_ceiling 封顶）。
+    """
+
+    tool_name = ""
+    is_write_operation = True
+
+    def __init__(self, tool_name: str = ""):
+        super().__init__()
+        self.tool_name = tool_name
+
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
+
+    def assess_danger(self, args: dict) -> str:
+        return "medium"
+
+    def build_title(self, args: dict) -> str:
+        return f"确认执行未知风险工具 {self.tool_name}"
+
+    def build_description(self, args: dict) -> str:
+        return (
+            f"工具 {self.tool_name} 未登记审批策略（动态/外部工具），按 fail-closed "
+            f"原则默认需要审批后执行。请确认该操作符合预期。"
+        )
+
+
+class TodoWriteFileApprovalPolicy(TodoWriteApprovalPolicy):
+    """项目自定义 todo_write 工具审批策略（文件待办，CONTROLLED）。
+
+    与 deepagents write_todos（TodoWriteApprovalPolicy）口径对齐：修改待办
+    状态有状态副作用，需审批。项目自定义工具名（todo.py TodoWriteTool）为
+    todo_write，与 deepagents 内置 write_todos 是两个不同工具名，需分别注册。
+    """
+
+    tool_name = "todo_write"
+
+
+# 只读工具白名单（对照 tools/__init__.py get_all_advanced_tools 装配全集核定，
+# 以及 deep_builder 注入主 agent 的 knowledge_base 检索工具）：
+# - calculator / get_current_date / get_current_time：纯计算与系统时钟读取；
+# - duckduckgo_search / weather_query / translate_text / detect_language：外部只读查询；
+# - fs_list_files / fs_search_files：会话工作区内只读（路径校验在工具层强制执行）；
+# - todo_read：只读待办；
+# - activate_skill / read_skill_resource：技能渐进式披露（读取技能说明与资源，
+#   实际技能执行由 skill_{name} 管道工具承担，走 fail-closed 兜底审批）；
+# - knowledge_base：知识库检索（SyncSafeRetrieverTool，纯只读检索）。
+READ_ONLY_TOOL_WHITELIST: tuple[str, ...] = (
+    "calculator",
+    "get_current_date",
+    "get_current_time",
+    "duckduckgo_search",
+    "weather_query",
+    "translate_text",
+    "detect_language",
+    "fs_list_files",
+    "fs_search_files",
+    "todo_read",
+    "activate_skill",
+    "read_skill_resource",
+    "knowledge_base",
+)

@@ -255,9 +255,13 @@ async def _finalize_chat_session(
             结构一致：{success: True, stopped, incomplete}）；非 None 时广播
             success=False + error（用户可行动文案）+ error_code（分类错误码），
             与 research 链 _handle_failure 的失败语义对齐（审计 F1-1/F1-3）。
+            D-1 扩展：落库失败（persist_chat_tool_calls / _mark_not_streaming
+            抛异常）同样视为失败终态，以 PERSIST_FAILED 错误码广播
+            success=False，前端可感知"执行完成但内容未持久化"，不再假成功。
     """
     if not session_id or not message_id:
         return
+    persist_error: dict | None = None
     try:
         from Django_xm.apps.chat.models import ChatMessage
 
@@ -273,22 +277,30 @@ async def _finalize_chat_session(
         await _mark_not_streaming()
     except Exception:
         logger.warning(f"[ChatExec] 落库失败: session={session_id}", exc_info=True)
+        # D-1：落库失败是异常路径，广播体必须携带失败原因（不透出裸异常原文）
+        persist_error = {
+            "code": "PERSIST_FAILED",
+            "message": "回复已生成，但内容保存失败，刷新页面后本次回复可能丢失",
+        }
 
     # 广播 stream_completed（触发/非触发浏览器统一最终化）；
     # 用户停止时携带 stopped/incomplete 标记（Task 9），前端据此标记对应状态；
-    # 失败时携带 success=False + error/error_code（A1.3），前端标记 ERROR 终态
+    # 失败时携带 success=False + error/error_code（A1.3/D-1），前端标记 ERROR 终态
     try:
         from Django_xm.common.event_schema import EventSource, EventType
         from Django_xm.common.realtime_events import publish_event
 
+        # D-1：执行异常与落库失败任一存在即失败终态；执行异常优先
+        # （执行失败为主因，落库失败仅在其为唯一失败时透出）
+        fail_info = error_info or persist_error
         completion_data: dict = {
-            "success": error_info is None,
+            "success": fail_info is None,
             "stopped": stopped,
             "incomplete": incomplete,
         }
-        if error_info:
-            completion_data["error"] = error_info.get("message", "")
-            completion_data["error_code"] = error_info.get("code", "")
+        if fail_info:
+            completion_data["error"] = fail_info.get("message", "")
+            completion_data["error_code"] = fail_info.get("code", "")
 
         await publish_event(
             EventType.STREAM_COMPLETED,
@@ -315,12 +327,18 @@ async def _save_cross_session_memory(
     session_id: str,
     incomplete: bool,
 ) -> None:
-    """会话终态跨会话记忆写入（spec D2）：本轮对话生成摘要并调用 save_session_context。
+    """会话终态跨会话记忆写入（spec D2）：投递 Celery 后台任务（fire-and-forget）。
 
     跳过条件：重生成中断（incomplete 半成品不污染记忆）/ 用户消息或最终回答为空 /
     无 user_id。cross_session_enabled 与容量淘汰语义由 ContextManager 负责。
-    摘要生成经 sync_to_async 走线程池（LLM 调用为同步阻塞），失败静默降级：
-    任何异常仅 debug 日志，绝不抛出阻塞会话收尾。
+
+    后台化（本轮修复）：摘要合并/KG 实体抽取走本地辅助模型，实测耗时可达
+    分钟级——原同步实现（sync_to_async 等待写完）会把会话执行器占住到记忆
+    写完，期间该会话新消息的 start 信令被 SessionManager 幂等忽略，用户端
+    表现为"发消息一直等待"。改为投递 chat.save_cross_session_memory 后
+    finalize 立即返回，会话在主回复完成时即释放；任务内契约不变
+    （prepare 锁外 LLM + commit 行锁写回 + KG 抽取，失败静默降级）。
+    Celery 不可用时降级为原同步路径（to_thread），不丢记忆写入。
     """
     if incomplete:
         return
@@ -330,21 +348,54 @@ async def _save_cross_session_memory(
     if not user_message.strip() or not assistant_content.strip() or not user_id:
         return
     try:
+        from Django_xm.tasks.chat_tasks import save_cross_session_memory
 
-        def _write() -> bool:
-            from Django_xm.apps.context_manager.services.manager import create_context_manager
-
-            manager = create_context_manager(user_id=user_id)
-            return manager.save_turn_summary(
-                session_id=session_id,
-                user_message=user_message,
-                assistant_content=assistant_content,
-            )
-
-        saved = await sync_to_async(_write)()
-        if saved:
-            logger.debug(f"[ChatExec] 跨会话记忆已写入: session={session_id}")
-        else:
-            logger.debug(f"[ChatExec] 跨会话记忆跳过（未启用或条件不满足）: session={session_id}")
+        save_cross_session_memory.delay(
+            user_id=user_id,
+            session_id=str(session_id),
+            user_message=user_message,
+            assistant_content=assistant_content,
+        )
+        logger.debug(f"[ChatExec] 跨会话记忆已投递后台任务: session={session_id}")
     except Exception:
-        logger.debug(f"[ChatExec] 跨会话记忆写入失败（静默降级）: session={session_id}", exc_info=True)
+        # Celery 不可用（broker 掉线等）：降级为线程池同步写入，宁可慢不可丢
+        logger.warning("[ChatExec] 记忆任务投递失败，降级为同步写入", exc_info=True)
+        try:
+            await _save_cross_session_memory_sync(user_id, str(session_id), user_message, assistant_content)
+        except Exception:
+            logger.debug(f"[ChatExec] 跨会话记忆写入失败（静默降级）: session={session_id}", exc_info=True)
+
+
+async def _save_cross_session_memory_sync(user_id, session_id: str, user_message: str, assistant_content: str) -> None:
+    """记忆写入同步兜底路径（Celery 不可用时；契约与 Celery 任务体一致）。"""
+
+    def _write() -> bool:
+        from django.db import transaction
+
+        from Django_xm.apps.chat.models import ChatSession
+        from Django_xm.apps.context_manager.services.manager import create_context_manager
+
+        manager = create_context_manager(user_id=user_id)
+        prepared = manager.prepare_turn_summary(
+            session_id=session_id,
+            user_message=user_message,
+            assistant_content=assistant_content,
+        )
+        if prepared is None:
+            return False
+        saved = False
+        with transaction.atomic():
+            ChatSession.objects.select_for_update().filter(session_id=session_id).first()
+            saved = manager.commit_turn_summary(session_id, prepared)
+            manager.process_conversation(
+                user_id=user_id,
+                messages=[
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": assistant_content},
+                ],
+            )
+        return saved
+
+    saved = await sync_to_async(_write)()
+    if saved:
+        logger.debug(f"[ChatExec] 跨会话记忆已写入（同步兜底）: session={session_id}")

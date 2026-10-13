@@ -20,17 +20,19 @@ import django
 
 django.setup()
 
-from Django_xm.apps.research.services.writeback import persist_research_progress
+from Django_xm.apps.research.services.writeback import (
+    persist_research_progress,
+    persist_research_subagent_contents,
+)
 
 _WB = "Django_xm.apps.research.services.writeback"
 
 
-def _make_task(tool_calls=None, subagent_contents=None, chat_message_id=10):
+def _make_task(tool_calls=None, subagent_contents=None):
     task = mock.Mock()
     task.task_id = "t1"
     task.tool_calls = list(tool_calls or [])
     task.subagent_contents = dict(subagent_contents or {})
-    task.chat_message_id = chat_message_id
     return task
 
 
@@ -49,7 +51,6 @@ class PersistResearchProgressTests(unittest.TestCase):
 
         msg_cls = mock.Mock()
         msg_cls.objects.filter.return_value.first.return_value = msg
-        msg_cls.objects.only.return_value.get.return_value = msg
         chat_models = mock.Mock()
         chat_models.get_model.return_value = msg_cls
 
@@ -125,7 +126,7 @@ class PersistResearchProgressTests(unittest.TestCase):
 
     def test_syncs_chat_message_and_broadcasts(self):
         """关联 ChatMessage.tool_calls / subagent_contents 同步并广播 MESSAGE_UPDATED。"""
-        task = _make_task(chat_message_id=10)
+        task = _make_task()
         msg = mock.Mock()
         msg.id = 10
         msg.tool_calls = []
@@ -154,6 +155,74 @@ class PersistResearchProgressTests(unittest.TestCase):
         payload = publish.call_args.args[1]
         self.assertEqual(payload["message_id"], "10")
         self.assertEqual(payload["research_task_id"], "t1")
+
+
+class PersistResearchSubagentContentsTests(unittest.TestCase):
+    """persist_research_subagent_contents（运行期落库，阶段 2 权威源补缺）。"""
+
+    def setUp(self):
+        # publish_event_sync 不应被调用（运行期落库禁止广播 MESSAGE_UPDATED，
+        # 防前端快照校对风暴）
+        p = mock.patch.multiple(_WB, publish_event_sync=mock.DEFAULT).start()
+        self.publish = p["publish_event_sync"]
+        self.addCleanup(mock.patch.stopall)
+
+    def _patch_models(self, task, msg=None):
+        qs = mock.Mock()
+        qs.filter.return_value = qs
+        qs.first.return_value = task
+        msg_cls = mock.Mock()
+        msg_cls.objects.filter.return_value.first.return_value = msg
+        chat_models = mock.Mock()
+        chat_models.get_model.return_value = msg_cls
+        mock.patch("Django_xm.apps.research.models.ResearchTask.objects", qs).start()
+        mock.patch("django.apps.apps", chat_models).start()
+
+    def test_merges_single_thread_entry(self):
+        """单键合并：其余线程条目保留，同线程快照覆盖（全量语义）。"""
+        task = _make_task(subagent_contents={"sa0": {"content": "旧线程", "reasoning_content": ""}})
+        self._patch_models(task, msg=None)
+        persist_research_subagent_contents("t1", "sa1", "累积正文", "思考")
+        self.assertEqual(
+            task.subagent_contents,
+            {
+                "sa0": {"content": "旧线程", "reasoning_content": ""},
+                "sa1": {"content": "累积正文", "reasoning_content": "思考"},
+            },
+        )
+        task.save.assert_called_once()
+
+    def test_idempotent_when_snapshot_unchanged(self):
+        """快照未变化 → 不触发 save（同频合流幂等）。"""
+        task = _make_task(subagent_contents={"sa1": {"content": "累积正文", "reasoning_content": "思考"}})
+        self._patch_models(task, msg=None)
+        persist_research_subagent_contents("t1", "sa1", "累积正文", "思考")
+        task.save.assert_not_called()
+
+    def test_syncs_chat_message(self):
+        """关联 ChatMessage.subagent_contents 同步落库。"""
+        task = _make_task()
+        msg = mock.Mock()
+        msg.subagent_contents = {}
+        self._patch_models(task, msg=msg)
+        persist_research_subagent_contents("t1", "sa1", "累积正文", "")
+        self.assertEqual(msg.subagent_contents, {"sa1": {"content": "累积正文", "reasoning_content": ""}})
+        msg.save.assert_called_once()
+
+    def test_no_broadcast(self):
+        """运行期落库不广播 MESSAGE_UPDATED（挂起/完成落库点专用）。"""
+        task = _make_task()
+        self._patch_models(task, msg=None)
+        persist_research_subagent_contents("t1", "sa1", "正文", "")
+        self.publish.assert_not_called()
+
+    def test_skips_without_thread_ids(self):
+        """缺 task_id / subagent_thread_id → 直接返回。"""
+        task = _make_task()
+        self._patch_models(task, msg=None)
+        persist_research_subagent_contents("", "sa1", "正文", "")
+        persist_research_subagent_contents("t1", "", "正文", "")
+        task.save.assert_not_called()
 
 
 if __name__ == "__main__":

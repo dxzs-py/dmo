@@ -1,231 +1,152 @@
 """
-检索器模块
-提供统一的检索器接口，支持多种检索策略
-包含向量检索降级策略：向量检索失败 → PostgreSQL 全文关键词检索 → 空结果
+检索器工厂模块（B-3 拆分后的单一职责）
+
+只负责"VectorStore → BaseRetriever"的构建策略：similarity/mmr/score_threshold
+三种检索类型 + Reranker 增强 + MultiQuery 叠加。
+
+职责拆分对应关系（B-3/A-4，消费点已同步）：
+- 降级检索三件套 → services/keyword_fallback.py（is_embedding_error /
+  keyword_search_fallback / record_degradation_metric / build_retrieval_grams）
+- Agent 检索工具层 → services/retriever_tool.py（SyncSafeRetrieverTool /
+  create_retriever_tool / QueryIntentClassifier）
 """
 
-import asyncio
-import json
-import re
-import time
-from typing import Any, ClassVar, Literal
+from functools import lru_cache
+from typing import Any, Literal
 
-from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.retrievers import BaseRetriever
-from langchain_core.tools import BaseTool
 from langchain_core.vectorstores import VectorStore
-from pydantic import BaseModel, Field
 
 from Django_xm.apps.core.logging_utils import get_logger
-from Django_xm.common.messages import content_to_str
 from Django_xm.apps.knowledge.config import settings
 
 logger = get_logger(__name__)
 
 SearchType = Literal["similarity", "mmr", "similarity_score_threshold"]
 
-# ── 降级检索相关 ──────────────────────────────────────────────────────────────
 
-_EMBEDDING_ERROR_PATTERNS = (
-    "ConnectionError",
-    "connect",
-    "timeout",
-    "refused",
-    "embedding",
-    "ollama",
-    "insufficient_balance",
-    "403",
-    "503",
-    "ConnectionRefusedError",
-    "MaxRetriesError",
-)
+# ── 用户知识库检索器/向量库统一门面（B-1 编排收敛，D-3 参数映射收口） ────────────
 
 
-def _is_embedding_error(exc: Exception) -> bool:
-    """判断异常是否为 Embedding 服务不可用导致"""
-    exc_name = type(exc).__name__
-    exc_msg = str(exc).lower()
-    return any(pat.lower() in exc_name.lower() or pat.lower() in exc_msg for pat in _EMBEDDING_ERROR_PATTERNS)
+def load_user_vector_store(user_id: int, index_name: str):
+    """按 (user_id, 知识库名) 构建就绪向量库上下文（B-1 底层单源）。
 
-
-# ── 关键词降级检索（CJK 友好） ────────────────────────────────────────────────
-
-# 连续 CJK 字符片段（含扩展 A 区）或 ASCII 词
-_GRAM_TOKEN_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]+|[A-Za-z0-9_]+")
-
-# CJK 2-gram：中文无空格，单字召回噪声过大，3-gram 又会显著漏召回
-_CJK_GRAM_SIZE = 2
-_MAX_GRAMS = 16
-
-
-def _build_retrieval_grams(query: str, max_grams: int = _MAX_GRAMS) -> list[str]:
-    """把查询拆成适合 PostgreSQL 子串匹配的检索单元。
-
-    - 连续 CJK 片段切为 2-gram：无需分词词典即可覆盖中文，兼顾精度与召回
-    - ASCII 词整词保留（长度 >= 2）：避免 "SQL" 被切成 "SQ"/"QL" 造成误召回
-    - 按 gram 长度降序（长 gram 区分度更高）去重后截断
+    编排：views_utils.build_user_index_name（D-1 命名单源）→ index_exists →
+    load_metadata → required_dim 探测 → get_embeddings → load_index。
 
     Args:
-        query: 用户查询文本
-        max_grams: 最多保留的 gram 数量，防止超长查询导致 SQL 开销失控
+        user_id: 用户 ID
+        index_name: 原始知识库名（非全名）
 
     Returns:
-        gram 列表；查询不含有效字符时返回空列表
+        (vector_store, metadata, required_dim, reload_vector_store) 四元组；
+        reload_vector_store 为维度自愈重建回调（闭包复用同一 manager/embeddings，
+        语义与原调用方内联 lambda 等价）。索引不存在或加载失败返回 None
+        （错误呈现形态由调用方决定：view 抛 4xx / chat 返回 None）
     """
-    grams: list[str] = []
-
-    for token in _GRAM_TOKEN_RE.findall(query or ""):
-        if token.isascii():
-            if len(token) >= 2:
-                grams.append(token.lower())
-        elif len(token) < _CJK_GRAM_SIZE:
-            grams.append(token)
-        else:
-            grams.extend(token[i : i + _CJK_GRAM_SIZE] for i in range(len(token) - _CJK_GRAM_SIZE + 1))
-
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for gram in sorted(grams, key=len, reverse=True):
-        if gram not in seen:
-            seen.add(gram)
-            ordered.append(gram)
-
-    return ordered[:max_grams]
-
-
-# 中文全文检索降级 SQL。
-# 关键点：不能使用 to_tsvector/to_tsquery('simple', ...) —— PostgreSQL 的 simple
-# 配置不做中文分词，整段连续中文会被解析成**单一词元**，导致任何中文子串查询都无法命中
-# （实测 30 题中文评测集召回率为 0）。此处改为 unnest gram 数组后做 ILIKE 子串计数，
-# 以命中 gram 数排序，命中数相同者优先短文档（主题更集中）。
-_KEYWORD_FALLBACK_SQL = """
-WITH grams AS (
-    SELECT unnest(%s::text[]) AS gram
-)
-SELECT e.document,
-       e.cmetadata,
-       m.hit_count
-  FROM {embedding_table} e
-  JOIN {collection_table} c ON e.collection_id = c.uuid
- CROSS JOIN LATERAL (
-       SELECT count(*) AS hit_count
-         FROM grams g
-        WHERE e.document ILIKE '%%' || g.gram || '%%'
- ) m
- WHERE c.name = %s
-   AND m.hit_count > 0
- ORDER BY m.hit_count DESC, length(e.document) ASC
- LIMIT %s
-"""
-
-
-def _keyword_search_fallback(query: str, collection_name: str, k: int = 4) -> list[Document]:
-    """PostgreSQL 关键词降级检索（Embedding 服务不可用时的兜底路径）
-
-    以字符 2-gram 子串匹配替代 PostgreSQL 全文检索，从而支持中文查询。
-    代价是失去 GIN 索引支持、退化为顺序扫描；作为兜底路径可接受。
-    如需恢复索引加速，可在 PostgreSQL 侧引入 zhparser / pg_jieba 分词扩展或
-    pg_bigm / pg_trgm 三元组索引（见 README Roadmap）。
-
-    Args:
-        query: 用户查询文本
-        collection_name: PGVector collection 名称
-        k: 返回文档数量
-
-    Returns:
-        Document 列表，metadata 含 degraded=True、degraded_score（∈[0,1] 的 gram 命中率）
-        与 degraded_hits（命中 gram 数）；无可检索内容或出错时返回空列表
-    """
-    from django.db import connections
-
-    from Django_xm.apps.knowledge.vector_store.pgvector_backend import (
-        _check_table_exists,
-        _get_collection_table_name,
-        _get_embedding_table_name,
-        _quote_identifier,
-    )
-
-    grams = _build_retrieval_grams(query)
-    if not grams:
-        logger.warning("降级关键词检索: 查询未提取到有效检索单元，返回空结果")
-        return []
-
-    collection_table = _get_collection_table_name()
-    embedding_table = _get_embedding_table_name()
-    # 使用 _quote_identifier 包装表名，防止 SQL 注入与保留字冲突
-    collection_table_quoted = _quote_identifier(collection_table)
-    embedding_table_quoted = _quote_identifier(embedding_table)
-
-    if not _check_table_exists(collection_table) or not _check_table_exists(embedding_table):
-        logger.warning("降级关键词检索: PGVector 表不存在，返回空结果")
-        return []
-
-    sql = _KEYWORD_FALLBACK_SQL.format(
-        embedding_table=embedding_table_quoted,
-        collection_table=collection_table_quoted,
-    )
+    from ..views_utils import build_user_index_name
+    from .embedding_service import get_embeddings
+    from .index_service import IndexManager
 
     try:
-        with connections["default"].cursor() as cursor:
-            # 表名来自固定内部函数并经 _quote_identifier 白名单包装（非用户输入），
-            # 查询值（grams/collection_name/k）已全部 %s 参数化
-            cursor.execute(sql, [grams, collection_name, k])
-            rows = cursor.fetchall()
+        user_index_name = build_user_index_name(user_id, index_name)
+        manager = IndexManager()
+        # 3.2：归属校验随 user_id 下沉——即使索引名被外部构造为他人前缀
+        # （user_{other}_xxx），此处也会被 index_exists/load_metadata 拒绝
+        if not manager.index_exists(user_index_name, user_id=user_id):
+            logger.warning(f"load_user_vector_store: 索引不存在: {user_index_name}")
+            return None
+        metadata = manager.load_metadata(user_index_name, user_id=user_id)
+        required_dim = metadata.get("embedding_dimension") if metadata else None
+        embeddings = get_embeddings(required_dimension=required_dim)
+        vector_store = manager.load_index(user_index_name, embeddings)
 
-        results: list[Document] = []
-        for document, cmetadata, hit_count in rows:
-            # cmetadata 可能已是 dict，也可能是未反序列化的 JSON 字符串
-            # （取决于驱动对 json/jsonb 列的解析行为），两种形态都要兼容。
-            # 历史实现因 tsquery 从不命中、循环体从未执行，此处一直未被覆盖。
-            if isinstance(cmetadata, str):
-                try:
-                    cmetadata = json.loads(cmetadata)
-                except ValueError:
-                    logger.warning("降级关键词检索: cmetadata 反序列化失败，按空元数据处理")
-                    cmetadata = {}
-            metadata = dict(cmetadata) if isinstance(cmetadata, dict) else {}
-            metadata["degraded"] = True
-            metadata["degraded_hits"] = int(hit_count)
-            metadata["degraded_score"] = round(int(hit_count) / len(grams), 4)
-            results.append(Document(page_content=document, metadata=metadata))
+        def reload_vector_store():
+            return manager.load_index(user_index_name, embeddings)
 
-        logger.info(
-            f"降级关键词检索: query='{query[:50]}', collection={collection_name}, "
-            f"grams={len(grams)}, 返回 {len(results)} 个文档"
+        return vector_store, metadata, required_dim, reload_vector_store
+    except Exception:
+        logger.exception("load_user_vector_store: 向量库构建失败")
+        return None
+
+
+def build_user_retriever(
+    user_id: int,
+    index_name: str,
+    k: int | None = None,
+    mode: str = "precise",
+    search_type: SearchType | None = None,
+) -> BaseRetriever | None:
+    """按 (user_id, 知识库名) 构建就绪检索器（B-1 单一门面）。
+
+    此前同一编排序列散布 4 处（views_rag 两处 / kb_service / chat get_rag_retriever），
+    收敛后 view/chat 只解析参数与呈现结果。comprehensive 模式的检索器参数映射
+    （MMR + fetch_k + MultiQuery 叠加，原 chat 侧域知识外溢 D-3）一并收口。
+
+    Reranker 接线（B8/D1）：FlashRank 重排序经 settings.retriever_use_reranker
+    （默认 True）统一控制，precise/comprehensive 两分支均读取并透传给
+    create_retriever——chat 工具链路（get_rag_retriever → 本函数）接线后自动生效。
+
+    Args:
+        user_id: 用户 ID
+        index_name: 原始知识库名（非全名）
+        k: precise 模式返回文档数，None 时走 settings.retriever_k
+        mode: "precise" | "comprehensive"
+        search_type: precise 模式检索类型，None 时走 settings 默认
+
+    Returns:
+        BaseRetriever；索引不存在/为空/构建失败返回 None（调用方决定错误呈现）
+    """
+    loaded = load_user_vector_store(user_id, index_name)
+    if loaded is None:
+        return None
+    vector_store, _metadata, _required_dim, _reload = loaded
+
+    if mode == "comprehensive":
+        comp_k = settings.retriever_comprehensive_k
+        comp_fetch_k = max(comp_k * 3, 30)
+        retriever = create_retriever(
+            vector_store,
+            k=comp_k,
+            search_type="mmr",
+            fetch_k=comp_fetch_k,
+            use_reranker=settings.retriever_use_reranker,
         )
-        return results
+        if settings.retriever_use_multi_query:
+            try:
+                # A-5：helper LLM 与 get_chat_model 均走 knowledge.config 门面
+                from Django_xm.apps.knowledge.config import get_chat_model, get_helper_model
 
-    except Exception as e:
-        logger.warning(f"降级关键词检索也失败，返回空结果: {e}")
-        return []
+                mq_llm = get_helper_model() or get_chat_model(streaming=False)
+                retriever = create_multi_query_retriever(retriever, llm=mq_llm, include_original=True)
+                logger.info(f"comprehensive 检索器已叠加 MultiQuery (k={comp_k})")
+            except Exception as e:
+                logger.warning(f"MultiQuery 叠加失败，使用基础 MMR 检索器: {e}")
+        logger.info(
+            f"创建 comprehensive 检索器: k={comp_k}, search_type=mmr, "
+            f"fetch_k={comp_fetch_k}, use_reranker={settings.retriever_use_reranker}"
+        )
+        return retriever
 
-
-def _record_degradation_metric(collection_name: str, error: Exception) -> None:
-    """在 IndexMetadata.metadata_json 中记录降级次数"""
-    try:
-        from Django_xm.apps.knowledge.models import IndexMetadata
-
-        meta = IndexMetadata.objects.filter(name=collection_name).first()
-        if meta is None:
-            return
-
-        mj = meta.metadata_json or {}
-        degradation = mj.get("degradation", {})
-        degradation["total_count"] = degradation.get("total_count", 0) + 1
-        degradation["last_error"] = str(error)[:500]
-        degradation["last_time"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        mj["degradation"] = degradation
-        meta.metadata_json = mj
-        meta.save(update_fields=["metadata_json", "updated_at"])
-    except Exception as e:
-        logger.debug(f"记录降级指标失败（可忽略）: {e}")
-
+    return create_retriever(
+        vector_store,
+        k=k,
+        search_type=search_type,
+        use_reranker=settings.retriever_use_reranker,
+    )
 
 # ── 检索器创建 ────────────────────────────────────────────────────────────────
 
+# 3.6 实测：langchain-community 0.4.x 顶层 __init__ 不再导出 FlashRank 重排器
+# （旧顶层名 FlashRankReranker 已不存在），必须从子模块导入；类名为
+# FlashrankRerank，构造字段为 model（pydantic extra="forbid"，传 model_name
+# 会 ValidationError）。别名保持项目内既有调用名不变——否则 FLASHRANK_AVAILABLE
+# 恒 False，reranker 全链路静默禁用（settings.retriever_use_reranker 成死配置）。
 try:
-    from langchain_community.document_compressors import FlashRankReranker
+    from langchain_community.document_compressors.flashrank_rerank import (
+        FlashrankRerank as FlashRankReranker,
+    )
 
     FLASHRANK_AVAILABLE = True
 except ImportError:
@@ -250,7 +171,10 @@ def create_retriever(
 ) -> BaseRetriever:
     search_type: str = search_type or settings.retriever_search_type
     k = k or settings.retriever_k
-    score_threshold = score_threshold or settings.retriever_score_threshold
+    # B15：显式 is not None 判断——score_threshold=0.0 是合法显式取值
+    # （不筛分数），`or` 兜底会把它误替换为全局默认阈值
+    if score_threshold is None:
+        score_threshold = settings.retriever_score_threshold
     fetch_k = fetch_k or settings.retriever_fetch_k
 
     logger.info(f"创建检索器: search_type={search_type}, k={k}, use_reranker={use_reranker}")
@@ -272,7 +196,9 @@ def create_retriever(
         logger.info("检索器创建成功")
 
         if use_reranker:
-            reranker = create_reranker()
+            # 3.1：top_n 显式接线 settings.rag_rerank_top_n——无参调用会落到
+            # create_reranker 的默认 5，配置项成为死配置
+            reranker = create_reranker(top_n=settings.rag_rerank_top_n)
             if reranker is not None:
                 retriever = create_reranking_retriever(retriever, reranker)
                 logger.info("检索器已添加 Reranker 增强")
@@ -283,17 +209,52 @@ def create_retriever(
         raise
 
 
+@lru_cache(maxsize=8)
+def get_flashrank_reranker(model_name: str, top_n: int):
+    """FlashRank 重排器进程级缓存单例（RP-10）
+
+    原实现每次 Level 1 降级 / 评估路径都重新构造 FlashRankReranker——构造含
+    ONNX 模型加载（百 MB 量级磁盘读 + 内存加载），同进程本可零成本复用。
+
+    缓存键为 (model_name, top_n)：top_n 烤在实例上，不能仅按模型名缓存
+    （否则第二个 top_n 不同的消费者拿到错值）；生产两条路径的 top_n 各自
+    恒定（settings.rag_rerank_top_n / evaluate_rag），maxsize=8 有界。
+
+    不违反阶段 1 不变量：FlashRank 为纯 CPU ONNX 推理对象，不绑事件循环、
+    非 async client（3.5 审计 RP-10 已论证）。构造失败不缓存（lru_cache 不
+    缓存异常），调用方失败降级路径保持既有行为。
+    """
+    # 构造字段为 model（0.4.x FlashrankRerank pydantic 字段，extra="forbid"）；
+    # 形参名 model_name 保持项目内语义（模型标识）不变
+    reranker = FlashRankReranker(model=model_name, top_n=top_n)
+    logger.info(f"FlashRankReranker 创建成功: model={model_name}, top_n={top_n}")
+    return reranker
+
+
+def _emit_rerank_degradation(reason: str) -> None:
+    """rerank 不可用降级留痕（3.8）：warning 升级为 error 级结构化日志。
+
+    FlashRank 构造失败是**静默降级**（检索继续，重排序缺失），旧实现只打
+    warning，运维不可见。本函数以 ``degradation=rerank_unavailable`` 结构化
+    关键字升级为 error 级留痕，供日志采集/告警规则捕获；前端感知面：
+    strict_rag 的 sources payload 分数由检索内核透出，不受本降级影响，
+    重排序缺失表现为相关性排序质量下降。
+
+    Args:
+        reason: 降级原因（依赖缺失 / 构造异常 / 压缩检索器不可用等）
+    """
+    logger.error(f"pipeline=retrieval_service degradation=rerank_unavailable reason={reason}")
+
+
 def create_reranker(model_name: str = "ms-marco-MiniLM-L-12-v2", top_n: int = 5):
     if not FLASHRANK_AVAILABLE:
-        logger.warning("FlashRankReranker 不可用，请安装 flashrank 包")
+        _emit_rerank_degradation("flashrank package not installed")
         return None
 
     try:
-        reranker = FlashRankReranker(model_name=model_name, top_n=top_n)
-        logger.info(f"FlashRankReranker 创建成功: model={model_name}, top_n={top_n}")
-        return reranker
+        return get_flashrank_reranker(model_name, top_n)
     except Exception as e:
-        logger.warning(f"FlashRankReranker 创建失败: {e}")
+        _emit_rerank_degradation(f"reranker construction failed: {e}")
         return None
 
 
@@ -302,12 +263,14 @@ def create_reranking_retriever(
     reranker=None,
 ) -> BaseRetriever:
     if reranker is None:
-        reranker = create_reranker()
+        # 3.1：同 create_retriever——默认重排器 top_n 显式走 settings 配置
+        reranker = create_reranker(top_n=settings.rag_rerank_top_n)
         if reranker is None:
             logger.warning("Reranker 不可用，返回基础检索器")
             return base_retriever
 
     if not ADVANCED_RETRIEVERS_AVAILABLE:
+        _emit_rerank_degradation("ContextualCompressionRetriever unavailable")
         logger.warning("ContextualCompressionRetriever 不可用，返回基础检索器")
         return base_retriever
 
@@ -319,6 +282,7 @@ def create_reranking_retriever(
         logger.info("Reranking 检索器创建成功")
         return compression_retriever
     except Exception as e:
+        _emit_rerank_degradation(f"compression retriever construction failed: {e}")
         logger.warning(f"创建 Reranking 检索器失败: {e}，返回基础检索器")
         return base_retriever
 
@@ -396,635 +360,3 @@ def create_multi_query_retriever(
     except Exception as e:
         logger.warning(f"MultiQueryRetriever 创建失败: {e}，返回基础检索器")
         return base_retriever
-
-
-class _RetrieverToolInput(BaseModel):
-    query: str = Field(description="搜索查询")
-    retrieval_mode: str | None = Field(default=None, description="检索模式: auto/precise/comprehensive")
-
-
-# 模块级常量：避免 Pydantic BaseModel 将 _ 前缀属性转为 ModelPrivateAttr
-# 导致 @classmethod 中 cls._XXX 返回 ModelPrivateAttr 对象而非实际值
-KB_RESULT_INSTRUCTION = (
-    "【知识库检索结果 - 以下为真实检索到的知识库内容，你已成功访问知识库】\n"
-    "【回答规则 - 你必须遵守：】\n"
-    "1. 以下「检索内容」部分就是知识库的真实数据，绝不允许声称无法访问知识库或知识库为空\n"
-    "2. 你必须基于「检索内容」回答用户问题，忠实于检索内容，绝不允许编造或推断\n"
-    "3. 提取与用户问题相关的核心要点，每个要点必须保留其领域上下文\n"
-    "4. 如果用户要求总结知识库内容，应给出完整的主题概览\n"
-    "5. 绝对不要输出：意图分类JSON、检索查询语句、替代问题、中间处理过程、元数据\n"
-    "6. 如果检索内容确实与问题无关，直接告知用户\n"
-    "7. 回答末尾标注「如需了解特定主题的详细信息，请告诉我」\n"
-    "---检索内容开始---\n"
-)
-MAX_DOCS_IN_RESULT = 10
-MAX_DOC_CONTENT_LENGTH = 800
-
-
-class SyncSafeRetrieverTool(BaseTool):
-    name: str = "knowledge_base"
-    description: str = "搜索知识库中的相关信息。当需要回答关于文档内容的问题时使用此工具。输入应该是一个搜索查询。"
-    args_schema: type[BaseModel] = _RetrieverToolInput
-    retriever: BaseRetriever | None = None
-    comprehensive_retriever: BaseRetriever | None = None
-    retrieval_mode: str = "auto"
-    llm: Any | None = None
-    kb_name: str = ""
-    kb_description: str = ""
-    collection_names: list[str] = Field(default_factory=list)
-
-    def _build_kb_context(self) -> str:
-        """构建知识库上下文前缀，注入到工具返回结果中"""
-        parts = []
-        if self.kb_name:
-            parts.append(f"知识库名称: {self.kb_name}")
-        if self.kb_description:
-            parts.append(f"知识库描述: {self.kb_description}")
-        if parts:
-            return "【知识库信息】\n" + "\n".join(parts) + "\n\n"
-        return ""
-
-    def _degrade_knowledge_search(self, query: str) -> str:
-        """检索无结果时的知识库降级：加载全库文档走 UnifiedRagPipeline。
-
-        与 attachment_rag_search 共享同一 5 步检索管道，
-        降级仅在初始检索无结果时触发。
-        """
-        if not self.collection_names:
-            return "知识库中未找到与您问题相关的信息。"
-
-        from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline, load_kb_documents
-
-        documents, total_tokens = load_kb_documents(self.collection_names)
-        pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-        return pipeline.search(query, documents, total_tokens)
-
-    def _run(self, query: str, retrieval_mode: str | None = None) -> str:
-        mode = retrieval_mode or self.retrieval_mode
-
-        if mode == "auto":
-            mode = self._classify_intent(query)
-
-        if mode == "comprehensive":
-            return self._run_comprehensive(query)
-        return self._run_precise(query)
-
-    async def _arun(self, query: str, retrieval_mode: str | None = None) -> str:
-        mode = retrieval_mode or self.retrieval_mode
-
-        if mode == "auto":
-            mode = await self._classify_intent_async(query)
-
-        if mode == "comprehensive":
-            return await self._arun_comprehensive(query)
-        return await asyncio.to_thread(self._run_precise, query)
-
-    def _classify_intent(self, query: str) -> str:
-        try:
-            classifier = QueryIntentClassifier(llm=self.llm)
-            return classifier.classify_sync(query)
-        except Exception as e:
-            logger.warning(f"意图分类异常，回退到 precise: {e}")
-            return "precise"
-
-    async def _classify_intent_async(self, query: str) -> str:
-        try:
-            classifier = QueryIntentClassifier(llm=self.llm)
-            return await classifier.classify(query)
-        except Exception as e:
-            logger.warning(f"意图分类异常，回退到 precise: {e}")
-            return "precise"
-
-    def _run_precise(self, query: str) -> str:
-        from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
-
-        pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-        result = pipeline.search_with_retriever(
-            retriever=self.retriever,
-            query=query,
-            vector_store=None,  # PGVector can't do InMemoryVectorStore keyword search
-            documents=None,
-            total_token_count=0,
-        )
-        # search_with_retriever returns formatted output; if it's the "no results" message, try degradation
-        if "未找到" in result or "未检索到" in result or "暂无文档" in result:
-            # Try to get docs from retriever for cleaning
-            try:
-                docs = self.retriever.invoke(query)
-                cleaned = self._clean_docs(docs)
-                if cleaned:
-                    logger.info(f"precise 检索: query='{query[:50]}...', 返回 {len(cleaned)} 个文档 (Pipeline level=0)")
-                    return self._build_kb_context() + KB_RESULT_INSTRUCTION + self._format_docs(cleaned)
-            except Exception as e:
-                logger.debug("precise 检索回退清理失败，进入降级检索: %s", e)
-            return self._degrade_knowledge_search(query)
-        logger.info(f"precise 检索 Pipeline: query='{query[:50]}...'")
-        return self._build_kb_context() + KB_RESULT_INSTRUCTION + result
-
-    def _run_comprehensive(self, query: str) -> str:
-        from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
-
-        retriever = self.comprehensive_retriever or self.retriever
-        pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-        result = pipeline.search_with_retriever(
-            retriever=retriever,
-            query=query,
-            vector_store=None,
-            documents=None,
-            total_token_count=0,
-        )
-        if "未找到" in result or "未检索到" in result or "暂无文档" in result:
-            try:
-                docs = retriever.invoke(query)
-                cleaned = self._clean_docs(docs)
-                if cleaned:
-                    logger.info(
-                        f"comprehensive 检索: query='{query[:50]}...', "
-                        f"返回 {len(cleaned)} 个文档 (Pipeline level=0)"
-                    )
-                    combiner = MapReduceDocCombiner(llm=self.llm)
-                    combined = combiner.combine_sync(cleaned, query, llm=self.llm)
-                    return self._build_kb_context() + KB_RESULT_INSTRUCTION + combined
-            except Exception as e:
-                logger.debug("comprehensive 检索回退清理失败，进入降级检索: %s", e)
-            return self._degrade_knowledge_search(query)
-        logger.info(f"comprehensive 检索 Pipeline: query='{query[:50]}...'")
-        return self._build_kb_context() + KB_RESULT_INSTRUCTION + result
-
-    async def _arun_comprehensive(self, query: str) -> str:
-        import asyncio
-
-        from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
-
-        retriever = self.comprehensive_retriever or self.retriever
-        pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-        result = pipeline.search_with_retriever(
-            retriever=retriever,
-            query=query,
-            vector_store=None,
-            documents=None,
-            total_token_count=0,
-        )
-        if "未找到" in result or "未检索到" in result or "暂无文档" in result:
-            try:
-                try:
-                    docs = await retriever.ainvoke(query)
-                except Exception:
-                    docs = await asyncio.to_thread(retriever.invoke, query)
-                cleaned = self._clean_docs(docs)
-                if cleaned:
-                    logger.info(
-                        f"comprehensive 异步检索: query='{query[:50]}...', "
-                        f"返回 {len(cleaned)} 个文档 (Pipeline level=0)"
-                    )
-                    combiner = MapReduceDocCombiner(llm=self.llm)
-                    combined = await combiner.combine(cleaned, query, llm=self.llm)
-                    return self._build_kb_context() + KB_RESULT_INSTRUCTION + combined
-            except Exception as e:
-                logger.debug("comprehensive 异步检索回退清理失败，进入降级检索: %s", e)
-            return self._degrade_knowledge_search(query)
-        logger.info(f"comprehensive 异步检索 Pipeline: query='{query[:50]}...'")
-        return self._build_kb_context() + KB_RESULT_INSTRUCTION + result
-
-    @staticmethod
-    def _clean_docs(docs: list[Document]) -> list[Document]:
-        """清理检索结果中的非文档内容
-
-        过滤两类不应出现在检索结果中的内容：
-        1. 意图分类等内部 JSON 数据（辅助 LLM 输出被包装为 Document）
-        2. MultiQuery 生成的替代查询（短问题文本被包装为 Document）
-
-        不需要在此兜底。
-        """
-        cleaned = []
-        for doc in docs:
-            content = doc.page_content
-            if not content or not content.strip():
-                continue
-            # 过滤意图分类等内部 JSON 数据
-            if re.match(r'^\s*\{["\'].*["\']\s*:', content) and len(content) < 300:
-                try:
-                    json.loads(content)
-                    continue
-                except (json.JSONDecodeError, ValueError):
-                    pass
-            # 过滤 MultiQuery 生成的替代查询（短问题文本，以问号结尾）
-            stripped = content.strip()
-            if len(stripped) < 150 and (stripped.endswith(("？", "?"))):
-                continue
-            cleaned.append(doc)
-        if len(cleaned) != len(docs):
-            logger.debug(f"文档清理: {len(docs)} -> {len(cleaned)}（过滤了 {len(docs) - len(cleaned)} 个非文档内容）")
-        return cleaned
-
-    @classmethod
-    def _format_docs(cls, docs: list[Document]) -> str:
-        if not docs:
-            return "未找到相关文档。"
-        # 限制文档数量和单文档长度，避免上下文过长导致 LLM 原文复述
-        limited_docs = docs[:MAX_DOCS_IN_RESULT]
-        formatted = []
-        for i, doc in enumerate(limited_docs, 1):
-            source = doc.metadata.get("source", "未知来源")
-            content = doc.page_content
-            if len(content) > MAX_DOC_CONTENT_LENGTH:
-                content = content[:MAX_DOC_CONTENT_LENGTH].rstrip() + "...[内容已截断]"
-            formatted.append(f"[{i}] (来源: {source})\n{content}")
-        if len(docs) > MAX_DOCS_IN_RESULT:
-            formatted.append(f"\n[注: 共检索到 {len(docs)} 个文档，已展示前 {MAX_DOCS_IN_RESULT} 个最相关文档]")
-        return "\n\n".join(formatted)
-
-
-def create_retriever_tool(
-    retriever: BaseRetriever,
-    name: str = "knowledge_base",
-    description: str | None = None,
-    retrieval_mode: str = "auto",
-    comprehensive_retriever: BaseRetriever | None = None,
-    llm: Any | None = None,
-    kb_name: str = "",
-    kb_description: str = "",
-    collection_names: list[str] | None = None,
-) -> BaseTool:
-    if description is None:
-        description = (
-            f"搜索 {name} 知识库中的相关信息。当需要回答关于文档内容的问题时使用此工具。输入应该是一个搜索查询。"
-        )
-
-    logger.info(f"创建检索器工具: {name}, retrieval_mode={retrieval_mode}")
-
-    try:
-        tool = SyncSafeRetrieverTool(
-            retriever=retriever,
-            name=name,
-            description=description,
-            retrieval_mode=retrieval_mode,
-            comprehensive_retriever=comprehensive_retriever,
-            llm=llm,
-            kb_name=kb_name,
-            kb_description=kb_description,
-            collection_names=collection_names or [],
-        )
-        logger.info(f"检索器工具创建成功（SyncSafe 模式, retrieval_mode={retrieval_mode}）")
-        return tool
-    except Exception:
-        logger.exception("创建检索器工具失败")
-        raise
-
-
-_INTENT_CLASSIFICATION_PROMPT = """分析用户查询的意图类型：
-
-1. precise - 精准查找：需要定位特定文档/数据/事实，答案通常在1-2个文档中。特征：包含具体名称、编号、日期等
-2. comprehensive - 全局分析：需要广泛收集信息，答案分布在多个文档中。特征：包含"所有"、"全部"、"分析"、"总结"、\
-"对比"、"概述"等词
-
-用户查询: {query}
-
-仅返回 JSON: {{"intent": "precise", "confidence": 0.9}} 或 {{"intent": "comprehensive", "confidence": 0.9}}"""
-
-
-class QueryIntentClassifier:
-    _cache: ClassVar[dict] = {}
-    _cache_ttl: int = 60
-
-    def __init__(self, llm: BaseChatModel | None = None):
-        self._llm = llm
-
-    def _get_llm(self) -> BaseChatModel | None:
-        if self._llm is not None:
-            return self._llm
-        try:
-            from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
-
-            llm = get_helper_model()
-            if llm is not None:
-                return llm
-            from Django_xm.apps.knowledge.config import get_chat_model
-
-            return get_chat_model(streaming=False)
-        except Exception:
-            return None
-
-    def _parse_intent(self, response_text: Any) -> str:
-        response_text = response_text if isinstance(response_text, str) else str(response_text)
-        match = re.search(r"\{[^}]+\}", response_text)
-        if match:
-            try:
-                data = json.loads(match.group())
-                intent = data.get("intent", "precise")
-                if intent in ("precise", "comprehensive"):
-                    return intent
-            except (json.JSONDecodeError, KeyError):
-                pass
-        return "precise"
-
-    def _check_cache(self, query: str) -> str | None:
-        now = time.time()
-        cached = self._cache.get(query)
-        if cached and (now - cached["ts"]) < self._cache_ttl:
-            return cached["intent"]
-        return None
-
-    def _set_cache(self, query: str, intent: str) -> None:
-        self._cache[query] = {"intent": intent, "ts": time.time()}
-
-    def classify_sync(self, query: str) -> str:
-        from Django_xm.apps.knowledge.config import settings as app_cfg
-
-        if not app_cfg.retriever_intent_classification_enabled:
-            return "precise"
-
-        cached = self._check_cache(query)
-        if cached is not None:
-            logger.debug(f"意图分类缓存命中: query='{query[:30]}...' -> {cached}")
-            return cached
-
-        llm = self._get_llm()
-        if llm is None:
-            logger.warning("意图分类: LLM 不可用，回退到 precise")
-            return "precise"
-
-        try:
-            from langchain_core.messages import HumanMessage
-
-            prompt = _INTENT_CLASSIFICATION_PROMPT.format(query=query)
-            response = llm.invoke(
-                [HumanMessage(content=prompt)],
-                config={"timeout": 3, "callbacks": [], "tags": ["nostream"]},  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
-            )
-            intent = self._parse_intent(content_to_str(response.content) if hasattr(response, "content") else str(response))
-            self._set_cache(query, intent)
-            logger.info(f"意图分类: query='{query[:50]}...' -> {intent}")
-            return intent
-        except Exception as e:
-            logger.warning(f"意图分类失败，回退到 precise: {e}")
-            return "precise"
-
-    async def classify(self, query: str) -> str:
-        from Django_xm.apps.knowledge.config import settings as app_cfg
-
-        if not app_cfg.retriever_intent_classification_enabled:
-            return "precise"
-
-        cached = self._check_cache(query)
-        if cached is not None:
-            logger.debug(f"意图分类缓存命中: query='{query[:30]}...' -> {cached}")
-            return cached
-
-        llm = self._get_llm()
-        if llm is None:
-            logger.warning("意图分类: LLM 不可用，回退到 precise")
-            return "precise"
-
-        try:
-            import asyncio
-
-            from langchain_core.messages import HumanMessage
-
-            prompt = _INTENT_CLASSIFICATION_PROMPT.format(query=query)
-            response = await asyncio.wait_for(
-                llm.ainvoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]}),  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
-                timeout=3.0,
-            )
-            intent = self._parse_intent(content_to_str(response.content) if hasattr(response, "content") else str(response))
-            self._set_cache(query, intent)
-            logger.info(f"意图分类: query='{query[:50]}...' -> {intent}")
-            return intent
-        except TimeoutError:
-            logger.warning("意图分类超时(3s)，回退到 precise")
-            return "precise"
-        except Exception as e:
-            logger.warning(f"意图分类失败，回退到 precise: {e}")
-            return "precise"
-
-
-_MAP_PROMPT_TEMPLATE = (
-    """从以下文档内容中提取与问题相关的核心要点。
-
-严格规则（必须遵守）：
-- 必须忠实于文档原文，只提取文档中实际出现的信息，绝不允许编造或推断
-- 提取的每个要点必须保留其领域上下文（如文档讲的是 Redis，要点中必须体现 Redis 而非泛化为"管理"或"技术"）
-- 只提取关键信息和数据，不要保留详细示例、代码片段或配置细节
-- 如果问题是概览性的（如"写了什么"、"有哪些内容"、"总结一下"等），应提取文档的核心主题和要点，"""
-    "不要返回 [NO_RELEVANT_INFO]\n"
-    "- 只有当文档内容与问题明确无关（如问的是 Redis，文档讲的是完全不同的领域）时，"
-    "才回复 [NO_RELEVANT_INFO]\n"
-    "\n"
-    "文档内容: {doc}\n"
-    "问题: {question}\n"
-    "核心要点:"
-)
-
-_REDUCE_PROMPT_TEMPLATE = """以下是多个文档片段中提取的相关信息，请合并去重，整理为简洁的内容摘要。
-
-重要规则：
-- 必须忠实于提供的摘要内容，绝不允许编造、推断或泛化
-- 每个主题必须保留其领域上下文（如原文提到 Redis 缓存，不能泛化为"缓存"或"技术"）
-- 只提取核心要点和关键数据，不要保留详细示例、代码片段或配置细节
-- 每个主题用2-3句话概括即可
-- 如果多个文档提到相同内容，只保留一次
-- 输出应该是精炼的摘要，而非原文复述
-- 摘要总长度控制在800字以内，只保留最关键的信息
-
-{summaries}
-
-问题: {question}
-内容摘要:"""
-
-_STUFF_PROMPT_TEMPLATE = """以下是从知识库中检索到的参考资料。请提取其中与问题相关的核心要点，整理为简洁的结构化摘要。
-
-重要规则：
-- 必须忠实于参考资料原文，只提取文档中实际出现的信息，绝不允许编造或推断
-- 提取的每个要点必须保留其领域上下文（如资料讲的是 Redis，要点中必须体现 Redis 而非泛化为"管理"或"技术"）
-- 只提取核心要点和关键数据，不要保留详细示例、代码片段或配置细节
-- 每个主题用2-3句话概括即可
-- 如果资料确实与问题完全无关，仅回复 [NO_RELEVANT_INFO]
-- 输出应该是精炼的摘要，而非原文复述
-
-{context}
-
-问题: {question}
-相关信息摘要:"""
-
-
-class MapReduceDocCombiner:
-    def __init__(self, llm: BaseChatModel | None = None, batch_size: int | None = None):
-        self._llm = llm
-        self._batch_size = batch_size
-
-    def _get_llm(self) -> BaseChatModel | None:
-        if self._llm is not None:
-            return self._llm
-        try:
-            from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
-
-            llm = get_helper_model()
-            if llm is not None:
-                return llm
-            from Django_xm.apps.knowledge.config import get_chat_model
-
-            return get_chat_model(streaming=False)
-        except Exception:
-            return None
-
-    def _get_batch_size(self) -> int:
-        if self._batch_size is not None:
-            return self._batch_size
-        from Django_xm.apps.knowledge.config import settings as app_cfg
-
-        return app_cfg.retriever_map_reduce_batch_size
-
-    def _should_use_map_reduce(self, doc_count: int) -> bool:
-        return doc_count > self._get_batch_size() * 1.5
-
-    def _map_batch_sync(self, docs: list[Document], query: str, llm: BaseChatModel) -> list[str]:
-        from langchain_core.messages import HumanMessage
-
-        results = []
-        for doc in docs:
-            prompt = _MAP_PROMPT_TEMPLATE.format(doc=doc.page_content, question=query)
-            try:
-                response = llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]})  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
-                content = content_to_str(response.content) if hasattr(response, "content") else str(response)
-                results.append(content)
-            except Exception as e:
-                logger.warning(f"Map 阶段文档处理失败: {e}")
-                results.append("")
-        return results
-
-    async def _map_batch_async(self, docs: list[Document], query: str, llm: BaseChatModel) -> list[str]:
-        import asyncio
-
-        from langchain_core.messages import HumanMessage
-
-        tasks = []
-        for doc in docs:
-            prompt = _MAP_PROMPT_TEMPLATE.format(doc=doc.page_content, question=query)
-            tasks.append(llm.ainvoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]}))  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
-        results = []
-        for resp in responses:
-            if isinstance(resp, Exception):
-                logger.warning(f"Map 阶段文档处理失败: {resp}")
-                results.append("")
-            else:
-                content = content_to_str(resp.content) if hasattr(resp, "content") else str(resp)
-                results.append(content)
-        return results
-
-    def combine_sync(self, docs: list[Document], query: str, llm: BaseChatModel | None = None) -> str:
-        from langchain_core.messages import HumanMessage
-
-        if not docs:
-            return "未检索到相关文档"
-
-        llm = llm or self._get_llm()
-        if llm is None:
-            return SyncSafeRetrieverTool._format_docs(docs)
-
-        if not self._should_use_map_reduce(len(docs)):
-            context = SyncSafeRetrieverTool._format_docs(docs)
-            prompt = _STUFF_PROMPT_TEMPLATE.format(context=context, question=query)
-            try:
-                response = llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]})  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
-                result = content_to_str(response.content) if hasattr(response, "content") else str(response)
-                if "[NO_RELEVANT_INFO]" in result:
-                    logger.warning("Stuff 策略 LLM 判定无相关信息，回退到原始文档")
-                    return context
-                if len(result) > 3000:
-                    result = result[:3000].rstrip() + "\n\n[内容已截断，以上为最相关的核心要点摘要]"
-                return result
-            except Exception as e:
-                logger.warning(f"Stuff 策略失败，回退到原始文档: {e}")
-                return context
-
-        batch_size = self._get_batch_size()
-        batches = [docs[i : i + batch_size] for i in range(0, len(docs), batch_size)]
-        logger.info(f"Map-Reduce: {len(docs)} 个文档分为 {len(batches)} 批处理")
-
-        all_summaries = []
-        for i, batch in enumerate(batches):
-            summaries = self._map_batch_sync(batch, query, llm)
-            valid = [s for s in summaries if s and "[NO_RELEVANT_INFO]" not in s and len(s.strip()) > 10]
-            all_summaries.extend(valid)
-            logger.debug(f"Map 批次 {i + 1}/{len(batches)}: {len(valid)} 个有效摘要")
-
-        if not all_summaries:
-            logger.warning(f"Map-Reduce 全部摘要被过滤，回退到原始文档 (docs={len(docs)})")
-            context = SyncSafeRetrieverTool._format_docs(docs)
-            return context[:3000]
-
-        combined = "\n\n---\n\n".join(all_summaries)
-        reduce_prompt = _REDUCE_PROMPT_TEMPLATE.format(summaries=combined, question=query)
-        try:
-            response = llm.invoke([HumanMessage(content=reduce_prompt)], config={"callbacks": [], "tags": ["nostream"]})  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
-            result = content_to_str(response.content) if hasattr(response, "content") else str(response)
-            # 限制 Reduce 结果长度，避免返回过多内容给 LLM
-            if len(result) > 3000:
-                result = result[:3000].rstrip() + "\n\n[内容已截断，以上为最相关的核心要点摘要]"
-            logger.info(f"Map-Reduce 完成: {len(docs)} 文档 -> {len(all_summaries)} 摘要 -> 最终回答")
-            return result
-        except Exception as e:
-            logger.warning(f"Reduce 阶段失败，返回合并摘要: {e}")
-            return combined
-
-    async def combine(self, docs: list[Document], query: str, llm: BaseChatModel | None = None) -> str:
-        from langchain_core.messages import HumanMessage
-
-        if not docs:
-            return "未检索到相关文档"
-
-        llm = llm or self._get_llm()
-        if llm is None:
-            return SyncSafeRetrieverTool._format_docs(docs)
-
-        if not self._should_use_map_reduce(len(docs)):
-            context = SyncSafeRetrieverTool._format_docs(docs)
-            prompt = _STUFF_PROMPT_TEMPLATE.format(context=context, question=query)
-            try:
-                response = await llm.ainvoke(
-                    [HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]}  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
-                )
-                result = content_to_str(response.content) if hasattr(response, "content") else str(response)
-                if "[NO_RELEVANT_INFO]" in result:
-                    logger.warning("Stuff 策略 LLM 判定无相关信息，回退到原始文档")
-                    return context
-                if len(result) > 3000:
-                    result = result[:3000].rstrip() + "\n\n[内容已截断，以上为最相关的核心要点摘要]"
-                return result
-            except Exception as e:
-                logger.warning(f"Stuff 策略失败，回退到原始文档: {e}")
-                return context
-
-        batch_size = self._get_batch_size()
-        batches = [docs[i : i + batch_size] for i in range(0, len(docs), batch_size)]
-        logger.info(f"Map-Reduce: {len(docs)} 个文档分为 {len(batches)} 批处理")
-
-        all_summaries = []
-        for i, batch in enumerate(batches):
-            summaries = await self._map_batch_async(batch, query, llm)
-            valid = [s for s in summaries if s and "[NO_RELEVANT_INFO]" not in s and len(s.strip()) > 10]
-            all_summaries.extend(valid)
-            logger.debug(f"Map 批次 {i + 1}/{len(batches)}: {len(valid)} 个有效摘要")
-
-        if not all_summaries:
-            logger.warning(f"Map-Reduce 全部摘要被过滤，回退到原始文档 (docs={len(docs)})")
-            context = SyncSafeRetrieverTool._format_docs(docs)
-            return context[:1000]
-
-        combined = "\n\n---\n\n".join(all_summaries)
-        reduce_prompt = _REDUCE_PROMPT_TEMPLATE.format(summaries=combined, question=query)
-        try:
-            response = await llm.ainvoke(
-                [HumanMessage(content=reduce_prompt)], config={"callbacks": [], "tags": ["nostream"]}  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
-            )
-            result = content_to_str(response.content) if hasattr(response, "content") else str(response)
-            # 限制 Reduce 结果长度，避免返回过多内容给 LLM
-            if len(result) > 3000:
-                result = result[:3000].rstrip() + "\n\n[内容已截断，以上为最相关的核心要点摘要]"
-            logger.info(f"Map-Reduce 完成: {len(docs)} 文档 -> {len(all_summaries)} 摘要 -> 最终回答")
-            return result
-        except Exception as e:
-            logger.warning(f"Reduce 阶段失败，返回合并摘要: {e}")
-            return combined
-

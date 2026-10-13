@@ -8,7 +8,10 @@
 - CharacterTextSplitter: 简单字符分块
 - MarkdownTextSplitter: Markdown 专用分块
 - TokenTextSplitter: 基于 Token 的分块
-- SemanticChunker: 语义分块（基于嵌入模型相似度）
+
+3.9 死代码清理：SemanticChunker 分支已删除——langchain_text_splitters 未导出
+该类（ImportError 分支恒走 Recursive 回退），生产从未生效且注入隐藏的
+embedding 调用（分块期语义断点检测需逐句 embed）。
 
 元数据增强：
 - chunk_index: 当前分块在文档中的序号
@@ -30,22 +33,13 @@ from langchain_text_splitters import (
     TokenTextSplitter,
 )
 
-try:
-    from langchain_text_splitters import (
-        SemanticChunker,  # type: ignore[attr-defined]  # optional dep, may not exist in installed version
-    )
-
-    SEMANTIC_CHUNKER_AVAILABLE = True
-except ImportError:
-    SEMANTIC_CHUNKER_AVAILABLE = False
-
 from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.knowledge.config import settings
 
 logger = get_logger(__name__)
 
 
-SplitterType = Literal["recursive", "character", "markdown", "token", "semantic"]
+SplitterType = Literal["recursive", "character", "markdown", "token"]
 
 
 def get_text_splitter(
@@ -58,9 +52,6 @@ def get_text_splitter(
     chunk_overlap: int = chunk_overlap or getattr(settings, "chunk_overlap", 200)
 
     logger.debug(f"创建文本分块器: type={splitter_type}, chunk_size={chunk_size}, chunk_overlap={chunk_overlap}")
-
-    if splitter_type == "semantic":
-        return _get_semantic_splitter(chunk_size, chunk_overlap, **kwargs)
 
     if splitter_type == "recursive":
         return RecursiveCharacterTextSplitter(
@@ -93,54 +84,8 @@ def get_text_splitter(
         )
     else:
         raise ValueError(
-            f"不支持的分块器类型: {splitter_type}。支持的类型: recursive, character, markdown, token, semantic"
+            f"不支持的分块器类型: {splitter_type}。支持的类型: recursive, character, markdown, token"
         )
-
-
-def _get_semantic_splitter(
-    chunk_size: int = 1000,
-    chunk_overlap: int = 200,
-    **kwargs,
-):
-    if not SEMANTIC_CHUNKER_AVAILABLE:
-        logger.warning(
-            "SemanticChunker 不可用，回退到 RecursiveCharacterTextSplitter。"
-            "请安装 langchain_text_splitters 以支持语义分块。"
-        )
-        return RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            length_function=len,
-            is_separator_regex=False,
-        )
-
-    try:
-        from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
-
-        embeddings = get_embeddings()
-    except Exception as e:
-        logger.warning(f"获取嵌入模型失败: {e}，回退到 RecursiveCharacterTextSplitter")
-        return RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            length_function=len,
-            is_separator_regex=False,
-        )
-
-    breakpoint_threshold_type = kwargs.pop("breakpoint_threshold_type", "percentile")
-    breakpoint_threshold_amount = kwargs.pop("breakpoint_threshold_amount", 75)
-
-    logger.debug(
-        f"创建语义分块器: breakpoint_threshold_type={breakpoint_threshold_type}, "
-        f"breakpoint_threshold_amount={breakpoint_threshold_amount}"
-    )
-
-    return SemanticChunker(
-        embeddings=embeddings,
-        breakpoint_threshold_type=breakpoint_threshold_type,
-        breakpoint_threshold_amount=breakpoint_threshold_amount,
-        **kwargs,
-    )
 
 
 def _extract_markdown_heading(text: str) -> str | None:

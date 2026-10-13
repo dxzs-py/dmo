@@ -17,26 +17,35 @@ import {
  *
  * 收敛自 streamStateHandlers.js handleStreamCompleted 深度研究回写分支的内联实现，
  * 与原实现行为完全一致。与 finalizeToolCallsForCompletedMessage（通用流式兜底）的差异：
- * - 审批终态：研究成功 → APPROVED，失败 → REJECTED（通用兜底无条件 → TIMEOUT）
+ * - 审批终态：研究成功 → APPROVED，失败 → REJECTED，取消 → TIMEOUT
+ *   （对齐后端 abandon_session_pending_approvals 语义；通用兜底无条件 → TIMEOUT）
  * - 工具终态：仅处理 WAITING/RUNNING，按 result/output 与 success 区分
  *   COMPLETED/FAILED（通用兜底将所有非终态 → COMPLETED）
  * - 不同步 toolCallsMap（原内联实现无此行为）
  *
  * @param {Object} message - 目标消息对象
  * @param {boolean} success - 深度研究是否成功（对应 payload.success !== false）
+ * @param {boolean} [cancelled=false] - 是否用户取消（payload.stopped === true）
  * @returns {{ pendingApprovalCount: number, runningToolCount: number }} 清理前计数（供日志使用）
  */
-export const finalizeToolCallsForResearchResult = (message, success) => {
+export const finalizeToolCallsForResearchResult = (message, success, cancelled = false) => {
   let pendingApprovalCount = 0
   let runningToolCount = 0
+
+  // 取消场景（stream_completed(stopped=true)）：遗留审批置 TIMEOUT（对齐后端
+  // abandon_session_pending_approvals 语义——审批未被决策即失效，非 APPROVED/REJECTED）；
+  // 工具无产出时置 FAILED（被中断终止）。
+  const approvalTerminalState = cancelled
+    ? ApprovalState.TIMEOUT
+    : (success ? ApprovalState.APPROVED : ApprovalState.REJECTED)
 
   if (message?.toolCalls && Array.isArray(message.toolCalls)) {
     for (const tc of message.toolCalls) {
       if (NON_TERMINAL_APPROVAL_STATES.includes(tc.approval?.state)) pendingApprovalCount++
       if (tc.status === ToolCallStatus.WAITING || tc.status === ToolCallStatus.RUNNING) runningToolCount++
-      // 对于仍在 pending/processing/waiting 状态的审批，研究完成/失败后强制清理为终态
+      // 对于仍在 pending/processing/waiting 状态的审批，研究完成/失败/取消后强制清理为终态
       if (tc.approval && NON_TERMINAL_APPROVAL_STATES.includes(tc.approval.state)) {
-        tc.approval.state = success ? ApprovalState.APPROVED : ApprovalState.REJECTED
+        tc.approval.state = approvalTerminalState
       }
       // 如果工具还是 waiting/running 状态，研究都结束了，根据实际情况设置。
       // 状态推进统一走状态机（add 模式），终态不回退由 applyToolCallState 保证
@@ -53,7 +62,7 @@ export const finalizeToolCallsForResearchResult = (message, success) => {
   if (ver?.toolCalls) {
     for (const tc of ver.toolCalls) {
       if (tc.approval && NON_TERMINAL_APPROVAL_STATES.includes(tc.approval.state)) {
-        tc.approval.state = success ? ApprovalState.APPROVED : ApprovalState.REJECTED
+        tc.approval.state = approvalTerminalState
       }
       if (tc.status === ToolCallStatus.WAITING || tc.status === ToolCallStatus.RUNNING) {
         const target = (tc.result || tc.output) ? ToolCallStatus.COMPLETED : (success ? ToolCallStatus.COMPLETED : ToolCallStatus.FAILED)

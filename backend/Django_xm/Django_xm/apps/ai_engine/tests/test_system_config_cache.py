@@ -20,7 +20,7 @@ import django
 django.setup()
 
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 
 from Django_xm.apps.ai_engine.models import (
     SYSTEM_CONFIG_CACHE_TTL,
@@ -106,4 +106,25 @@ class SystemConfigCacheTests(TestCase):
         warmup_system_config_cache()
         warmup_system_config_cache()
         self.assertEqual(cache.get(_cache_key("default_chat_model")), payload)
-        self.assertEqual(SYSTEM_CONFIG_CACHE_TTL, 3600)
+
+
+class SystemConfigToThreadTests(TransactionTestCase):
+    """to_thread 跨线程读 DB：TestCase 的事务对独立线程连接不可见，
+    必须用 TransactionTestCase 让 set_value 真实提交后线程可见。
+
+    对应修复（C3）：AgentFactory.create（async）内 resolve_model 落
+    asyncio.to_thread（agent_hub/factory.py），线程内无事件循环，
+    get_value 同步回源+回填缓存正常工作。"""
+
+    def test_to_thread_sees_committed_row_and_backfills(self):
+        payload = {"provider_id": "openai", "model_name": "gpt-4o-mini"}
+        SystemConfig.set_value("default_chat_model", payload)
+        cache.delete(_cache_key("default_chat_model"))
+
+        async def read_via_to_thread():
+            return await asyncio.to_thread(SystemConfig.get_value, "default_chat_model")
+
+        value = asyncio.run(read_via_to_thread())
+        self.assertEqual(value, payload)
+        # 回写缓存生效：主线程读取命中缓存
+        self.assertEqual(cache.get(_cache_key("default_chat_model")), payload)

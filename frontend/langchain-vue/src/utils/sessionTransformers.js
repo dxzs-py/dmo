@@ -41,25 +41,75 @@ function _camelToSnake(str) {
   return str.replace(/([A-Z])/g, '_$1').toLowerCase()
 }
 
+// =============================================================================
+// preserveKeys 键名豁免机制（通用：用户数据字典 / 协议标识符）
+// =============================================================================
+
 /**
- * 协议标识符保护（值不参与键名转换）：
- * `subagent_contents` 的对象子键是 subagent_thread_id 协议路由标识符值
- * （如 `subagent_xxx`，与 toolCalls.subagentThreadId / SSE 事件顶层
- * subagent_thread_id 同值）。若被 toCamelCase 当作普通键名转换
- * （`subagent_xxx` → `subagentXxx`），刷新后按 threadId 取正文会失配，
- * 子代理卡正文丢失（仅触发浏览器实时事件正常）。此处保护子键原样，
- * 仅递归转换子对象内部字段（content/reasoning_content/agent_name/depth）。
+ * 键名豁免配置：父键名 → 保护模式（toCamelCase / toSnakeCase 共用，双向对称）。
  *
- * @param {*} obj - subagent_contents 对象
+ * 背景：axios 拦截器对整个 JSON body / 响应递归做键名风格转换，但部分对象的
+ * 键名是"用户数据"而非命名风格字段，转换即损坏：
+ * - 'subtree'：整棵子树键名原样保留——自由字典，如 MCP Server 配置的
+ *   headers（`Authorization` 会被 _camelToSnake 摧毁成 `_authorization`、
+ *   `X-API-Key` 变 `x-_a-p-i-_key`，后端 DictField 原样落库即损坏）与 env。
+ * - 'children'：仅该对象的直接子键原样保留（子键是协议标识符值，如
+ *   subagent_contents 的 subagent_thread_id 同值键），更深层字段继续正常转换。
+ *
+ * 与旧实现的关系：原 subagent_contents 特判（_preserveProtocolKeys）只覆盖
+ * 入站 toCamelCase，本机制将其统一为 'children' 模式并补齐出站对称豁免。
+ * 复用方式：新增用户自由字典字段时在 PRESERVE_KEY_MODES 登记父键名与模式，
+ * 禁止在转换函数内散落 if。
+ *
+ * 匹配语义：按"父键名"而非完整路径匹配——这些键名在全应用语义中均为用户 /
+ * 协议数据容器，任何层级出现都不应参与键名风格转换（查找表同时登记
+ * snake_case 与 camelCase 两种形态，双向均按原始键名命中）。
+ */
+export const PRESERVE_KEY_MODES = Object.freeze({
+  headers: 'subtree',
+  env: 'subtree',
+  subagent_contents: 'children',
+})
+
+/** 父键名查找表（snake/camel 双形态），供两个方向的转换函数 O(1) 命中 */
+const _PRESERVE_KEY_LOOKUP = (() => {
+  const lookup = {}
+  for (const [name, mode] of Object.entries(PRESERVE_KEY_MODES)) {
+    lookup[name] = mode
+    lookup[convertSnakeToCamel(name)] = mode
+    lookup[_camelToSnake(name)] = mode
+  }
+  return lookup
+})()
+
+/**
+ * 'subtree' 模式：value 内所有层级的对象键名原样保留（值结构原样重建，不改名）
+ * @param {*} value
  * @returns {*}
  */
-function _preserveProtocolKeys(obj) {
-  if (obj === null || obj === undefined) return obj
-  if (Array.isArray(obj)) return obj.map(v => _preserveProtocolKeys(v))
-  if (!_isPlainObject(obj)) return obj
+function _preserveSubtreeKeys(value) {
+  if (Array.isArray(value)) return value.map(v => _preserveSubtreeKeys(v))
+  if (!_isPlainObject(value)) return value
   const result = {}
-  for (const key of Object.keys(obj)) {
-    result[key] = toCamelCase(obj[key], 1)
+  for (const key of Object.keys(value)) {
+    result[key] = _preserveSubtreeKeys(value[key])
+  }
+  return result
+}
+
+/**
+ * 'children' 模式：value 的直接子键原样保留（协议标识符值），子键的值
+ * 继续按当前方向正常递归转换
+ * @param {*} value
+ * @param {(v: *) => *} convertFn - 当前方向的递归转换函数（toCamelCase/toSnakeCase）
+ * @returns {*}
+ */
+function _preserveChildKeys(value, convertFn) {
+  if (Array.isArray(value)) return value.map(v => _preserveChildKeys(v, convertFn))
+  if (!_isPlainObject(value)) return value
+  const result = {}
+  for (const key of Object.keys(value)) {
+    result[key] = convertFn(value[key])
   }
   return result
 }
@@ -78,10 +128,15 @@ export function toCamelCase(obj, _depth = 0) {
   const result = {}
   for (const key of Object.keys(obj)) {
     const camelKey = _convertSnakeToCamel(key)
-    // subagent_contents：子键为协议标识符值，保持原样（仅转换内部字段）
-    result[camelKey] = key === 'subagent_contents'
-      ? _preserveProtocolKeys(obj[key])
-      : toCamelCase(obj[key], _depth + 1)
+    // preserveKeys 豁免：命中父键名的对象按模式保留子树/子键原名（父键本身照常转换）
+    const preserveMode = _PRESERVE_KEY_LOOKUP[key]
+    if (preserveMode === 'subtree') {
+      result[camelKey] = _preserveSubtreeKeys(obj[key])
+    } else if (preserveMode === 'children') {
+      result[camelKey] = _preserveChildKeys(obj[key], v => toCamelCase(v))
+    } else {
+      result[camelKey] = toCamelCase(obj[key], _depth + 1)
+    }
   }
   return result
 }
@@ -100,7 +155,16 @@ export function toSnakeCase(obj, _depth = 0) {
   const result = {}
   for (const key of Object.keys(obj)) {
     const snakeKey = _camelToSnake(key)
-    result[snakeKey] = toSnakeCase(obj[key], _depth + 1)
+    // preserveKeys 豁免：与 toCamelCase 对称（camel 形态键名经查找表命中，
+    // 如 subagentContents），保证出站不破坏用户自由字典/协议标识符键
+    const preserveMode = _PRESERVE_KEY_LOOKUP[key]
+    if (preserveMode === 'subtree') {
+      result[snakeKey] = _preserveSubtreeKeys(obj[key])
+    } else if (preserveMode === 'children') {
+      result[snakeKey] = _preserveChildKeys(obj[key], v => toSnakeCase(v))
+    } else {
+      result[snakeKey] = toSnakeCase(obj[key], _depth + 1)
+    }
   }
   return result
 }

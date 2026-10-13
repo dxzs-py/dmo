@@ -30,7 +30,26 @@ class AiEngineConfig(AppConfig):
 
         # 注册跨应用信号 receiver：用户注销/删除、会话删除 → Celery 清理
         # checkpoint/Store。必须显式导入，receiver 装饰器才会生效。
+        # 环 1 依赖倒置接线（spec eliminate-priority-debts 4.1）：context_manager
+        # 禁止 import ai_engine（.importlinter 契约），引擎侧能力在组合根注册为
+        # 运行期 provider——压缩/评估模型解析链（compression_bridge）、Store 工厂、
+        # ToolUsageGuard 单例。失败快速抛出（接线缺失会导致压缩静默降级）。
+        from Django_xm.apps.ai_engine.services import compression_bridge
+        from Django_xm.apps.ai_engine.services.checkpointer_factory import get_store
+        from Django_xm.apps.ai_engine.services.tool_usage_guard import get_tool_usage_guard
+        from Django_xm.apps.context_manager.services.runtime_providers import (
+            set_compression_model_provider,
+            set_evaluation_model_provider,
+            set_store_provider,
+            set_tool_usage_guard_provider,
+        )
+
         from . import signals  # noqa: F401
+
+        set_compression_model_provider(compression_bridge.resolve_compression_model)
+        set_evaluation_model_provider(compression_bridge.resolve_evaluation_model)
+        set_store_provider(get_store)
+        set_tool_usage_guard_provider(get_tool_usage_guard)
 
         # LangSmith 追踪配置统一入口（Task 14.1 / 16.3 / 15.6a）
         # 抽取自 agent_factory.py 与 base_builder.py 的重复实现
@@ -53,6 +72,19 @@ class AiEngineConfig(AppConfig):
         from Django_xm.apps.ai_engine.capabilities.setup import setup_default_capabilities
 
         setup_default_capabilities()
+
+        # TokenEstimator 自定义模型窗口表接线（配置驱动，admin 可维护）：
+        # common 层禁止依赖 apps（.importlinter 契约），故由引擎侧注入 loader，
+        # 读取 SystemConfig `model_context_limits`（值形如 {"模型名或前缀": 窗口tokens}）。
+        # admin 编辑该键后 ≤60s（TokenEstimator TTL）自动生效，无需改代码。
+        from Django_xm.common.token_estimator import TokenEstimator
+
+        def _load_custom_model_limits() -> dict[str, int] | None:
+            from Django_xm.apps.ai_engine.models import SystemConfig
+
+            return SystemConfig.get_value("model_context_limits", default={}) or {}
+
+        TokenEstimator.set_custom_limits_loader(_load_custom_model_limits)
 
         # 缓存预热由各进程入口完成（apps.ready 为 True 后执行，避免 Django
         # "Accessing the database during app initialization" RuntimeWarning）：

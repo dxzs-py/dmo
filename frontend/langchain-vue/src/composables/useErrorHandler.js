@@ -27,6 +27,29 @@ function trackError(errorDetails) {
   }
 }
 
+// window 级监听的注册守卫与句柄：防重复注册，并为 teardownErrorHandler 提供对称清理依据
+let windowListenersBound = false
+/** @type {Array<[string, (event: Event) => void]>} */
+const boundWindowListeners = []
+
+/**
+ * 移除 setupErrorHandler 注册的 window 级监听（对称清理，幂等）。
+ * 供应用卸载/HMR 与测试收尾调用；未注册时调用为空操作。
+ */
+export function teardownErrorHandler() {
+  for (const [type, handler] of boundWindowListeners.splice(0)) {
+    window.removeEventListener(type, handler)
+  }
+  windowListenersBound = false
+}
+
+/**
+ * 注册全局错误处理：Vue errorHandler/warnHandler + window 级 unhandledrejection/error 监听。
+ * 重复调用不会堆叠 window 监听（模块级守卫）。
+ *
+ * @param {import('vue').App} app - Vue 应用实例
+ * @returns {() => void} 清理函数（即 teardownErrorHandler），调用后移除全部 window 监听
+ */
 export function setupErrorHandler(app) {
   app.config.errorHandler = (err, instance, info) => {
     const errorDetails = {
@@ -58,25 +81,32 @@ export function setupErrorHandler(app) {
     }
   }
 
-  window.addEventListener('unhandledrejection', (event) => {
-    logger.error('❌ [Unhandled Promise Rejection]', event.reason)
-    trackError({
-      type: 'unhandledrejection',
-      reason: event.reason?.message || event.reason,
-      timestamp: new Date().toISOString(),
-    })
-  })
+  if (!windowListenersBound) {
+    const onUnhandledRejection = (event) => {
+      logger.error('❌ [Unhandled Promise Rejection]', event.reason)
+      trackError({
+        type: 'unhandledrejection',
+        reason: event.reason?.message || event.reason,
+        timestamp: new Date().toISOString(),
+      })
+    }
 
-  window.addEventListener('error', (event) => {
-    if (isExtensionError(event)) {
-      logger.debug('⚠️ [Ignored Extension Error]', event.error?.message || event.message)
-      event.preventDefault()
-      return
+    const onWindowError = (event) => {
+      if (isExtensionError(event)) {
+        logger.debug('⚠️ [Ignored Extension Error]', event.error?.message || event.message)
+        event.preventDefault()
+        return
+      }
+      if (event.error) {
+        logger.error('❌ [Runtime Error]', event.error)
+      }
     }
-    if (event.error) {
-      logger.error('❌ [Runtime Error]', event.error)
-    }
-  })
+
+    window.addEventListener('unhandledrejection', onUnhandledRejection)
+    window.addEventListener('error', onWindowError)
+    boundWindowListeners.push(['unhandledrejection', onUnhandledRejection], ['error', onWindowError])
+    windowListenersBound = true
+  }
 
   // 浏览器扩展宿主（如 Chrome 插件注入的 window.chrome）可能残留 runtime.lastError，
   // 若不清理会导致后续 runtime 调用被误判为失败。仅当存在该 API 时才清理。
@@ -85,4 +115,6 @@ export function setupErrorHandler(app) {
   if (hasChromeRuntime) {
     window.chrome.runtime.lastError = null
   }
+
+  return teardownErrorHandler
 }

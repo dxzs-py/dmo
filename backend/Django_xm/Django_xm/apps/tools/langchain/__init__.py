@@ -8,6 +8,15 @@
 # 计算器工具
 from .calc import calculator, get_calculator_tools
 
+# 附件 RAG 检索
+# R3 1.12 一致性修复：attachment_rag 此前未在本文件聚合导出，
+# tools/__init__.py 直连子模块导入——装配集包含导出面看不到的影子工具
+from .attachment_rag import (
+    ATTACHMENT_RAG_TOOLS,
+    attachment_rag_search,
+    get_attachment_rag_tools,
+)
+
 # 文件系统工具
 # 文件读取工具
 from .file_reader import (
@@ -62,6 +71,7 @@ from .web_search import (
 )
 
 __all__ = [
+    "ATTACHMENT_RAG_TOOLS",
     "DUCKDUCKGO_TOOLS",
     "FILESYSTEM_TOOLS",
     "FILE_READER_TOOLS",
@@ -69,6 +79,7 @@ __all__ = [
     "WEATHER_TOOLS",
     "ResearchFileSystem",
     "attachment_reader",
+    "attachment_rag_search",
     # 计算器
     "calculator",
     "create_tavily_search_tool",
@@ -82,6 +93,7 @@ __all__ = [
     # 文件系统
     "fs_write_file",
     "get_attachment_info",
+    "get_attachment_rag_tools",
     "get_calculator_tools",
     "get_current_date",
     # 时间

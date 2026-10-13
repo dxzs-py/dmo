@@ -24,6 +24,21 @@ export function buildUploadFormData(files) {
 }
 
 /**
+ * HTTP 上传段进度百分比（R-UX-06：消除 0→30 盲窗）。
+ *
+ * 后端 Celery 任务的离散进度点为 30/60/75/100（kb_service），HTTP 文件上传
+ * 发生在任务排队之前——axios onUploadProgress 的 0→100 映射到 0→30 段，
+ * 与任务进度点无缝衔接（任务事件到达后按原值覆盖，≥30 恒不回退）。
+ * @param {number} loaded 已上传字节数
+ * @param {number} total 总字节数（axios 事件无 total 时传 0）
+ * @returns {number} 0-29 的整数百分比（未完成段），total 无效时返回 0
+ */
+export function mapUploadProgress(loaded, total) {
+  if (!total || total <= 0) return 0
+  return Math.min(29, Math.round((loaded / total) * 30))
+}
+
+/**
  * 上传成功后的 Embedding 降级提示（两端行为一致）
  * @param {object|null|undefined} resultData 上传接口返回的 data
  */

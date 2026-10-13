@@ -8,35 +8,16 @@
 LangGraph ``configurable`` 显式传递（主 agent 由 chat_service / research_runner
 写入，子代理由 langgraph_adapter._build_configurable 写入），删除全部全局存储。
 
-本模块现仅保留嵌套深度上限读取（``get_max_agent_depth``），供子代理派生与
-嵌套中间件共用同一配置源。
+本模块现仅保留嵌套深度上限读取的兼容 re-export（C14 收敛：常量与判定函数
+唯一实现在 ``Django_xm/common/agent_limits.py``），供子代理派生与嵌套中间件共用
+同一配置源。
 """
 
 from __future__ import annotations
 
-import logging
+from Django_xm.common.agent_limits import DEFAULT_MAX_AGENT_DEPTH, get_max_agent_depth
 
-logger = logging.getLogger(__name__)
-
-# 默认最大子代理嵌套深度（0=主代理, 1=子代理, 2=孙代理, 3=曾孙代理）
-_DEFAULT_MAX_AGENT_DEPTH: int = 3
-
-
-def get_max_agent_depth() -> int:
-    """读取最大子代理嵌套深度（lazy 读 settings.AGENT_MAX_DEPTH，兼容非 Django 上下文）。
-
-    Django settings 未配置/读取异常（如独立 unittest 上下文）时回退默认值，
-    保证本模块可在无 Django 环境下被引用。
-    """
-    try:
-        from django.conf import settings
-
-        return int(getattr(settings, "AGENT_MAX_DEPTH", _DEFAULT_MAX_AGENT_DEPTH))
-    except Exception as e:
-        logger.warning(
-            f"读取 settings.AGENT_MAX_DEPTH 失败，回退默认值 {_DEFAULT_MAX_AGENT_DEPTH}: {e}"
-        )
-        return _DEFAULT_MAX_AGENT_DEPTH
+__all__ = ["DEFAULT_MAX_AGENT_DEPTH", "MAX_AGENT_DEPTH", "get_max_agent_depth"]
 
 
 # 模块级常量保留（首次 import 时求值），兼容既有 import（subagent_support / 测试）；

@@ -272,10 +272,16 @@ const _isResearchRunning = computed(() => {
 
 // 深研任务失败态（与状态单源 ResearchTaskStatus 对齐）：FAILED 不属于运行态，
 // 也不应落入"已完成"绿色卡分支（状态误导），单独走失败/终止分支。
-// 注：ResearchTaskStatus 中无 timeout/cancelled 同族状态，失败族仅 FAILED。
+// 取消态（深研取消→聊天侧同步修复）：CANCELLED 同为终态，单独分支显示"深度研究
+// 已取消"——此前 CANCELLED 缺分支处理，刷新后落入"已完成"绿色卡（用户实测症状）。
 const _isResearchFailed = computed(() => {
   if (!hasResearchTask.value) return false
   return props.message.researchTaskStatus === ResearchTaskStatus.FAILED
+})
+
+const _isResearchCancelled = computed(() => {
+  if (!hasResearchTask.value) return false
+  return props.message.researchTaskStatus === ResearchTaskStatus.CANCELLED
 })
 
 const showContinueResearch = computed(() => {
@@ -534,28 +540,32 @@ function handleBranchChange(versionIndex) {
         :class="{
           'research-running': _isResearchRunning,
           'research-failed': _isResearchFailed,
-          'research-completed': !_isResearchRunning && !_isResearchFailed
+          'research-cancelled': _isResearchCancelled,
+          'research-completed': !_isResearchRunning && !_isResearchFailed && !_isResearchCancelled
         }"
         :style="{
           background: _isResearchRunning
             ? 'linear-gradient(135deg, var(--el-color-primary-light-9) 0%, var(--el-color-primary-light-7) 100%)'
             : _isResearchFailed
               ? 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)'
-              : 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)'
+              : _isResearchCancelled
+                ? 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)'
+                : 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)'
         }"
         @click.stop="navigateToDeepResearch"
       >
         <div class="deep-research-card-icon">
           <el-icon v-if="_isResearchRunning" :size="20" class="is-loading"><Loading /></el-icon>
           <el-icon v-else-if="_isResearchFailed" :size="20"><WarningFilled /></el-icon>
+          <el-icon v-else-if="_isResearchCancelled" :size="20"><InfoFilled /></el-icon>
           <el-icon v-else :size="20"><Search /></el-icon>
         </div>
         <div class="deep-research-card-content">
           <div class="deep-research-card-title">
-            {{ _isResearchRunning ? '正在进行深度研究' : _isResearchFailed ? '深度研究失败' : '深度研究已完成' }}
+            {{ _isResearchRunning ? '正在进行深度研究' : _isResearchFailed ? '深度研究失败' : _isResearchCancelled ? '深度研究已取消' : '深度研究已完成' }}
           </div>
           <div class="deep-research-card-desc">
-            {{ _isResearchRunning ? '点击查看实时进度' : _isResearchFailed ? '点击查看失败详情' : '点击查看详细报告和文件' }}
+            {{ _isResearchRunning ? '点击查看实时进度' : _isResearchFailed ? '点击查看失败详情' : _isResearchCancelled ? '点击查看任务详情' : '点击查看详细报告和文件' }}
           </div>
         </div>
         <el-button

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import { useStreamChat } from '../composables/useStreamChat'
 import { useStreamFinalizer } from '../composables/useStreamFinalizer'
+import { useStreamSyncPolling } from '../composables/useStreamSyncPolling'
 import { useSessionStore } from './session'
 import { useModelStore } from './model'
 import { useUserStore } from './user'
@@ -57,22 +58,34 @@ export const useChatStore = defineStore('chat', () => {
     streamChat,
   } = useStreamChat()
 
-  // 当前流式类型（Task 9）：区分「普通发送」与「重新生成」，
-  // 用户停止时据此标记 stopped（允许固化）/ incomplete（禁止固化）
-  let _streamKind = null
+  // 当前活跃流状态（Task 9 / D-2）：流式发起时捕获 kind（send/regenerate）与
+  // sessionId，stopStreaming 据此发送停止信令并标记消息，而非实时读
+  // currentSessionId——流式期间切换会话后停止，只作用于发起流式的原会话。
+  // null = 当前无活跃流。
+  /** @type {{ kind: 'send' | 'regenerate', sessionId: string } | null} */
+  let _activeStream = null
 
   /**
-   * 停止生成（Task 9）：三路径终止。
+   * 停止生成（Task 9 / D-2）：三路径终止，作用域为发起流式的原会话。
    * 1. 前端中止：abort waitForStreamEnd / AbortController，立即恢复 UI 交互；
-   * 2. 后端停止：发布 SIGNAL_STOP 信令，终止 FastAPI 执行协程（优雅停止，
-   *    保留 checkpoint 与已输出内容），而非仅断开前端 SSE；
+   * 2. 后端停止：发布 SIGNAL_STOP 信令到 _activeStream.sessionId（流式发起时
+   *    捕获的会话），终止 FastAPI 执行协程（优雅停止，保留 checkpoint 与已输出
+   *    内容），而非仅断开前端 SSE；
    * 3. 状态标记：普通发送停止 → 消息标记 stopped（允许固化为主版本）；
    *    重生成中断 → 当前版本标记 incomplete（禁止固化为主版本）。
+   * 无活跃流时仅中止本地等待，不发信令、不标记任何会话（防止误标切换后的
+   * 新会话末条 assistant）。
    */
   const stopStreaming = () => {
+    const activeStream = _activeStream
+    _activeStream = null
     abortStreamChat()
-    const sessionStore = useSessionStore()
-    const sessionId = sessionStore.currentSessionId
+
+    if (!activeStream) {
+      logger.warn('[ChatStore] stopStreaming ignored: 当前无活跃流式会话')
+      return
+    }
+    const { kind: streamKind, sessionId } = activeStream
 
     // 后端停止信令（fire-and-forget，不阻塞 UI 恢复）
     if (sessionId) {
@@ -83,10 +96,11 @@ export const useChatStore = defineStore('chat', () => {
 
     // 本地状态标记（触发浏览器即时反馈；非触发浏览器由后端 stream_completed(stopped) 广播同步）
     // 定位收敛（spec 组 5）：末条 assistant 定位走 resolveStreamTargetMessage（无 messageId → 扫描兜底）
+    const sessionStore = useSessionStore()
     const session = sessionStore.sessions.find(s => s.id === sessionId)
     const lastAssistant = resolveStreamTargetMessage(session, null)
     if (lastAssistant) {
-      if (_streamKind === 'regenerate') {
+      if (streamKind === 'regenerate') {
         // 重生成中断：当前版本标记 incomplete，禁止固化为本轮主消息
         const currentVer = lastAssistant.versions?.[lastAssistant.currentVersion]
         if (currentVer) {
@@ -102,7 +116,6 @@ export const useChatStore = defineStore('chat', () => {
       }
       lastAssistant.isStreaming = false
     }
-    _streamKind = null
   }
 
   /**
@@ -147,20 +160,22 @@ export const useChatStore = defineStore('chat', () => {
   const sendMessage = async (message, options = {}) => {
     logger.log('[ChatStore] sendMessage called')
 
-    // Task 6.1：入口幂等守卫——置于所有 await 之前。
-    // 此前 isLoading 在 createNewSession（await）之后才置 true，await 窗口内
-    // 并发调用可同时进入并创建双份 user/assistant 占位消息。
+    // D-4：入口幂等守卫与 isLoading 置位原子化——守卫通过后**立即**置位，
+    // 再进入后续 await（createNewSession 等）。此前修复（Task 6.1）只前移了
+    // 守卫检查，isLoading 仍在 await createNewSession 之后才置 true：无会话时
+    // 并发双发可同时通过守卫并创建两个会话。校验失败/建会话失败的提前返回
+    // 路径必须回滚 isLoading。
     if (isLoading.value || isDeleting.value) {
       logger.warn('[ChatStore] sendMessage ignored: 已有消息正在发送中或删除进行中 (isLoading/isDeleting)')
       return
     }
-    // Task 9：记录流式类型，用户停止时标记 stopped（普通发送）
-    _streamKind = 'send'
+    isLoading.value = true
+    lastStreamError.value = null
 
     const sessionStore = useSessionStore()
     let sessionId = sessionStore.currentSessionId
     const selectedKnowledgeBaseId = sessionStore.selectedKnowledgeBase?.id || null
-    
+
     logger.log('[ChatStore] sessionId:', sessionId)
 
     const validation = validateSchema(ChatRequestSchema, {
@@ -180,6 +195,7 @@ export const useChatStore = defineStore('chat', () => {
 
     if (!validation.success) {
       validation.errors.forEach(err => ElMessage.error(err.message))
+      isLoading.value = false
       return
     }
 
@@ -198,8 +214,9 @@ export const useChatStore = defineStore('chat', () => {
       logger.log('[ChatStore] New sessionId:', sessionId)
     }
 
-    isLoading.value = true
-    lastStreamError.value = null
+    // D-2：流式发起时捕获会话 ID，停止信令与消息标记据此路由（而非实时读
+    // currentSessionId，防止流式期间切换会话后停止作用到错误会话）
+    _activeStream = { kind: 'send', sessionId }
     // Task 6.2：发送新消息前固化末轮未固化多版本（版本固化触发条件①）。
     // 将当前选中版本固化为该轮主消息并持久化，后续 LLM 上下文以固化版本为准。
     // 新会话（无消息）或末轮无多版本时静默跳过；固化失败不阻塞发送（尽力而为，
@@ -248,12 +265,13 @@ export const useChatStore = defineStore('chat', () => {
     // AI 消息由后端 SSE 流创建并广播，前端只创建本地占位
     sessionStore.addMessageToSession(sessionId, assistantMessage, false)
 
-    let streamSyncTimer = null
+    // D-9 收敛：流式期间 5s 同步轮询统一由 useStreamSyncPolling 管理
+    const { startStreamSyncPolling, stopStreamSyncPolling } = useStreamSyncPolling(() =>
+      sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false })
+    )
     try {
       // 流式输出期间每 5 秒同步 assistant 消息到后端（仅 PATCH 不 POST 创建）
-      streamSyncTimer = setInterval(() => {
-        sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
-      }, 5000)
+      startStreamSyncPolling()
 
       const messages = sessionStore.getSessionMessages(sessionId) || []
       
@@ -343,9 +361,10 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
     } finally {
-      clearInterval(streamSyncTimer)
+      stopStreamSyncPolling()
       sessionStore.clearToolSyncTimer(sessionId)
       isLoading.value = false
+      _activeStream = null
       syncStore.stopStreaming(sessionId)
       sessionStore.touchSessionUpdatedAt(sessionId)
       if (attachmentProcessing.value && attachmentProcessing.value.stage !== 'complete') {
@@ -356,13 +375,13 @@ export const useChatStore = defineStore('chat', () => {
 
   const regenerateMessage = async (messageIndex) => {
     // Task 6.1：发送类方法入口幂等守卫，防止并发重复生成双流；
-    // 链式删除进行中（Task 7.4）同样拒绝，避免删除与重新生成并发脏写
+    // 链式删除进行中（Task 7.4）同样拒绝，避免删除与重新生成并发脏写。
+    // （D-4 同检：守卫通过后到 isLoading 置位之间均为同步代码，无 await
+    // 窗口，无 sendMessage 的并发建会话同款问题。）
     if (isLoading.value || isDeleting.value) {
       logger.warn('[ChatStore] regenerateMessage ignored: 已有消息正在发送中或删除进行中 (isLoading/isDeleting)')
       return
     }
-    // Task 9：记录流式类型，用户停止时标记 incomplete（重生成中断，禁止固化）
-    _streamKind = 'regenerate'
 
     const sessionStore = useSessionStore()
     const sid = sessionStore.currentSessionId
@@ -419,6 +438,9 @@ export const useChatStore = defineStore('chat', () => {
 
     isLoading.value = true
     lastStreamError.value = null
+    // D-2：流式发起时捕获会话 ID（regenerate 无建会话 await），用户停止时
+    // 信令与 incomplete 标记据此路由到本会话
+    _activeStream = { kind: 'regenerate', sessionId: sid }
 
     // 与 sendMessage 对齐：通知 syncStore 流式开始。缺失会导致：
     // 1) stream_completed/finalized 广播到达时本浏览器不被识别为请求浏览器，
@@ -429,12 +451,13 @@ export const useChatStore = defineStore('chat', () => {
     const syncStore = useSyncStore()
     syncStore.startStreaming(sid)
 
-    let streamSyncTimer = null
+    // D-9 收敛：流式期间 5s 同步轮询统一由 useStreamSyncPolling 管理
+    const { startStreamSyncPolling, stopStreamSyncPolling } = useStreamSyncPolling(() =>
+      sessionStore.syncLastMessageToBackend(sid, { allowCreate: false })
+    )
     try {
       // 流式输出期间每 5 秒同步消息到后端（仅 PATCH）
-      streamSyncTimer = setInterval(() => {
-        sessionStore.syncLastMessageToBackend(sid, { allowCreate: false }).catch(() => {})
-      }, 5000)
+      startStreamSyncPolling()
 
       const chatHistory = messages
         .slice(0, messageIndex - 1)
@@ -486,9 +509,10 @@ export const useChatStore = defineStore('chat', () => {
         sessionStore.resetFinalizeTimer(sid)
       }
     } finally {
-      clearInterval(streamSyncTimer)
+      stopStreamSyncPolling()
       sessionStore.clearToolSyncTimer(sid)
       isLoading.value = false
+      _activeStream = null
       // 失败/中止路径不经过 finalizeStream（其 finally 已有 stopStreaming），
       // 此处兜底移除流式标记，避免 streamingSessions 泄漏（幂等，Set.delete）
       syncStore.stopStreaming(sid)

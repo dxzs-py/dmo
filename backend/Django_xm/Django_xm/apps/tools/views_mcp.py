@@ -122,9 +122,13 @@ class McpServerTestView(APIView):
 
     仅能测试已保存且 status=active 的 Server（含系统级配置），
     name 经 URL path 传递。
+
+    限流：测试会真实向目标 Server 发起连接（资源消耗型敏感操作），
+    挂 SensitiveOperationRateThrottle 防滥用（C13 收尾）。
     """
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [SensitiveOperationRateThrottle]
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request, name):
@@ -463,6 +467,7 @@ class CustomToolDetailView(APIView):
         new_desc = request.data.get("description")
         new_category = request.data.get("category")
 
+        code_changed = False
         if new_code is not None:
             if "@tool" not in new_code:
                 raise BaseAppError(
@@ -476,6 +481,7 @@ class CustomToolDetailView(APIView):
                     f"代码语法错误: {e.msg} (行 {e.lineno})",
                     business_code=ErrorCode.INVALID_PARAMS,
                 ) from e
+            code_changed = tool_obj.code != new_code
             tool_obj.code = new_code
 
         if new_desc is not None:
@@ -487,6 +493,19 @@ class CustomToolDetailView(APIView):
             except ToolCategory.DoesNotExist:
                 pass
 
+        # R3 1.3：代码变更强制回退审核状态（fail-closed）——工具代码即任意
+        # Python 代码，审核通过的旧代码不能为变更后的新代码背书；加载链
+        # （tools/__init__._load_custom_tools_for_user）只查 approved，
+        # 回退 pending 即可阻断新代码在审核通过前被执行。
+        if code_changed:
+            old_approval_status = tool_obj.approval_status
+            tool_obj.approval_status = CustomTool.ApprovalStatus.PENDING
+            logger.warning(
+                f"自定义工具 '{name}' 代码已变更，审核状态回退: "
+                f"{old_approval_status} -> pending (user={request.user.id})，"
+                "需管理员重新审核后方可生效"
+            )
+
         tool_obj.save()
         logger.info(f"自定义工具 '{name}' 已更新 (user={request.user.id})")
         return success_response(
@@ -494,8 +513,14 @@ class CustomToolDetailView(APIView):
                 "name": tool_obj.name,
                 "description": tool_obj.description,
                 "status": tool_obj.status,
+                # R3 1.3：响应携带审核状态（前端可提示"代码已变更需重新审核"）
+                "approval_status": tool_obj.approval_status,
             },
-            message=f"工具 '{name}' 更新成功",
+            message=(
+                f"工具 '{name}' 代码已更新，审核状态已回退为待审核"
+                if code_changed
+                else f"工具 '{name}' 更新成功"
+            ),
         )
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})

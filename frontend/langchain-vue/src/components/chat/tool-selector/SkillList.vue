@@ -161,7 +161,9 @@ const handleSkillCreateSuccess = async () => {
           <span class="tool-name">
             {{ pkg.name }}
             <el-tag v-if="pkg.source === 'system'" size="small" type="info">系统</el-tag>
-            <el-tag size="small" type="success" effect="plain">顾问</el-tag>
+            <el-tooltip content="元数据常驻提示，对话中由 agent 按需激活读取完整指令" placement="top">
+              <el-tag size="small" effect="plain">按需激活</el-tag>
+            </el-tooltip>
           </span>
           <span v-if="pkg.description" class="tool-desc">{{ pkg.description }}</span>
         </div>
@@ -198,9 +200,7 @@ const handleSkillCreateSuccess = async () => {
         <div class="tool-info">
           <span class="tool-name">
             {{ skill.name.replace(/^skill_/, '') }}
-            <el-tag v-if="skill.mode" size="small" :type="skill.mode === 'pipeline' ? 'primary' : skill.mode === 'advisor' ? 'success' : 'warning'" effect="plain">
-              {{ skill.mode === 'pipeline' ? '管线' : skill.mode === 'advisor' ? '顾问' : '混合' }}
-            </el-tag>
+            <el-tag v-if="skill.mode === 'pipeline'" size="small" type="primary" effect="plain">管线</el-tag>
           </span>
           <span v-if="skill.description" class="tool-desc">{{ skill.description }}</span>
         </div>
@@ -224,9 +224,7 @@ const handleSkillCreateSuccess = async () => {
           <span class="tool-name">
             {{ skill.name.replace(/^skill_/, '') }}
             <span class="tool-tag-custom">自定义</span>
-            <el-tag v-if="skill.mode" size="small" :type="skill.mode === 'pipeline' ? 'primary' : skill.mode === 'advisor' ? 'success' : 'warning'" effect="plain">
-              {{ skill.mode === 'pipeline' ? '管线' : skill.mode === 'advisor' ? '顾问' : '混合' }}
-            </el-tag>
+            <el-tag v-if="skill.mode === 'pipeline'" size="small" type="primary" effect="plain">管线</el-tag>
           </span>
           <span v-if="skill.description" class="tool-desc">{{ skill.description }}</span>
         </div>

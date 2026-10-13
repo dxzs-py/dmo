@@ -13,8 +13,10 @@ Checkpointer 工厂模块
 
 import asyncio
 import atexit
+import itertools
 import os
 import threading
+import weakref
 from collections import OrderedDict
 from typing import Any
 
@@ -26,9 +28,105 @@ logger = get_logger(__name__)
 _checkpointer_cache: OrderedDict = OrderedDict()
 _store_cache: OrderedDict = OrderedDict()
 # 保存上下文管理器引用，防止连接池被 GC 回收关闭
+# - pg_sync / pg_store：值为同步上下文管理器（cm）；
+# - pg_async（round3 2.7）：值为 {"cm": cm, "loop_ref": weakref}，记录原创建
+#   loop 以便淘汰/关闭时调度回正确 loop（跨 loop __aexit__ 无效）。
 _context_manager_refs: dict = {}
 _CACHE_MAXSIZE = 64
 _cache_lock = threading.Lock()
+# 异步创建锁（per cache_key，含 loop token 隔离）：消除同 loop 并发首访竞态。
+# 同一 cache_key 的锁只会在同一事件循环上 await（cache_key 含 loop token），
+# asyncio.Lock 首次 await 时绑定当前 loop，跨 loop 污染不会发生；
+# 创建/写入缓存全程持锁 + 锁内双检，防止重复建池与 cm_ref 残留泄漏。
+_async_create_locks: dict[str, asyncio.Lock] = {}
+
+# ── round3 2.7：非 postgres 后端一次性 loop 专用 ephemeral 注册表 ──
+# 非 postgres 异步 checkpointer（sqlite 等）不再进入全局 LRU：
+# 1) 旧实现 release_async_checkpointer 对非 postgres 直接 return，一次性 loop
+#    （子代理独立线程）的 sqlite 实例在 LRU 中堆积，淘汰回调对绑定已死 loop
+#    的实例基本无效（跨 loop 关闭不可靠）→ 连接泄漏；
+# 2) ephemeral 注册表按 loop token 归组：同 loop 内多次获取共享同一实例
+#    （多图共享 checkpoint 语义不变），release_async_checkpointer 在同一 loop
+#    上关闭（release 本就 await 于该 loop），用完即弃；
+# 3) loop 死亡未 release（异常路径）时，条目随 sweep（loop 弱引用失效）丢弃，
+#    实例交由 GC 兜底。成本说明：一次性 loop 每条本地 sqlite 连接（廉价），
+#    远小于 PG 连接池，不缓存是正确性优先的取舍。
+_ephemeral_checkpointers: dict[str, dict] = {}  # cache_key -> {"checkpointer", "loop_ref"}
+
+# loop → cache token 弱引用稳定映射（round3 2.7）：id(loop) 在 loop 关闭回收后
+# 会被新 loop 复用，旧 cache_key 将命中绑定已死 loop 的实例；token 按对象
+# 稳定、loop 回收后不复用。
+_loop_tokens: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_loop_token_counter = itertools.count(1)
+
+
+def _loop_cache_token(loop: asyncio.AbstractEventLoop | None) -> str:
+    """为事件循环生成进程内唯一缓存 token（round3 2.7）。
+
+    同一 loop 对象恒返回同一 token；loop 被回收后 token 不再复用（新 loop
+    取新序号），彻底消除 id(loop) 复用导致旧缓存误命中。loop 为 None
+    （无运行中 loop 的同步上下文）返回固定 token（历史 loop_id=0 同语义）。
+    弱引用不可用（对象不支持 weakref 的防御分支）退化为
+    "id{id}:closed{bool}" 组合校验。
+    """
+    if loop is None:
+        return "noloop"
+    with _cache_lock:
+        try:
+            token = _loop_tokens.get(loop)
+            if token is None:
+                token = f"loop{next(_loop_token_counter)}"
+                _loop_tokens[loop] = token
+            return token
+        except TypeError:
+            return f"id{id(loop)}:closed{bool(loop.is_closed())}"
+
+
+def _register_ephemeral_checkpointer(cache_key: str, checkpointer: Any, loop) -> None:
+    """登记非 postgres 异步 checkpointer 到 ephemeral 注册表（顺手清扫死 loop 条目）。"""
+    with _cache_lock:
+        for key in [k for k, v in _ephemeral_checkpointers.items() if v["loop_ref"]() is None]:
+            # loop 已死亡且未走 release（异常路径）：丢弃登记，连接交 GC 兜底
+            _ephemeral_checkpointers.pop(key, None)
+            logger.debug(f"已清扫死 loop 的 ephemeral checkpointer 条目: {key}")
+        _ephemeral_checkpointers[cache_key] = {
+            "checkpointer": checkpointer,
+            "loop_ref": weakref.ref(loop) if loop is not None else None,
+        }
+
+
+async def _close_ephemeral_checkpointer(checkpointer: Any) -> None:
+    """关闭 ephemeral（非 postgres）异步 checkpointer——必须在其绑定 loop 上调用。"""
+    conn = getattr(checkpointer, "conn", None)  # AsyncSqliteSaver.conn（aiosqlite 连接）
+    if conn is not None and hasattr(conn, "aclose"):
+        try:
+            await conn.aclose()
+            return
+        except Exception as e:
+            logger.debug(f"关闭 ephemeral checkpointer 连接失败（aclose）: {e}")
+    if conn is not None and hasattr(conn, "close"):
+        try:
+            await conn.close()
+            return
+        except Exception as e:
+            logger.debug(f"关闭 ephemeral checkpointer 连接失败（close）: {e}")
+    if hasattr(checkpointer, "close"):
+        try:
+            result = checkpointer.close()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as e:
+            logger.debug(f"关闭 ephemeral checkpointer 失败: {e}")
+
+
+def _get_async_create_lock(cache_key: str) -> asyncio.Lock:
+    """取（或创建）cache_key 对应的异步创建锁（dict 操作受 _cache_lock 保护）"""
+    with _cache_lock:
+        lock = _async_create_locks.get(cache_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _async_create_locks[cache_key] = lock
+        return lock
 
 # 常驻主事件循环 id（SessionManager 所在执行循环）：
 # 主 loop 上可并发多个会话共享同一 PG 连接池（cache_key 按 loop_id 隔离），
@@ -63,23 +161,10 @@ def _close_checkpointer(cache_key: str, checkpointer: Any) -> None:
             return
 
         # 异步实例使用 pg_async: 前缀，需要异步关闭
-        cm_ref = _context_manager_refs.pop(f"pg_async:{id(checkpointer)}", None)
-        if cm_ref is not None:
-            try:
-                # 尝试在已有事件循环中关闭
-                loop = asyncio.get_running_loop()
-                # fire-and-forget 关闭任务：保存引用避免被 GC 回收
-                task = loop.create_task(cm_ref.__aexit__(None, None, None))
-                task.add_done_callback(lambda _t: None)
-            except RuntimeError:
-                # 没有运行中的事件循环，创建新的来关闭
-                try:
-                    loop = asyncio.new_event_loop()
-                    loop.run_until_complete(cm_ref.__aexit__(None, None, None))
-                    loop.close()
-                except Exception as e:
-                    logger.debug(f"异步关闭 checkpointer 失败 ({cache_key}): {e}")
-            logger.debug(f"已关闭异步 checkpointer 上下文管理器: {cache_key}")
+        # （round3 2.7：值为 {"cm", "loop_ref"} 记录，关闭调度回原创建 loop）
+        record = _context_manager_refs.pop(f"pg_async:{id(checkpointer)}", None)
+        if record is not None:
+            _close_async_cm_record(record, cache_key)
             return
 
         # 尝试直接关闭连接
@@ -88,6 +173,45 @@ def _close_checkpointer(cache_key: str, checkpointer: Any) -> None:
             logger.debug(f"已关闭 checkpointer: {cache_key}")
     except Exception as e:
         logger.warning(f"关闭 checkpointer 失败 ({cache_key}): {e}")
+
+
+def _close_async_cm_record(record: dict, cache_key: str) -> None:
+    """在原创建 loop 上关闭异步 checkpointer 上下文管理器（round3 2.7）。
+
+    旧实现（:85-88）在「淘汰时碰巧正在运行的任意 loop」上 create_task
+    __aexit__——跨 loop 关闭无效（连接绑定原 loop），任务静默失败泄漏。
+    修复：按记录的 loop_ref 调度——
+    - 原 loop 存活且为当前 loop：create_task 调度（同 loop，fire-and-forget）；
+    - 原 loop 存活但当前线程/loop 不同：run_coroutine_threadsafe 到原 loop；
+    - 原 loop 已关闭/被回收：连接绑定死 loop 无法优雅关闭（asyncio 资源与
+      loop 绑定的框架边界），error 留痕，连接由进程退出回收。
+    """
+    cm = record.get("cm") if isinstance(record, dict) else None
+    loop_ref = record.get("loop_ref") if isinstance(record, dict) else None
+    loop = loop_ref() if loop_ref is not None else None
+    if cm is None or not hasattr(cm, "__aexit__"):
+        return
+    coro = cm.__aexit__(None, None, None)
+    try:
+        if loop is not None and not loop.is_closed():
+            try:
+                running = asyncio.get_running_loop()
+            except RuntimeError:
+                running = None
+            if running is loop:
+                task = loop.create_task(coro)
+                task.add_done_callback(lambda _t: None)
+            else:
+                asyncio.run_coroutine_threadsafe(coro, loop)
+            logger.debug(f"已调度异步 checkpointer 关闭到原创建 loop: {cache_key}")
+            return
+    except Exception as e:
+        logger.debug(f"调度异步 checkpointer 关闭失败 ({cache_key}): {e}")
+    coro.close()  # 丢弃未执行协程，避免 "coroutine was never awaited" 告警
+    logger.warning(
+        f"异步 checkpointer 的原事件循环已关闭，连接无法优雅关闭"
+        f"（依赖进程退出回收）: {cache_key}"
+    )
 
 
 def close_all_checkpointers() -> None:
@@ -108,6 +232,9 @@ def close_all_checkpointers() -> None:
                 logger.warning(f"关闭 store 失败 ({key}): {e}")
         _store_cache.clear()
         _context_manager_refs.clear()
+        # ephemeral（非 postgres）条目：其连接绑定各自 loop，进程退出随 loop/
+        # 进程消亡回收——仅清登记，不做跨 loop 关闭（无效且可能报错）。
+        _ephemeral_checkpointers.clear()
 
     logger.info("所有 Checkpointer 和 Store 已关闭")
 
@@ -280,69 +407,94 @@ async def get_async_checkpointer(
     backend = backend or getattr(settings, "checkpointer_backend", "sqlite")
 
     # AsyncPostgresSaver 内部的 asyncio.Lock 绑定到创建时的事件循环，
-    # 必须按 loop_id 缓存独立实例，否则 "bound to a different event loop" 报错。
-    # 关键改进：请求结束后必须调用 release_async_checkpointer() 释放旧实例的连接，
-    # 避免连接泄漏。
+    # 必须按 loop 隔离实例，否则 "bound to a different event loop" 报错。
+    # round3 2.7：loop 标识从 id(loop) 换为弱引用稳定 token——id 数值在
+    # loop 关闭回收后会被新 loop 复用，旧 cache_key 会命中绑定已死 loop
+    # 的实例（同 id 不同对象）。请求结束后必须调用 release_async_checkpointer()
+    # 释放旧实例的连接，避免连接泄漏。
     try:
-        loop_id = id(asyncio.get_running_loop())
+        loop = asyncio.get_running_loop()
     except RuntimeError:
-        loop_id = 0
+        loop = None
+    loop_id = id(loop) if loop is not None else 0
 
-    cache_key = f"async:{backend}:{db_path or ''}:{connection_string or ''}:loop{loop_id}"
+    loop_token = _loop_cache_token(loop)
+    cache_key = f"async:{backend}:{db_path or ''}:{connection_string or ''}:{loop_token}"
 
+    # 快速路径：已有实例直接返回（postgres → LRU；非 postgres → ephemeral 注册表）
     with _cache_lock:
+        if backend != "postgres" and cache_key in _ephemeral_checkpointers:
+            return _ephemeral_checkpointers[cache_key]["checkpointer"]
         if cache_key in _checkpointer_cache:
             _checkpointer_cache.move_to_end(cache_key)
             return _checkpointer_cache[cache_key]
 
-    if backend == "postgres":
-        cm = _create_async_postgres_checkpointer(connection_string)
-        if cm is not None:
-            # from_conn_string 返回异步上下文管理器，需要 __aenter__ 获取实际实例
-            if hasattr(cm, "__aenter__"):
-                checkpointer = await cm.__aenter__()
-                # 保存上下文管理器引用，防止连接池被 GC 回收关闭
-                _context_manager_refs[f"pg_async:{id(checkpointer)}"] = cm
-            else:
-                checkpointer = cm
-            if hasattr(checkpointer, "setup"):
-                await checkpointer.setup()
+    # 并发首访：同 loop 的多个协程同时 miss 时，per-key 锁保证只有一个协程
+    # 执行创建（A16）。禁止用同步 _cache_lock 跨 await——会导致整个进程的
+    # 事件循环阻塞；asyncio.Lock 仅在该 cache_key 所属 loop 上 await，安全。
+    async with _get_async_create_lock(cache_key):
+        # 双检：等待期间其他协程可能已完成创建
+        with _cache_lock:
+            if backend != "postgres" and cache_key in _ephemeral_checkpointers:
+                return _ephemeral_checkpointers[cache_key]["checkpointer"]
+            if cache_key in _checkpointer_cache:
+                _checkpointer_cache.move_to_end(cache_key)
+                return _checkpointer_cache[cache_key]
 
-            # Redis 热缓存装饰器（开关控制，D3）：包 AsyncPostgresSaver，PG 写优先。
-            # 仅在 postgres 后端启用；关闭时直接返回裸 AsyncPostgresSaver。
-            if getattr(settings, "checkpointer_redis_cache_enabled", False):
-                from Django_xm.apps.ai_engine.services.redis_async_client import get_async_redis_client
-                from Django_xm.apps.ai_engine.services.redis_cached_checkpointer import RedisCachedCheckpointer
+        if backend == "postgres":
+            cm = _create_async_postgres_checkpointer(connection_string)
+            if cm is not None:
+                # from_conn_string 返回异步上下文管理器，需要 __aenter__ 获取实际实例
+                if hasattr(cm, "__aenter__"):
+                    checkpointer = await cm.__aenter__()
+                    # 保存上下文管理器引用（含原创建 loop 弱引用），
+                    # 防止连接池被 GC 回收关闭 + 淘汰/关闭时调度回正确 loop
+                    _context_manager_refs[f"pg_async:{id(checkpointer)}"] = {
+                        "cm": cm,
+                        "loop_ref": weakref.ref(loop) if loop is not None else None,
+                    }
+                else:
+                    checkpointer = cm
+                if hasattr(checkpointer, "setup"):
+                    await checkpointer.setup()
 
-                inner = checkpointer
-                redis_client = get_async_redis_client()
-                checkpointer = RedisCachedCheckpointer(
-                    inner=inner,
-                    redis_client=redis_client,
-                    ttl=getattr(settings, "checkpointer_redis_ttl", 1800),
-                    lock_ttl=getattr(settings, "checkpointer_redis_lock_ttl", 5),
-                )
-                # 更新上下文管理器引用 key：release_async_checkpointer 按 checkpointer 的
-                # id 查找 cm_ref，包装后需把 inner 的 cm_ref 迁移到装饰器 id 下。
-                cm_ref = _context_manager_refs.pop(f"pg_async:{id(inner)}", None)
-                if cm_ref is not None:
-                    _context_manager_refs[f"pg_async:{id(checkpointer)}"] = cm_ref
+                # Redis 热缓存装饰器（开关控制，D3）：包 AsyncPostgresSaver，PG 写优先。
+                # 仅在 postgres 后端启用；关闭时直接返回裸 AsyncPostgresSaver。
+                if getattr(settings, "checkpointer_redis_cache_enabled", False):
+                    from Django_xm.apps.ai_engine.services.redis_async_client import get_async_redis_client
+                    from Django_xm.apps.ai_engine.services.redis_cached_checkpointer import RedisCachedCheckpointer
 
-            with _cache_lock:
-                _checkpointer_cache[cache_key] = checkpointer
-            return checkpointer
-        logger.warning("异步 PostgreSQL Checkpointer 创建失败，回退到异步 SQLite")
-        return await get_async_checkpointer(backend="sqlite", db_path=db_path)
-    elif backend == "sqlite":
-        checkpointer = await _create_async_sqlite_checkpointer(db_path)
-        if checkpointer is not None:
-            with _cache_lock:
-                _checkpointer_cache[cache_key] = checkpointer
-            return checkpointer
-        logger.warning("异步 SQLite Checkpointer 创建失败，回退到同步 SQLite")
-        return get_checkpointer(backend="sqlite", db_path=db_path)
-    else:
-        return get_checkpointer(backend=backend)
+                    inner = checkpointer
+                    redis_client = get_async_redis_client()
+                    checkpointer = RedisCachedCheckpointer(
+                        inner=inner,
+                        redis_client=redis_client,
+                        ttl=getattr(settings, "checkpointer_redis_ttl", 1800),
+                        lock_ttl=getattr(settings, "checkpointer_redis_lock_ttl", 5),
+                    )
+                    # 更新上下文管理器引用 key：release_async_checkpointer 按 checkpointer 的
+                    # id 查找 cm_ref，包装后需把 inner 的 cm_ref 迁移到装饰器 id 下。
+                    cm_record = _context_manager_refs.pop(f"pg_async:{id(inner)}", None)
+                    if cm_record is not None:
+                        _context_manager_refs[f"pg_async:{id(checkpointer)}"] = cm_record
+
+                with _cache_lock:
+                    _checkpointer_cache[cache_key] = checkpointer
+                return checkpointer
+            logger.warning("异步 PostgreSQL Checkpointer 创建失败，回退到异步 SQLite")
+            return await get_async_checkpointer(backend="sqlite", db_path=db_path)
+        elif backend == "sqlite":
+            checkpointer = await _create_async_sqlite_checkpointer(db_path)
+            if checkpointer is not None:
+                # round3 2.7：非 postgres 后端不进全局 LRU（一次性 loop 用完即弃，
+                # 由 release_async_checkpointer 在同一 loop 上关闭）；同 loop 多次
+                # 获取仍共享同一实例（多图共享 checkpoint 语义不变）。
+                _register_ephemeral_checkpointer(cache_key, checkpointer, loop)
+                return checkpointer
+            logger.warning("异步 SQLite Checkpointer 创建失败，回退到同步 SQLite")
+            return get_checkpointer(backend="sqlite", db_path=db_path)
+        else:
+            return get_checkpointer(backend=backend)
 
 
 async def release_async_checkpointer(
@@ -355,51 +507,75 @@ async def release_async_checkpointer(
 
     在流式请求结束时调用（loop.close() 之前），防止连接泄漏。
     由于每个请求创建新的 asyncio.new_event_loop()，请求结束后
-    事件循环关闭，对应的 AsyncPostgresSaver 无法再使用，
-    必须主动关闭其连接池释放 PostgreSQL 连接。
+    事件循环关闭，对应的异步 Checkpointer 无法再使用，
+    必须主动关闭其连接池释放连接。
+
+    round3 2.7 语义：
+    - postgres：主 loop 常驻池跳过（问题L），一次性 loop pop LRU 并在当前
+      loop 上 __aexit__（调用方保证 release await 于原 loop）；
+    - 非 postgres（sqlite 等）：不再 early-return——从 ephemeral 注册表 pop
+      并在当前 loop 上关闭连接（用完即弃），修复旧实现一次性 loop sqlite
+      连接只进不出、依赖不可靠的 LRU 淘汰回调的泄漏；
+    - 主 loop 上的非 postgres 实例同样常驻（多会话共享，释放会误关）。
     """
     backend = backend or getattr(settings, "checkpointer_backend", "sqlite")
-    if backend != "postgres":
-        return
 
     try:
-        loop_id = id(asyncio.get_running_loop())
+        loop = asyncio.get_running_loop()
     except RuntimeError:
-        loop_id = 0
+        loop = None
+    loop_id = id(loop) if loop is not None else 0
 
-    # 主 loop 常驻连接池：不随单个会话释放（多会话共享同一连接池，释放会误关
-    # 其他挂起/运行中会话的连接，导致审批恢复崩溃，见问题L）。由进程退出统一关闭。
+    cache_key = f"async:{backend}:{db_path or ''}:{connection_string or ''}:{_loop_cache_token(loop)}"
+
+    # per-key 创建锁与后端无关，统一清理（A16：一次性 loop 的 cache_key 不同，
+    # 不清理会让 _async_create_locks 随请求次数无限增长——内存泄漏）。
+    with _cache_lock:
+        _async_create_locks.pop(cache_key, None)
+
+    # 主 loop 常驻连接池：不随单个会话释放（多会话共享同一连接池/实例，释放会
+    # 误关其他挂起/运行中会话的连接，导致审批恢复崩溃，见问题L）。由进程退出统一关闭。
     # 仅一次性 loop（子代理独立线程等，loop_id 与主 loop 不同）按原逻辑释放。
     if _main_loop_id is not None and loop_id == _main_loop_id:
         logger.debug("主事件循环 checkpointer 常驻，跳过会话级释放（进程退出统一关闭）")
         return
 
-    cache_key = f"async:{backend}:{db_path or ''}:{connection_string or ''}:loop{loop_id}"
+    if backend == "postgres":
+        with _cache_lock:
+            checkpointer = _checkpointer_cache.pop(cache_key, None)
 
+        # 关闭异步上下文管理器，释放连接池（release await 于原创建 loop，同 loop 关闭安全）
+        if checkpointer is not None:
+            record = _context_manager_refs.pop(f"pg_async:{id(checkpointer)}", None)
+            cm = record.get("cm") if isinstance(record, dict) else record
+            if cm is not None and hasattr(cm, "__aexit__"):
+                try:
+                    await cm.__aexit__(None, None, None)
+                    logger.debug(f"已释放异步 Checkpointer 连接: {cache_key}")
+                except Exception as e:
+                    logger.debug(f"释放异步 Checkpointer 连接失败 ({cache_key}): {e}")
+            elif hasattr(checkpointer, "close"):
+                try:
+                    checkpointer.close()
+                except Exception as e:
+                    logger.debug(f"关闭异步 Checkpointer 失败 ({cache_key}): {e}")
+
+        # 释放 Redis 热缓存客户端连接池（若启用）。Redis 客户端独立于 checkpointer 缓存，
+        # 即使 checkpointer 已释放，仍需关闭（幂等：pop 返回 None 无害）。
+        if getattr(settings, "checkpointer_redis_cache_enabled", False):
+            from Django_xm.apps.ai_engine.services.redis_async_client import release_async_redis_client
+
+            await release_async_redis_client()
+        return
+
+    # 非 postgres（sqlite 等）：ephemeral 注册表用完即弃（round3 2.7）。
     with _cache_lock:
-        checkpointer = _checkpointer_cache.pop(cache_key, None)
-
-    # 关闭异步上下文管理器，释放连接池
-    if checkpointer is not None:
-        cm_ref = _context_manager_refs.pop(f"pg_async:{id(checkpointer)}", None)
-        if cm_ref is not None:
-            try:
-                await cm_ref.__aexit__(None, None, None)
-                logger.debug(f"已释放异步 Checkpointer 连接: {cache_key}")
-            except Exception as e:
-                logger.debug(f"释放异步 Checkpointer 连接失败 ({cache_key}): {e}")
-        elif hasattr(checkpointer, "close"):
-            try:
-                checkpointer.close()
-            except Exception as e:
-                logger.debug(f"关闭异步 Checkpointer 失败 ({cache_key}): {e}")
-
-    # 释放 Redis 热缓存客户端连接池（若启用）。Redis 客户端独立于 checkpointer 缓存，
-    # 即使 checkpointer 已释放，仍需关闭（幂等：pop 返回 None 无害）。
-    if getattr(settings, "checkpointer_redis_cache_enabled", False):
-        from Django_xm.apps.ai_engine.services.redis_async_client import release_async_redis_client
-
-        await release_async_redis_client()
+        entry = _ephemeral_checkpointers.pop(cache_key, None)
+    if entry is not None:
+        checkpointer = entry.get("checkpointer")
+        if checkpointer is not None:
+            await _close_ephemeral_checkpointer(checkpointer)
+            logger.debug(f"已释放 ephemeral Checkpointer 连接: {cache_key}")
 
 
 def _create_sqlite_checkpointer(db_path: str | None = None) -> Any:
@@ -506,6 +682,25 @@ def get_store(backend: str | None = None) -> Any:
     return store
 
 
+def _log_memory_store_fallback(reason: str) -> None:
+    """InMemoryStore 回退日志升级（A18）。
+
+    Store 承载跨会话记忆/知识图谱/文档记忆等长期数据，回退到内存存储意味着
+    这些数据重启即丢：生产配置（DEBUG=False）下升级为 error 级并给出明确
+    后果文案；dev（DEBUG=True）保留 debug 级避免噪音。
+    """
+    from django.conf import settings as django_settings
+
+    message = (
+        f"Store 回退到 InMemoryStore（{reason}）：跨会话记忆/知识图谱等长期记忆将不持久，"
+        "服务重启后全部丢失。生产环境请安装 langgraph-store-postgres 并确认 store_backend=postgres。"
+    )
+    if getattr(django_settings, "DEBUG", False):
+        logger.debug(message)
+    else:
+        logger.error(message)
+
+
 def _create_memory_store() -> Any:
     """
     创建内存 Store（开发/测试）
@@ -534,9 +729,7 @@ def _create_postgres_store() -> Any:
     try:
         from langgraph.store.postgres import PostgresStore
     except ImportError:
-        logger.warning(
-            "langgraph-store-postgres 未安装，回退到 InMemoryStore。安装命令: pip install langgraph-store-postgres"
-        )
+        _log_memory_store_fallback("langgraph-store-postgres 未安装")
         return _create_memory_store()
 
     connection_string = _build_connection_string()
@@ -559,6 +752,7 @@ def _create_postgres_store() -> Any:
         return store
     except Exception:
         logger.exception("创建 PostgreSQL Store 失败，回退到 InMemoryStore")
+        _log_memory_store_fallback("PostgreSQL Store 创建失败")
         return _create_memory_store()
 
 
@@ -686,6 +880,19 @@ async def delete_user_all_data(user_id: int) -> bool:
 
         # 清理 Store 中用户的所有数据
         await delete_thread_store_data(user_id)
+
+        # 4.7 GDPR 出口接线：知识图谱走 ContextKnowledgeGraph.clear_graph——
+        # 除 Store 内 (user_id, "knowledge_graph") 命名空间外，还需清除 4.6 引入的
+        # 进程级图缓存（直接 store.delete 不会触发缓存失效，TTL 内可能读到已删除
+        # 的图数据）。clear() 幂等，与上方命名空间级删除重复覆盖无害。
+        # 跨会话记忆（(user_id, "session_contexts")）已由 delete_thread_store_data
+        # 的命名空间清单覆盖，无需重复处理。
+        try:
+            from Django_xm.apps.context_manager.services.knowledge_graph import ContextKnowledgeGraph
+
+            ContextKnowledgeGraph().clear_graph(user_id)
+        except Exception:
+            logger.warning(f"清除用户 {user_id} 知识图谱（含进程缓存）失败", exc_info=True)
 
         logger.info(f"用户 {user_id} 的所有 checkpoint/Store 数据已清理（{len(session_ids)} 个会话）")
         return True

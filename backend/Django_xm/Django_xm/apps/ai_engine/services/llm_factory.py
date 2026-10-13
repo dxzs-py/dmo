@@ -17,11 +17,19 @@
 
 创建路径收敛（B⑩）：
   provider_id 路径 get_chat_model_by_provider 是唯一核心创建入口
-  （registry 校验 / api_key 校验 / special_params / 缓存键 / groq / ollama
+  （registry 校验 / api_key 校验 / special_params / groq / ollama
   / 降级接线全部收敛于此）。get_chat_model 是薄适配层：
   model_provider（provider_id 或 provider 字符串）经 _resolve_provider_id
   解析为 provider_id 后委托核心；fallback 懒加载编排保持不变——
   get_chat_model(enable_fallback=True) 是全系统唯一的降级路径。
+
+实例缓存禁令（eliminate-priority-debts 阶段 1）：
+  get_chat_model_by_provider **每次调用新建实例**，不做进程级实例缓存。
+  原因：多 loop 架构（chat 主链 uvicorn 常驻 loop + 每子代理独立线程独立
+  loop）下，async 模型实例的 httpx/openai 异步客户端连接池绑定"首次使用
+  时的 loop"，缓存实例跨 loop 复用必报 "Event loop is closed"（2026-10-05
+  实测）。实例构建成本微秒-毫秒级 ≪ LLM 网络调用；LLM 响应级缓存
+  （cache_manager.ModelResponseCacheService）不受影响。
 
 调用图（收敛后）：
   业务 30 处 ──► get_chat_model(model_name, model_provider, ...)
@@ -58,16 +66,12 @@ from ..providers import (
 )
 
 # 从拆分后的模块导入（Task 19）
-from .llm_cache import (
-    cached_model_creation,
-    get_rate_limiter,
-)
+from .llm_cache import get_rate_limiter
 from .llm_fallback import (
     LazyFallbackChatModel,
     StructuredModelWithFallback,
     get_fallback_candidates,
 )
-from .model_cache import make_cache_key
 from .registry_service import (
     get_model_registry,
     get_provider_config,
@@ -185,13 +189,12 @@ def _create_single_chat_model(
     temperature: float | None = None,
     max_tokens: int | None = None,
     streaming: bool | None = None,
-    use_cache: bool = True,
     **kwargs: Any,
 ) -> BaseChatModel:
     """创建单个聊天模型（无 fallback）——get_chat_model_by_provider 的薄适配层
 
     B⑩ 收敛：创建逻辑（registry 校验 / API Key 校验 / special_params /
-    缓存键 / groq / ollama）唯一存在于 get_chat_model_by_provider，
+    groq / ollama）唯一存在于 get_chat_model_by_provider，
     本函数仅负责名称语义适配：
 
     1. 默认值解析：model_name / model_provider 缺省时依次回退
@@ -199,11 +202,9 @@ def _create_single_chat_model(
     2. 名称解析：显式 ``provider_id`` kwarg 优先，其次 _resolve_provider_id
        将 model_provider（provider_id 或 provider 字符串）解析为 provider_id；
     3. 委托核心：解析失败抛 ValueError（列出可用 provider），成功则
-       参数与 kwargs（special_params / use_cache / max_retries 等）原样透传。
+       参数与 kwargs（special_params / max_retries 等）原样透传。
 
     语义说明（与旧 provider 字符串直连路径的差异，均已确认为改善）：
-    - 缓存键含 special_params 后缀：不同 special_params 不再共享同一
-      缓存实例（旧路径键无后缀会互相覆盖）；
     - API Key 未配置时在创建阶段即抛 ValueError（旧路径延迟到
       init_chat_model 内部才报错），失败更早、信息更明确；
     - model_provider 为 provider 字符串且携带 special_params 时，经
@@ -235,7 +236,6 @@ def _create_single_chat_model(
         temperature=temperature,
         max_tokens=max_tokens,
         streaming=streaming,
-        use_cache=use_cache,
         **kwargs,
     )
 
@@ -412,6 +412,11 @@ def get_chat_model_by_provider(
 
     与 get_chat_model 的差异：本函数不启用 fallback，直接按指定 provider 创建。
     用于 LazyFallbackChatModel 的 factory 参数（依赖注入）。
+
+    实例缓存禁令：每次调用**新建**实例，不做进程级缓存——async 模型实例的
+    异步客户端连接池绑定"首次使用时的 loop"，多 loop 架构（chat 主链常驻
+    loop + 每子代理独立线程独立 loop）下缓存实例跨 loop 复用必报
+    "Event loop is closed"（2026-10-05 实测）。构建成本可忽略。
     """
     registry = PROVIDER_REGISTRY.get(provider_id) or get_provider_config(provider_id)
     if registry is None or not registry:
@@ -451,7 +456,9 @@ def get_chat_model_by_provider(
     elif settings.openai_max_tokens is not None:
         init_kwargs["max_tokens"] = settings.openai_max_tokens
 
-    rate_limiter = get_rate_limiter()
+    # 限速按 provider 独立计数（多 Agent 并行时主/子代理不同 provider 互不排队；
+    # 本地 provider 如 ollama 默认不限速，见 config.rate_limit_unlimited_providers）
+    rate_limiter = get_rate_limiter(provider_id)
     if rate_limiter is not None and "rate_limiter" not in kwargs:
         init_kwargs["rate_limiter"] = rate_limiter
 
@@ -463,30 +470,10 @@ def get_chat_model_by_provider(
 
     init_kwargs.update(kwargs)
 
-    use_cache = init_kwargs.pop("use_cache", True)
-
     logger.info(
         f"创建模型: {resolved_model} "
         f"(provider_id={provider_id}, provider={provider}, "
         f"temperature={resolved_temp}, streaming={resolved_streaming})"
-    )
-
-    special_suffix = ""
-    if special_params:
-        import json as _json
-
-        special_suffix = f":sp{_json.dumps(special_params, sort_keys=True)}"
-
-    cache_key = make_cache_key(
-        resolved_model,
-        provider,
-        resolved_temp,
-        resolved_streaming,
-        init_kwargs.get("max_tokens"),
-        special_suffix,
-        api_key=api_key,
-        base_url=init_kwargs.get("base_url"),
-        max_retries=init_kwargs.get("max_retries"),
     )
 
     def _create():
@@ -539,7 +526,8 @@ def get_chat_model_by_provider(
 
         return model
 
-    return cached_model_creation(cache_key, use_cache, _create, error_context=f"provider_id={provider_id}")
+    # 即时构建：每次调用新建实例（实例缓存禁令，见模块 docstring）
+    return _create()
 
 
 # ============== Groq bind_tools 兼容补丁 ==============
@@ -618,7 +606,6 @@ def test_model_connection(
             temperature=0.0,
             max_tokens=10,
             streaming=False,
-            use_cache=False,
             **kwargs,
         )
         from langchain_core.globals import get_llm_cache, set_llm_cache
@@ -655,23 +642,30 @@ def test_model_connection(
 
 # ============== 辅助模型 ==============
 
-_helper_model_cache: BaseChatModel | None = None
-
 
 def get_helper_model() -> BaseChatModel | None:
-    """获取辅助模型（带 fallback 包装）
+    """获取辅助模型（带 fallback 包装），**每次调用新建**
 
     辅助模型用于非主要 Agent 场景（MultiQuery、Map-Reduce、意图分类、压缩等）。
     返回 LazyFallbackChatModel 包装，具备 Circuit Breaker 和自动降级能力。
-    """
-    global _helper_model_cache  # noqa: PLW0603 - 模块级单例惰性初始化
-    if _helper_model_cache is not None:
-        return _helper_model_cache
 
+    实例缓存禁令（eliminate-priority-debts 阶段 1，原实现为模块级单例
+    ``_helper_model_cache``）：本函数消费点横跨多个事件循环——chat 主链
+    uvicorn 常驻 loop（chat_service 检索工具 / guardrails 循环 judge /
+    context_manager 压缩的 async 路径）、每子代理独立线程独立 loop（research
+    压缩与 judge）、Django sync 请求线程（learning views）——单例 wrapper
+    及其 primary 实例必然跨 loop 复用，async 客户端连接池绑定"首次使用时的
+    loop"必报 "Event loop is closed"（2026-10-05 同型实测）。故每次调用即时
+    新建：配置读取（SystemConfig 经 django-redis 缓存）+ 对象构建为毫秒级
+    ≪ LLM 调用。熔断状态随调用重置的语义论证：原单例下熔断状态被所有
+    helper 消费场景共享（MultiQuery 的主模型故障会错误影响意图分类的
+    熔断判定），per-call 重建使各场景互不污染，语义更准确；E1c 复位契约
+    （_on_primary_success 复位 fallback_detected）在类层面保持不变。
+    """
     helper_provider = ""
     helper_model_name = ""
     helper_temp = 0.0
-    helper_max_tokens = 256
+    helper_max_tokens = 1024
 
     # 1. 优先从 SystemConfig 数据库读取（持久化，重启不丢失）
     try:
@@ -690,7 +684,7 @@ def get_helper_model() -> BaseChatModel | None:
         helper_provider = getattr(django_settings, "AI_HELPER_MODEL_PROVIDER", "")
         helper_model_name = getattr(django_settings, "AI_HELPER_MODEL_NAME", "")
     helper_temp = getattr(django_settings, "AI_HELPER_MODEL_TEMPERATURE", 0.0)
-    helper_max_tokens = getattr(django_settings, "AI_HELPER_MODEL_MAX_TOKENS", 256)
+    helper_max_tokens = getattr(django_settings, "AI_HELPER_MODEL_MAX_TOKENS", 1024)
 
     def _wrap_with_fallback(primary: BaseChatModel, provider: str, model: str) -> BaseChatModel:
         """将辅助模型包装为 LazyFallbackChatModel"""
@@ -717,9 +711,8 @@ def get_helper_model() -> BaseChatModel | None:
                 max_tokens=helper_max_tokens,
                 streaming=False,
             )
-            _helper_model_cache = _wrap_with_fallback(primary, helper_provider, helper_model_name)
             logger.info(f"辅助模型(用户配置): {helper_provider}/{helper_model_name}")
-            return _helper_model_cache
+            return _wrap_with_fallback(primary, helper_provider, helper_model_name)
         except Exception as e:
             logger.warning(f"用户配置的辅助模型不可用: {e}")
 
@@ -736,9 +729,8 @@ def get_helper_model() -> BaseChatModel | None:
                 max_tokens=helper_max_tokens,
                 streaming=False,
             )
-            _helper_model_cache = _wrap_with_fallback(primary, pid, mname)
             logger.info(f"辅助模型(自动选择): {pid}/{mname}")
-            return _helper_model_cache
+            return _wrap_with_fallback(primary, pid, mname)
         except Exception as e:
             logger.warning(f"辅助模型 {pid}/{mname} 不可用: {e}")
             continue

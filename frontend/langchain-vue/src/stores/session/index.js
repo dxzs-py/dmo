@@ -39,6 +39,8 @@ export const useSessionStore = defineStore('session', () => {
     // sessionCrud / messageFlow → toolCallState
     _removeSessionToolCallState: toolCallState._removeSessionToolCallState,
     _pruneToolCallsByRemovedMessageIds: toolCallState._pruneToolCallsByRemovedMessageIds,
+    // sessionCrud → messageFlow（D-7：删会话回收按会话键缓存的同步状态）
+    cleanupSessionSyncState: messageFlow.cleanupSessionSyncState,
     // messageFlow → versionFlow
     clearFinalizeTimer: versionFlow.clearFinalizeTimer,
     // versionFlow → toolCallState

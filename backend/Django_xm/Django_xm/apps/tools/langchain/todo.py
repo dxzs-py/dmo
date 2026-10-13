@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -148,7 +149,9 @@ class TodoWriteTool(BaseTool):
         )
 
     async def _arun(self, todos: str | list | dict, session_id: str = "default") -> str:
-        return self._run(todos=todos, session_id=session_id)
+        # R3 1.8：同步 _run（todo 文件 I/O）经 to_thread 移入线程池，
+        # 不再直接在事件循环内阻塞
+        return await asyncio.to_thread(self._run, todos=todos, session_id=session_id)
 
 
 class TodoReadTool(BaseTool):
@@ -191,7 +194,8 @@ class TodoReadTool(BaseTool):
         return "\n".join(lines)
 
     async def _arun(self, session_id: str = "default") -> str:
-        return self._run(session_id=session_id)
+        # R3 1.8：同 todo_write，文件 I/O 移入线程池
+        return await asyncio.to_thread(self._run, session_id=session_id)
 
 
 todo_write = TodoWriteTool()

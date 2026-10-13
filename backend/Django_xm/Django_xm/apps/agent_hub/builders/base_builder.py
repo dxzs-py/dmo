@@ -31,13 +31,13 @@ class BaseAgentBuilder:
 
         # 显式注入 ApprovalMiddleware（与 deep_builder 共用 ensure_approval_middleware）
         # 审批机制是核心安全能力，应对所有有工具的 agent 强制启用，与 chat/deep_research/learning 三模块统一
-        # （build_middleware 收敛点已保底，此处为双保险）
-        try:
-            from Django_xm.apps.agent_hub.builders.middleware_utils import ensure_approval_middleware
+        # （build_middleware 收敛点已保底，此处为双保险）。
+        # fail-closed（round3 2.3）：注入失败向上抛出使 agent 创建失败——
+        # 静默降级会产生无审批的带工具 agent（安全缺口），与 deep_builder
+        # 直调不吞异常的既有语义对齐。
+        from Django_xm.apps.agent_hub.builders.middleware_utils import ensure_approval_middleware
 
-            ensure_approval_middleware(middleware_stack)
-        except Exception as e:
-            logger.warning(f"ApprovalMiddleware 注入失败(非致命): {e}")
+        ensure_approval_middleware(middleware_stack)
 
         # 子 agent 官方支持中间件（与 deep_builder 子 agent 栈统一，
         # 主/子判定 spec D1：configurable.subagent_thread_id 非空 ⇔ 子代理）：
@@ -71,6 +71,9 @@ class BaseAgentBuilder:
                     middleware_stack.append(SubAgentContentMiddleware())
                 logger.info("已注入子代理支持中间件到 chat agent 中间件栈")
             except Exception as e:
+                # 非安全类（round3 2.3 分类）：子代理中间件仅承担事件转发/正文
+                # 捕获/层级元数据（前端展示层），缺失不构成安全缺口——维持
+                # 降级 warning，agent 仍可创建（对比上方 Approval fail-closed）。
                 logger.warning(f"子代理中间件注入失败(非致命): {e}")
 
         # 始终构建默认 system_prompt，再追加自定义内容（如研究上下文）

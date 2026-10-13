@@ -122,7 +122,7 @@ class SkillCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=100, help_text="Skill 名称")
     description = serializers.CharField(max_length=500, required=False, allow_blank=True, default="", help_text="描述")
     mode = serializers.ChoiceField(
-        choices=["pipeline", "advisor", "hybrid"], required=False, default="pipeline", help_text="执行模式"
+        choices=["pipeline"], required=False, default="pipeline", help_text="执行模式"
     )
     steps = serializers.ListField(child=SkillStepSerializer(), help_text="执行步骤列表")
     version = serializers.CharField(max_length=20, required=False, default="1.0.0", help_text="版本号")

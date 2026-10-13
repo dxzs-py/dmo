@@ -1,5 +1,5 @@
 import axios from 'axios'
-import settings from '../config/settings'
+import settings, { isAllowedApiBaseUrl } from '../config/settings'
 import { useUserStore } from '@/stores/user'
 import { useLoadingStore } from '@/stores/loading'
 import { toCamelCase, toSnakeCase } from '@/utils/sessionTransformers'
@@ -123,6 +123,19 @@ apiClient.interceptors.response.use(
 export { apiClient }
 export default apiClient
 
+/**
+ * 更新 apiClient baseURL（设置页保存入口）。
+ * 与 settings.js 的读路径共用同一白名单口径（isAllowedApiBaseUrl）：非法值拒绝生效并告警，
+ * 防止绕过 localStorage 读取路径的写入横切面。
+ *
+ * @param {string} newURL - 新的 API BaseURL
+ * @returns {boolean} 是否已应用
+ */
 export function updateBaseURL(newURL) {
-  apiClient.defaults.baseURL = newURL
+  if (!isAllowedApiBaseUrl(newURL)) {
+    logger.warn(`[Axios] 拒绝非白名单 API BaseURL: ${JSON.stringify(newURL)}`)
+    return false
+  }
+  apiClient.defaults.baseURL = newURL.trim()
+  return true
 }

@@ -43,16 +43,16 @@ from Django_xm.apps.ai_engine.config import AGENT_RECURSION_LIMIT_RESEARCH
 #   _on_tool_event 回调并转发到父 SSE 流。
 from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.research.services.event_publishing import DeepResearchEventPublisher
-from Django_xm.apps.research.services.resume_protocol import handle_resume_interrupt
+from Django_xm.apps.research.services.patches import (
+    _DeepAgentExecutor,
+    _extract_ai_response,
+)
 from Django_xm.apps.research.services.result_extraction import (
     apply_short_report_disk_fallback,
     extract_files_info,
     scan_disk_files,
 )
-from Django_xm.apps.research.services.patches import (
-    _DeepAgentExecutor,
-    _extract_ai_response,
-)
+from Django_xm.apps.research.services.resume_protocol import handle_resume_interrupt
 
 logger = get_logger(__name__)
 
@@ -412,7 +412,8 @@ class OfficialDeepAgentAdapter:
             if not budget_guard.enabled:
                 return None
             try:
-                info = budget_guard.check(usage_cb.total_tokens if usage_cb is not None else 0)
+                # acheck：基线聚合离环（同 loop.py 事件循环内同步 ORM 会炸）
+                info = await budget_guard.acheck(usage_cb.total_tokens if usage_cb is not None else 0)
             except Exception as e:
                 logger.warning(f"[OfficialDeepAgent] 会话预算检查失败（忽略）: {e}")
                 return None
@@ -704,6 +705,11 @@ class OfficialDeepAgentAdapter:
                     # 捕获 fallback 结果事件
                     if event.get("type") == "deep_agent_fallback_result":
                         fallback_result = event.get("data")
+
+                # 终态边界冲刷（阶段 2，D2 边界红线同构）：完成/回退/业务等待挂起
+                # 返回前冲刷全部子代理正文节流窗口——pending 若不冲刷将随流结束
+                # 永久丢失（最终态必须送达；幂等，无 pending 时 no-op）。
+                await event_publisher.flush_all_subagent_content()
 
                 # 如果触发回退，返回 fallback 结果
                 if fallback_result is not None:

@@ -2,8 +2,8 @@ import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
@@ -63,6 +63,14 @@ SENSITIVE_FILE_SUFFIXES = (".pem", ".key", ".pfx", ".p12")
 # 目录级敏感项：Django settings/ 配置目录、SSH 与 git 内部目录
 SENSITIVE_PATH_PARTS = frozenset({"settings", ".ssh", ".git"})
 
+# 文件内容预算（安全修复 2.3）：常量名/取值/报错与截断文案完全对齐
+# file_reader.py 口径（MAX_FILE_SIZE 超限拒绝读取；MAX_CONTENT_LENGTH
+# 超限截断内容并附截断标记）。本模块不能反向导入 file_reader
+# （file_reader 已导入本模块的 check_path_allowed，会循环导入），
+# 因此在此以同值常量对齐，修改时两处必须同步。
+MAX_FILE_SIZE = 10 * 1024 * 1024
+MAX_CONTENT_LENGTH = 50000
+
 
 def is_sensitive_path(path: Path) -> bool:
     """判断路径是否命中敏感文件保护清单（.env / settings / 私钥 / 证书等）。"""
@@ -92,6 +100,18 @@ def check_path_allowed(path: Path, anchor: Path | None = None) -> str | None:
     if not resolved.is_relative_to(boundary):
         return f"错误：拒绝访问：路径超出{label}边界（仅允许 {boundary} 内的文件）: {path}"
     return None
+
+
+def _apply_content_budget(content: str) -> str:
+    """内容长度预算（2.3）：超 MAX_CONTENT_LENGTH 截断并附截断标记。
+
+    截断文案与 file_reader.read_file_content 完全一致（口径单一）。
+    """
+    if len(content) > MAX_CONTENT_LENGTH:
+        return content[:MAX_CONTENT_LENGTH] + (
+            f"\n\n... [文件内容过长，已截断，原始长度: {len(content)} 字符]"
+        )
+    return content
 
 
 class ResearchFileSystem:
@@ -214,10 +234,13 @@ class ResearchFileSystem:
                 logger.warning("🚫 文件读取被拒绝: %s（%s）", relative_path, deny_reason)
                 return deny_reason
             try:
+                # 大小上限（2.3，对齐 file_reader 口径）：超限拒绝读取
+                if file_path.stat().st_size > MAX_FILE_SIZE:
+                    return f"错误：文件过大（超过 {MAX_FILE_SIZE // (1024 * 1024)}MB）: {relative_path}"
                 with open(file_path, encoding="utf-8") as f:
                     content = f.read()
                 logger.info(f"📖 读取文件: {file_path}")
-                return content
+                return _apply_content_budget(content)
             except FileNotFoundError:
                 return f"错误：文件不存在: {relative_path}"
             except Exception as e:
@@ -238,10 +261,13 @@ class ResearchFileSystem:
             return deny_reason
 
         try:
+            # 大小上限（2.3，对齐 file_reader 口径）：超限拒绝读取
+            if file_path.stat().st_size > MAX_FILE_SIZE:
+                return f"错误：文件过大（超过 {MAX_FILE_SIZE // (1024 * 1024)}MB）: {relative_path}"
             with open(file_path, encoding="utf-8") as f:
                 content = f.read()
             logger.info(f"📖 读取文件: {file_path}")
-            return content
+            return _apply_content_budget(content)
         except FileNotFoundError:
             return f"错误：文件不存在: {Path(relative_path).name}"
         except Exception as e:
@@ -250,7 +276,19 @@ class ResearchFileSystem:
             return error_msg
 
     def list_files(self, subdirectory: str = "notes", pattern: str = "*") -> str:
+        # 安全边界（F2）：subdirectory 为 LLM 可控参数，先显式拒绝穿越与绝对路径
+        if self._is_path_traversal(subdirectory):
+            return "错误：不允许使用路径遍历（.. 或编码绕过）"
+        if self._is_absolute_path(subdirectory):
+            return "错误：不允许使用绝对路径（仅允许会话工作区内的子目录）"
+
         search_dir = self.workspace_path / subdirectory
+        # pathlib 语义下绝对路径子目录会整体覆盖 workspace 前缀，
+        # 最终落点必须收敛回会话工作区内（与 write_file/read_file 同款校验）
+        deny_reason = check_path_allowed(search_dir, anchor=self.workspace_path)
+        if deny_reason:
+            logger.warning("🚫 目录列举被拒绝: %s（%s）", subdirectory, deny_reason)
+            return deny_reason
 
         if not search_dir.exists():
             return "目录不存在或为空"
@@ -272,30 +310,20 @@ class ResearchFileSystem:
         except Exception as e:
             return f"列出文件失败: {e!s}"
 
-    def delete_file(self, relative_path: str, subdirectory: str = "notes") -> str:
-        if ".." in relative_path:
-            return "错误：不允许使用 .. 路径"
-
-        rel = Path(relative_path)
-        if len(rel.parts) > 1:
-            file_path = self.workspace_path / rel
-        else:
-            file_path = self.workspace_path / subdirectory / rel.name
-
-        try:
-            if file_path.exists():
-                file_path.unlink()
-                logger.info(f"🗑️ 删除文件: {file_path}")
-                return f"成功删除文件: {Path(relative_path).name}"
-            else:
-                return f"文件不存在: {Path(relative_path).name}"
-        except Exception as e:
-            error_msg = f"删除文件失败: {e!s}"
-            logger.exception(error_msg)
-            return error_msg
-
     def search_files(self, keyword: str, subdirectory: str = "notes") -> str:
+        # 安全边界（F2）：subdirectory 为 LLM 可控参数，先显式拒绝穿越与绝对路径
+        if self._is_path_traversal(subdirectory):
+            return "错误：不允许使用路径遍历（.. 或编码绕过）"
+        if self._is_absolute_path(subdirectory):
+            return "错误：不允许使用绝对路径（仅允许会话工作区内的子目录）"
+
         search_dir = self.workspace_path / subdirectory
+        # pathlib 语义下绝对路径子目录会整体覆盖 workspace 前缀，且本方法
+        # 还会读取文件内容，最终落点必须收敛回会话工作区内
+        deny_reason = check_path_allowed(search_dir, anchor=self.workspace_path)
+        if deny_reason:
+            logger.warning("🚫 目录搜索被拒绝: %s（%s）", subdirectory, deny_reason)
+            return deny_reason
 
         if not search_dir.exists():
             return "目录不存在"
@@ -306,6 +334,15 @@ class ResearchFileSystem:
             for file_path in search_dir.rglob("*"):
                 if file_path.is_file():
                     try:
+                        # 内容预算（2.3，对齐 file_reader 大小语义）：超过
+                        # MAX_FILE_SIZE 的文件跳过匹配，避免全量读入内存
+                        if file_path.stat().st_size > MAX_FILE_SIZE:
+                            logger.debug(
+                                "搜索时跳过超大文件(>%dMB): %s",
+                                MAX_FILE_SIZE // (1024 * 1024),
+                                file_path,
+                            )
+                            continue
                         with open(file_path, encoding="utf-8") as f:
                             content = f.read()
                             if keyword.lower() in content.lower():
@@ -349,9 +386,12 @@ def get_filesystem(
 
 
 class FilesystemContextMixin:
-    """从 LangGraph RunnableConfig 捕获会话上下文，解析文件系统目录归属。
+    """从本次调用的 RunnableConfig 解析文件系统目录归属。
 
-    范式与 spawn_sub_agent 一致（覆写 invoke/ainvoke 捕获 configurable）：
+    ``config`` 由 BaseTool 执行机制按签名注入（``config: RunnableConfig`` 参数，
+    官方 config 注入机制；经 AsyncToolMixin 转发到同步 ``_run``），按调用局部
+    读取 ``config["configurable"]``——本 mixin 不持有任何实例运行状态（工具为
+    模块级单例，实例字段缓存会导致跨会话并发串号）：
     - ``configurable.thread_id``：主 agent = session_id / research task id；子代理 = subagent_xxx。
     - ``configurable.user_id`` / ``configurable.session_id``：主 agent 由 chat_service /
       research_runner 写入，子代理由 langgraph_adapter._build_configurable 逐层传递
@@ -362,35 +402,16 @@ class FilesystemContextMixin:
     2. 兜底：上下文缺失时以 thread_id 建目录（避免崩溃）。
     """
 
-    # 工具为模块级单例，运行时捕获值保存在实例上；LangGraph 工具调用
-    # 前总是先 invoke/ainvoke 重新捕获，覆盖前一次残留（与 spawn 工具同模式）
-    _captured_thread_id: str = ""
-    _captured_user_id: Any = None
-    _captured_session_id: str = ""
-    _captured_chat_session_id: str = ""
-
-    def invoke(self, input, config=None, **kwargs) -> Any:
-        self._capture_configurable(config)
-        return super().invoke(input, config=config, **kwargs)
-
-    async def ainvoke(self, input, config=None, **kwargs) -> Any:
-        self._capture_configurable(config)
-        return await super().ainvoke(input, config=config, **kwargs)
-
-    def _capture_configurable(self, config) -> None:
-        if isinstance(config, dict):
-            configurable = config.get("configurable", {})
-            if isinstance(configurable, dict):
-                self._captured_thread_id = str(configurable.get("thread_id", "") or "")
-                self._captured_user_id = configurable.get("user_id")
-                self._captured_session_id = str(configurable.get("session_id", "") or "")
-                self._captured_chat_session_id = str(configurable.get("chat_session_id", "") or "")
-
-    def _resolve_filesystem(self) -> ResearchFileSystem:
-        thread_id = self._captured_thread_id or ""
-        user_id = self._captured_user_id
+    def _resolve_filesystem(self, config: RunnableConfig = None) -> ResearchFileSystem:
+        configurable = (config or {}).get("configurable") or {}
+        thread_id = str(configurable.get("thread_id", "") or "")
+        user_id = configurable.get("user_id")
         # session_id 缺失（历史/异常场景）回退 chat_session_id，再回退 thread_id
-        session_id = self._captured_session_id or self._captured_chat_session_id or None
+        session_id = (
+            str(configurable.get("session_id", "") or "")
+            or str(configurable.get("chat_session_id", "") or "")
+            or None
+        )
         return get_filesystem(thread_id, user_id=user_id, session_id=session_id)
 
 
@@ -446,13 +467,13 @@ class FsWriteFileTool(FilesystemContextMixin, AsyncToolMixin, BaseTool):
     )
     args_schema: type[BaseModel] = FsWriteFileInput
 
-    def _run(self, relative_path: str, content: str, thread_id: str) -> str:
+    def _run(self, relative_path: str, content: str, thread_id: str, config: RunnableConfig = None) -> str:
         """写入文件
 
         审批由 ApprovalMiddleware 统一处理，工具层不参与审批判断。
         绝对路径写入到达此方法时已通过审批。
         """
-        fs = self._resolve_filesystem()
+        fs = self._resolve_filesystem(config)
         # 相对路径根据文件名匹配子目录（会话文件系统内）
         subdirectory = "notes"
         if "plans" in relative_path:
@@ -471,12 +492,13 @@ class FsReadFileTool(FilesystemContextMixin, AsyncToolMixin, BaseTool):
         "适用场景：需要查看之前保存的文件内容、回顾笔记或计划。"
         "不适用：写入文件（应使用 fs_write_file）、浏览目录（应使用 fs_list_files）。"
         "参数：relative_path-相对路径文件名（必填），thread_id-线程ID（必填，系统会话上下文自动决定存储目录，传当前会话标识即可）。"
-        "边界：禁止使用'..'路径穿越；仅允许读取数据目录内文件；禁止读取 .env、settings.py、私钥等敏感文件；文件不存在时返回错误提示。"
+        "边界：禁止使用'..'路径穿越；仅允许读取数据目录内文件；禁止读取 .env、settings.py、私钥等敏感文件；"
+        "文件大小限制10MB（超限拒绝读取），内容超过50000字符自动截断；文件不存在时返回错误提示。"
     )
     args_schema: type[BaseModel] = FsReadFileInput
 
-    def _run(self, relative_path: str, thread_id: str) -> str:
-        fs = self._resolve_filesystem()
+    def _run(self, relative_path: str, thread_id: str, config: RunnableConfig = None) -> str:
+        fs = self._resolve_filesystem(config)
         result = fs.read_file(relative_path)
         # 判断是否为错误结果
         is_error = result.startswith(("错误", "读取文件失败"))
@@ -502,8 +524,8 @@ class FsListFilesTool(FilesystemContextMixin, AsyncToolMixin, BaseTool):
     )
     args_schema: type[BaseModel] = FsListFilesInput
 
-    def _run(self, thread_id: str, subdirectory: str = "notes") -> str:
-        fs = self._resolve_filesystem()
+    def _run(self, thread_id: str, subdirectory: str = "notes", config: RunnableConfig = None) -> str:
+        fs = self._resolve_filesystem(config)
         return fs.list_files(subdirectory)
 
 
@@ -521,8 +543,8 @@ class FsSearchFilesTool(FilesystemContextMixin, AsyncToolMixin, BaseTool):
     )
     args_schema: type[BaseModel] = FsSearchFilesInput
 
-    def _run(self, keyword: str, thread_id: str, subdirectory: str = "notes") -> str:
-        fs = self._resolve_filesystem()
+    def _run(self, keyword: str, thread_id: str, subdirectory: str = "notes", config: RunnableConfig = None) -> str:
+        fs = self._resolve_filesystem(config)
         return fs.search_files(keyword, subdirectory)
 
 

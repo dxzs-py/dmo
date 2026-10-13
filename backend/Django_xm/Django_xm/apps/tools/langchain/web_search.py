@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from Django_xm.apps.tools.base import AsyncToolMixin, SafeConfigMixin
 from Django_xm.apps.tools.errors import TOOL_VERSION, StandardToolResult, ToolStatus
+from Django_xm.apps.tools.langchain.external_content import wrap_external_content
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,64 @@ def create_tavily_search_tool(
         raise
 
 
+def _classify_search_error(e: Exception) -> str:
+    """将搜索异常分类为用户可读文案（安全修复 2.4）。
+
+    原始异常文本（可能含 API Key 片段、内部 URL、请求头等敏感信息）
+    不得进入模型上下文——仅按错误类别返回固定文案，原始异常由调用方
+    记录到日志留痕。
+
+    分类维度：认证/配额、网络连接、服务端不可用、未知（兜底）。
+    "无结果"不属异常路径（结果为空时走 PARTIAL 分支返回固定文案）。
+    """
+    detail = f"{type(e).__name__}: {e}".lower()
+    if any(
+        kw in detail
+        for kw in (
+            "401",
+            "403",
+            "429",
+            "unauthorized",
+            "forbidden",
+            "invalid api key",
+            "api key",
+            "authentication",
+            "quota",
+            "rate limit",
+            "exceeded",
+        )
+    ):
+        return "搜索失败：搜索服务认证或配额异常，请检查 TAVILY_API_KEY 配置或稍后重试。"
+    if any(
+        kw in detail
+        for kw in (
+            "timeout",
+            "timed out",
+            "connection",
+            "network",
+            "unreachable",
+            "getaddrinfo",
+            "ssl",
+            "dns",
+        )
+    ):
+        return "搜索失败：网络连接异常，请检查网络后重试。"
+    if any(
+        kw in detail
+        for kw in (
+            "500",
+            "502",
+            "503",
+            "504",
+            "service unavailable",
+            "internal server error",
+            "bad gateway",
+        )
+    ):
+        return "搜索失败：搜索服务暂时不可用，请稍后重试。"
+    return "搜索失败：搜索服务返回异常，请稍后重试或调整搜索关键词。"
+
+
 class WebSearchInput(BaseModel):
     query: str = Field(description="搜索查询关键词")
 
@@ -86,15 +145,17 @@ class WebSearchTool(AsyncToolMixin, BaseTool):
                     source="tavily",
                 ).to_tool_message()
 
+            # CT-04：搜索快照属外部内容，进模型上下文前按 B4 语义包裹
+            #（包裹在截断之后，信封完整；错误分支为系统生成文案，不包裹）
             if isinstance(results, str):
                 return StandardToolResult(
-                    content=results,
+                    content=wrap_external_content("网页搜索 tavily", results),
                     source="tavily",
                 ).to_tool_message()
 
             if not isinstance(results, list):
                 return StandardToolResult(
-                    content=str(results),
+                    content=wrap_external_content("网页搜索 tavily", str(results)),
                     source="tavily",
                 ).to_tool_message()
 
@@ -115,14 +176,18 @@ class WebSearchTool(AsyncToolMixin, BaseTool):
             output = "搜索结果：\n\n" + "\n\n".join(formatted_results)
             logger.info(f"🔍 搜索完成，返回 {len(results)} 条结果")
             return StandardToolResult(
-                content=output,
+                content=wrap_external_content("网页搜索 tavily", output),
                 metadata={"result_count": len(results)},
                 source="tavily",
             ).to_tool_message()
 
         except Exception as e:
-            error_msg = f"搜索失败: {e!s}"
-            logger.exception(error_msg)
+            # 安全修复 2.4：异常脱敏——原始异常（可能携带 API Key 片段/内部
+            # URL/请求头）只写日志留痕，进入模型上下文的仅分类后的固定文案。
+            # 同文件另一处 except（create_tavily_search_tool）为 logger 后原样
+            # raise，异常最终汇入本分支统一脱敏，不直接外泄。
+            logger.warning("搜索失败(%s): %s", type(e).__name__, e)
+            error_msg = _classify_search_error(e)
             return StandardToolResult(
                 content=error_msg,
                 status=ToolStatus.ERROR,

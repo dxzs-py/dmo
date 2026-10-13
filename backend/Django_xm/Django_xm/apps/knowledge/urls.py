@@ -5,6 +5,7 @@ from .views_kb import (
     KnowledgeBaseDocumentDeleteView,
     KnowledgeBaseDocumentListView,
     KnowledgeBaseListView,
+    KnowledgeBaseRebuildView,
     KnowledgeBaseSearchView,
 )
 from .views_rag import (
@@ -34,4 +35,6 @@ urlpatterns = [
         name="knowledge_bases_document_delete",
     ),
     path("knowledge-bases/<str:kb_id>/search/", KnowledgeBaseSearchView.as_view(), name="knowledge_bases_search"),
+    # 重建索引（R-UX-07 用户侧入口，复用 kb_service.rebuild_index_from_source_files）
+    path("knowledge-bases/<str:kb_id>/rebuild/", KnowledgeBaseRebuildView.as_view(), name="knowledge_bases_rebuild"),
 ]

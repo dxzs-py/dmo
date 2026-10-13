@@ -84,7 +84,7 @@ class LoadAndRetrieveTests(unittest.TestCase):
             mock.patch(f"{_RAG_RETRIEVAL}.UnifiedRagPipeline", pipeline_cls),
             mock.patch(f"{_RAG_RETRIEVAL}.load_kb_documents", return_value=(list(kb_docs or []), 12)),
         ):
-            docs, degraded = _load_and_retrieve("user_1_kb1", "RAG 检索", k=5)
+            docs, degraded = _load_and_retrieve("user_1_kb1", "RAG 检索", mock.MagicMock(name="embeddings"), k=5)
         return docs, degraded, instance, manager
 
     def test_normal_path_delegates_to_pipeline(self):
@@ -140,10 +140,11 @@ class RetrievalNodeTests(unittest.TestCase):
         doc_a_dup = _doc("共同内容", "a.md")
         doc_c = _doc("片段C", "c.md")
 
-        def fake_load(user_index_name, query, k=5):
+        def fake_load(user_index_name, query, embeddings, k=5):
             return ([doc_a, doc_b] if "kb1" in user_index_name else [doc_a_dup, doc_c]), False
 
         with (
+            mock.patch(f"{_RN}.get_embeddings", return_value=mock.MagicMock(name="embeddings")),
             mock.patch(f"{_RN}._load_and_retrieve", side_effect=fake_load),
             mock.patch(f"{_RN}._run_web_search", return_value=[]),
         ):
@@ -175,7 +176,7 @@ class RetrievalNodeTests(unittest.TestCase):
         doc_main = _doc("主查询命中", "a.md")
         doc_supp = _doc("关键点补充", "a.md")
 
-        def fake_load(user_index_name, query, k=5):
+        def fake_load(user_index_name, query, embeddings, k=5):
             if query == "RAG 检索":
                 return [doc_main], False
             if query == "向量检索" and k == 2:
@@ -183,6 +184,7 @@ class RetrievalNodeTests(unittest.TestCase):
             return [], False
 
         with (
+            mock.patch(f"{_RN}.get_embeddings", return_value=mock.MagicMock(name="embeddings")),
             mock.patch(f"{_RN}._load_and_retrieve", side_effect=fake_load),
             mock.patch(f"{_RN}._run_web_search", return_value=[]),
         ):
@@ -195,6 +197,7 @@ class RetrievalNodeTests(unittest.TestCase):
         doc_a = _doc("知识库片段", "a.md")
 
         with (
+            mock.patch(f"{_RN}.get_embeddings", return_value=mock.MagicMock(name="embeddings")),
             mock.patch(f"{_RN}._load_and_retrieve", return_value=([doc_a], False)),
             mock.patch(f"{_RN}._run_web_search", return_value=["联网结果"]),
         ):

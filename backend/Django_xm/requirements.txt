@@ -46,6 +46,9 @@ langchain-mcp-adapters>=0.1.0
 langchain-tavily>=0.2.17
 langchain-text-splitters>=1.1.1
 langchain-unstructured>=1.0.1
+# FlashRank 重排序：langchain_community FlashrankRerank 的本地 ONNX 推理后端
+# （retrieval_service.FLASHRANK_AVAILABLE 探测；缺失时 Reranker 降级禁用）
+flashrank>=0.2.10
 langgraph>=1.1.3
 langgraph-checkpoint-sqlite>=3.0.3
 # 同时提供 langgraph.checkpoint.postgres 与 langgraph.store.postgres 两个命名空间

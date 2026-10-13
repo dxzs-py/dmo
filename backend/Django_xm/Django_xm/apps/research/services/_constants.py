@@ -4,9 +4,14 @@
 ``apps/research/services/adapter.py`` 的重复定义
 （Task 14.4 + Task 18.2）。
 
-单一来源：所有研究相关工具名集合、沙箱目录等常量在此定义，
-避免两处定义不一致导致行为漂移
-（曾出现 ``_SANDBOX_ALLOWED_DIRS`` 在 deep_builder 与 adapter 不一致的 bug）。
+单一来源：所有研究相关常量在此定义，避免两处定义不一致导致行为漂移。
+
+spec 任务 4.3 环 3 破除时两常量移出本模块（消除 agent_hub → research
+反向依赖边的常量源）：
+- ``SANDBOX_ALLOWED_DIRS`` → ``Django_xm.common.sandbox.constants``（机制层，
+  沙箱目录布局与业务 app 无关）；
+- ``RETRIEVER_TOOL_NAME_PREFIXES`` → ``Django_xm.common.constants``（机制层，
+  工具命名约定）。
 """
 
 from __future__ import annotations
@@ -29,30 +34,4 @@ SEARCH_TOOL_NAMES: Final[frozenset[str]] = frozenset(
         "searx_search",
         "brave_search",
     }
-)
-
-
-# 知识库检索工具名前缀（用于判断是否已加载检索工具）
-RETRIEVER_TOOL_NAME_PREFIXES: Final[tuple[str, ...]] = (
-    "knowledge_base_",
-    "knowledge_bases",
-    "knowledge_retrieve",
-)
-
-
-# ============================================================================
-# 沙箱目录配置
-# ============================================================================
-
-# Agent 工具区允许写入的子目录
-# /sandbox/ 是 Agent 工具区（skills、MCP 工具、第三方依赖等），
-# 只允许预定义的工具子目录写入，其他 /sandbox/ 路径一律拒绝，
-# 引导 Agent 将研究产出写入 /notes/、/plans/、/reports/。
-SANDBOX_ALLOWED_DIRS: Final[tuple[str, ...]] = (
-    "/sandbox/skills/",
-    "/sandbox/mcp/",
-    "/sandbox/deps/",
-    "/sandbox/tmp/",
-    "/sandbox/artifacts/",  # 工具结果缓存（系统自动管理）
-    "/sandbox/inherited/",  # 续研时继承的父任务文件，供 agent 读取参考
 )

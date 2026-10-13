@@ -26,6 +26,9 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
 
+from django.db import transaction
+from django.db.models import Q
+
 from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.knowledge.config import settings
 from Django_xm.apps.knowledge.vector_store.base import VectorStoreBackend
@@ -216,6 +219,35 @@ class IndexManager:
 
     # ==================== 元数据管理 ====================
 
+    @staticmethod
+    def _user_scope_denied(name: str, user_id: int | None) -> bool:
+        """user 归属守卫（3.2 权限过滤）。
+
+        user_id 提供时，索引名必须符合 ``user_{user_id}_`` 前缀约定
+        （单源规则 views_utils.build_user_index_name 的反向校验）——攻击者
+        即使知道他人完整内部索引名（如 user_2_xxx），也无法经带 user_id 的
+        调用链探测/读取该索引。
+
+        user_id=None 为**系统内部可信路径**：调用方为 IndexManager 内部编排
+        （load_index/add_documents/remove_* 等）或管理命令/管理员视图，索引名
+        已在更外层经 build_user_index_name 用真实 user 构造，此处不再重复过滤。
+        """
+        return user_id is not None and not name.startswith(f"user_{user_id}_")
+
+    @staticmethod
+    def _scoped_metadata_qs(name: str, user_id: int | None):
+        """IndexMetadata 查询集的 user 归属过滤（3.2 第二层防御）。
+
+        user_id 提供时仅匹配"该用户拥有或历史遗留无主（user 为 NULL）"的行，
+        防止命名前缀与 DB 归属不一致时（user_1_xxx 行实际归属 user_2）越权命中。
+        """
+        from Django_xm.apps.knowledge.models import IndexMetadata
+
+        qs = IndexMetadata.objects.filter(name=name)
+        if user_id is not None:
+            qs = qs.filter(Q(user_id=user_id) | Q(user__isnull=True))
+        return qs
+
     def _save_metadata(self, name: str, metadata: dict[str, Any], store_type: str | None = None) -> None:
         """保存元数据
 
@@ -253,26 +285,41 @@ class IndexManager:
         except Exception as e:
             logger.warning(f"元数据写入数据库失败（不影响主流程）: {e}")
 
-    def load_metadata(self, name: str) -> dict[str, Any] | None:
+    def load_metadata(
+        self,
+        name: str,
+        user_id: int | None = None,
+        store_type: str | None = None,
+    ) -> dict[str, Any] | None:
         """加载元数据（**公共 API，跨模块契约**）。
 
         PGVector 模式：仅从数据库读取（IndexMetadata）
         FAISS/Chroma 模式：仅从文件系统读取（metadata.json）
 
+        权限过滤（3.2）：user_id 提供时执行归属校验——索引名不符合
+        ``user_{user_id}_`` 前缀约定直接返回 None（越权视角等同不存在），
+        DB 查询同时按 user 归属过滤（_scoped_metadata_qs）。
+        user_id=None 为系统内部可信路径（见 _user_scope_denied）。
+
+        store_type：调用方已探测过的存储类型（如 add_documents 链）可传参复用，
+        跳过 _detect_store_type 的重复 DB/文件系统探测（3.3 N+1 收敛）。
+
         ⚠️ 本方法是被 **chat**（`chat/services/rag_chat_service.py`）与
         **ai_engine**（`ai_engine/settings_views.py`）跨模块调用的公共契约，
-        同时被 knowledge 内 kb_service / views_rag / rebuild_index 使用（共 9 处）。
+        同时被 knowledge 内 kb_service / views_rag / rebuild_index 使用。
         重命名或改签名前**必须**同步所有调用点，否则会静默破坏其他 app。
         """
-        # 判断 store_type
-        store_type = self._detect_store_type(name)
+        if self._user_scope_denied(name, user_id):
+            logger.warning(f"load_metadata 拒绝非归属索引访问: user_id={user_id}, index={name}")
+            return None
+
+        # 判断 store_type（调用方已探测时传参复用，避免重复探测）
+        store_type = store_type or self._detect_store_type(name, user_id=user_id)
 
         if store_type == "pgvector":
             # PGVector: 仅从数据库读取
             try:
-                from Django_xm.apps.knowledge.models import IndexMetadata
-
-                record = IndexMetadata.objects.filter(name=name).first()
+                record = self._scoped_metadata_qs(name, user_id).first()
                 if record:
                     return {
                         "name": record.name,
@@ -301,13 +348,19 @@ class IndexManager:
                 logger.exception("加载元数据失败")
                 return None
 
-    def _detect_store_type(self, name: str) -> str:
-        """检测索引的存储类型：优先从数据库判断，回退到文件系统"""
+    def _detect_store_type(self, name: str, user_id: int | None = None) -> str:
+        """检测索引的存储类型：优先从数据库判断，回退到文件系统
+
+        权限过滤（3.2）：user_id 提供且索引名不属于该用户时，不做任何探测
+        （DB/文件系统存在性均为他人侧信息），直接返回默认存储类型。
+        """
+        if self._user_scope_denied(name, user_id):
+            logger.warning(f"_detect_store_type 拒绝非归属索引探测: user_id={user_id}, index={name}")
+            return settings.vector_store_type
+
         # 1. 尝试从数据库判断
         try:
-            from Django_xm.apps.knowledge.models import IndexMetadata
-
-            record = IndexMetadata.objects.filter(name=name).first()
+            record = self._scoped_metadata_qs(name, user_id).first()
             if record:
                 return record.store_type
         except Exception:
@@ -341,14 +394,27 @@ class IndexManager:
             logger.warning(f"探测 Embedding 维度失败: {e}")
             return None
 
-    def get_store_type(self, name: str) -> str:
+    def get_store_type(self, name: str, user_id: int | None = None) -> str:
         """获取索引的存储类型（**公共 API，跨模块契约**）。
 
         ⚠️ 与 load_metadata 同为跨模块公共契约，被 ai_engine
         （`ai_engine/settings_views.py`）与 knowledge 内 rebuild_index 调用。
         修改前必须同步所有调用点。
+
+        权限过滤（3.2）：user_id 语义同 load_metadata（None=系统内部可信路径）。
         """
-        return self._detect_store_type(name)
+        return self._detect_store_type(name, user_id=user_id)
+
+    def get_score_semantics(self, name: str) -> str:
+        """获取索引后端的原生分数语义（**公共 API**，C-2arch 收敛单源）。
+
+        返回 "similarity"（越大越相关）或 "distance"（pgvector cosine 距离，
+        越小越相关）。判定按后端 ``native_score_semantics`` 类属性声明收敛，
+        调用方（kb_service.search_knowledge_base / views_rag.SearchAllView）
+        不得再按 store_type 字符串自行硬判。
+        """
+        backend = self.get_backend(self.get_store_type(name))
+        return getattr(backend, "native_score_semantics", "similarity")
 
     def _set_index_status(self, name: str, store_type: str, status: str, error_message: str = "") -> None:
         """更新 IndexMetadata 状态"""
@@ -364,13 +430,25 @@ class IndexManager:
                 },
             )
             if not created:
-                # 尝试使用状态机转换
-                try:
-                    record.transition_to(status)
-                except ValueError:
-                    # 非法转换时直接设置
-                    record.status = status
-                    record.save(update_fields=["status", "updated_at"])
+                if record.status == status:
+                    # 同状态写入：状态机无自环转换，幂等跳过（避免误报非法转换）
+                    pass
+                else:
+                    # 尝试使用状态机转换
+                    try:
+                        record.transition_to(status)
+                    except ValueError:
+                        # B15：非法转换不再静默直写——error 留痕（状态机违规通常意味着
+                        # 前置流程状态未按机演进，如构建崩溃残留 building）。仍回退直写
+                        # 保持本方法尽力而为契约（状态字段为诊断元数据，调用方不做控制流），
+                        # 但违规必须可被日志追查
+                        logger.error(
+                            f"IndexMetadata 非法状态转换（回退直写）: index={name}, "
+                            f"{record.status} -> {status}，"
+                            f"允许的转换见 IndexMetadata.transition_to"
+                        )
+                        record.status = status
+                        record.save(update_fields=["status", "updated_at"])
 
             if error_message:
                 record.error_message = error_message
@@ -451,10 +529,11 @@ class IndexManager:
             if documents and embeddings:
                 vector_store = backend.create(documents, embeddings, collection_name=name, **kwargs)
 
-                # 非 PGVector 类型需要手动保存
-                if effective_store_type != "pgvector":
-                    index_path = self._get_index_path(name)
-                    backend.save(vector_store, str(index_path))
+                # C-1arch：无条件 save（pgvector/inmemory 的 save 为 no-op，
+                # faiss/chroma/milvus 落盘持久化）——后端持久化能力由各自
+                # save 实现声明，IndexManager 不再按 store_type 字符串硬判
+                index_path = self._get_index_path(name)
+                backend.save(vector_store, str(index_path))
 
             # 保存元数据
             active_model = (
@@ -519,11 +598,10 @@ class IndexManager:
                 # 更新 IndexMetadata 状态为 ERROR
                 self._set_index_status(name, effective_store_type, "error", error_message=str(e)[:500])
 
-            # 清理文件系统残留
-            if effective_store_type != "pgvector":
-                index_path = self._get_index_path(name)
-                if index_path.exists():
-                    shutil.rmtree(index_path)
+            # 清理文件系统残留（pgvector/inmemory 无该路径，exists() 为 False 时 no-op）
+            index_path = self._get_index_path(name)
+            if index_path.exists():
+                shutil.rmtree(index_path)
             raise
 
     def create_empty_index(
@@ -671,13 +749,27 @@ class IndexManager:
             logger.exception("删除索引失败")
             return False
 
-    def index_exists(self, name: str) -> bool:
-        """检查索引是否存在"""
-        # 1. 检查数据库
-        try:
-            from Django_xm.apps.knowledge.models import IndexMetadata
+    def index_exists(
+        self,
+        name: str,
+        user_id: int | None = None,
+        store_type: str | None = None,
+    ) -> bool:
+        """检查索引是否存在
 
-            if IndexMetadata.objects.filter(name=name).exists():
+        权限过滤（3.2）：user_id 提供且索引名不属于该用户时直接返回 False
+        （越权视角等同不存在，不泄露他人索引的存在性）；DB 检查同时按
+        user 归属过滤。user_id=None 为系统内部可信路径（见 _user_scope_denied）。
+        store_type：调用方已探测过的存储类型传参复用，跳过 Backend 段的
+        重复 store_type 探测（3.3 N+1 收敛）。
+        """
+        if self._user_scope_denied(name, user_id):
+            logger.warning(f"index_exists 拒绝非归属索引探测: user_id={user_id}, index={name}")
+            return False
+
+        # 1. 检查数据库（按 user 归属过滤）
+        try:
+            if self._scoped_metadata_qs(name, user_id).exists():
                 return True
         except Exception as e:
             logger.warning(f"index_exists 数据库检查异常: name={name}, error={e}")
@@ -687,7 +779,7 @@ class IndexManager:
             return True
 
         # 3. 检查 Backend
-        store_type = self.get_store_type(name)
+        store_type = store_type or self.get_store_type(name, user_id=user_id)
         try:
             backend = self.get_backend(store_type)
             result = backend.exists(name)
@@ -847,18 +939,28 @@ class IndexManager:
         documents: list[Document],
         embeddings: Embeddings,
     ) -> int:
-        """向现有索引添加文档
+        """向现有索引添加文档（3.3 事务化 + 探测收敛）
 
         幂等保障（方案 A：业务层 content hash 去重）：
         - 基于 metadata.source + page_content SHA256 生成稳定 ID（uuid5）
         - PGVector 通过 ON CONFLICT DO NOTHING 跳过已存在 ID
         - Celery 任务重试场景下相同文档不会产生重复向量记录
+
+        一致性窗口（3.3 最小窗口方案）：
+        - 向量库写入无法参与 DB 事务 → 固定顺序"先向量、后元数据"；
+        - 元数据侧两写（IndexMetadata 行 + num_documents 计数）包
+          transaction.atomic，同滚保证行与计数一致；
+        - 向量已写入而元数据落库失败时，补偿删除本批向量（尽力而为，
+          见 _compensate_added_vectors），补偿失败仅 error 留痕不掩盖原错误。
+
+        探测收敛（3.3 N+1）：store_type 仅探测一次，经参数传给
+        index_exists / load_metadata（此前同批重复触发 3-5 次 IndexMetadata 查询）。
         """
         store_type = self.get_store_type(name)
         backend = self.get_backend(store_type)
         self._cache.remove(name)
 
-        if not self.index_exists(name):
+        if not self.index_exists(name, store_type=store_type):
             raise FileNotFoundError(f"索引不存在：{name}")
 
         if not documents:
@@ -869,8 +971,9 @@ class IndexManager:
 
         logger.info(f"向索引 {name} 添加 {len(documents)} 个文档（携带稳定 ID）")
 
+        vector_store = None
         try:
-            metadata = self.load_metadata(name)
+            metadata = self.load_metadata(name, store_type=store_type)
             is_empty_index = metadata and metadata.get("num_documents", 0) == 0
 
             if is_empty_index:
@@ -883,10 +986,9 @@ class IndexManager:
                     ids=stable_ids,
                 )
 
-                # 非 PGVector 需要手动保存
-                if store_type != "pgvector":
-                    index_path = self._get_index_path(name)
-                    backend.save(vector_store, str(index_path))
+                # C-1arch：无条件 save（pgvector/inmemory 为 no-op）
+                index_path = self._get_index_path(name)
+                backend.save(vector_store, str(index_path))
             else:
                 # 加载现有向量库并添加文档（携带稳定 ID）
                 vector_store = self.load_index(name, embeddings)
@@ -897,28 +999,34 @@ class IndexManager:
                     store_type,
                 )
 
-                # 非 PGVector 需要手动保存
-                if store_type != "pgvector":
-                    index_path = self._get_index_path(name)
-                    backend.save(vector_store, str(index_path))
+                # C-1arch：无条件 save（pgvector/inmemory 为 no-op）
+                index_path = self._get_index_path(name)
+                backend.save(vector_store, str(index_path))
 
-            # 更新元数据
-            if metadata:
-                old_count = metadata.get("num_documents", 0)
-                metadata["num_documents"] = old_count + len(documents)
-                metadata["updated_at"] = datetime.now(UTC).isoformat()
-                # 记录实际激活的 embedding 模型（provider id），与向量数据真实来源一致
-                if embeddings is not None and hasattr(embeddings, "get_active_provider_id"):
-                    active_model = embeddings.get_active_provider_id()
-                    if active_model:
-                        metadata["embedding_model"] = active_model
-                # 补充维度信息（旧索引可能没有此字段）
-                if not metadata.get("embedding_dimension") and embeddings:
-                    metadata["embedding_dimension"] = self._detect_embedding_dimension(embeddings)
-                self._save_metadata(name, metadata, store_type=store_type)
+            # 元数据一致性窗口：行写入与计数更新同事务（失败同滚）
+            try:
+                with transaction.atomic():
+                    # 更新元数据
+                    if metadata:
+                        old_count = metadata.get("num_documents", 0)
+                        metadata["num_documents"] = old_count + len(documents)
+                        metadata["updated_at"] = datetime.now(UTC).isoformat()
+                        # 记录实际激活的 embedding 模型（provider id），与向量数据真实来源一致
+                        if embeddings is not None and hasattr(embeddings, "get_active_provider_id"):
+                            active_model = embeddings.get_active_provider_id()
+                            if active_model:
+                                metadata["embedding_model"] = active_model
+                        # 补充维度信息（旧索引可能没有此字段）
+                        if not metadata.get("embedding_dimension") and embeddings:
+                            metadata["embedding_dimension"] = self._detect_embedding_dimension(embeddings)
+                        self._save_metadata(name, metadata, store_type=store_type)
 
-            # 更新 IndexMetadata 文档数
-            self._update_metadata_doc_count(name, store_type)
+                    # 更新 IndexMetadata 文档数
+                    self._update_metadata_doc_count(name, store_type)
+            except Exception:
+                # 向量成功 + 元数据失败 → 补偿删除本批向量后上抛原始错误
+                self._compensate_added_vectors(vector_store, stable_ids, name)
+                raise
 
             logger.info(f"成功添加 {len(documents)} 个文档到索引 {name}")
             return len(documents)
@@ -926,6 +1034,27 @@ class IndexManager:
         except Exception:
             logger.exception("添加文档失败：")
             raise
+
+    @staticmethod
+    def _compensate_added_vectors(vector_store, stable_ids: list[str], name: str) -> None:
+        """向量写入成功而元数据落库失败时，尽力删除本批已写入向量（3.3）。
+
+        向量库写入不可回滚（最小窗口方案：先向量后元数据），补偿按稳定 ID
+        逐条删除；删除失败仅 error 留痕（残留向量可经重建索引收敛），不再
+        向上抛出——补偿路径异常会掩盖原始元数据错误。非 pgvector 后端的
+        无 ID 回退写入（_add_documents_with_stable_ids 降级分支）无法按 ID
+        精确回收，删除失败同样走该留痕路径。
+        """
+        if vector_store is None:
+            return
+        try:
+            vector_store.delete(stable_ids)
+            logger.warning(f"add_documents 元数据失败，已补偿删除本批向量: index={name}, count={len(stable_ids)}")
+        except Exception as comp_err:
+            logger.error(
+                f"add_documents 向量补偿删除失败（残留向量需重建索引收敛）: "
+                f"index={name}, count={len(stable_ids)}, error={comp_err}"
+            )
 
     def remove_documents(
         self,
@@ -948,8 +1077,13 @@ class IndexManager:
                 logger.warning("未提供 document_ids")
                 return 0
 
-            # 尝试通过 Backend 删除
-            success = backend.remove_documents(name, document_ids)
+            # 3.3 能力矩阵：不支持文档级删除的后端（faiss，supports_remove=False）
+            # 直接走通用回退，不再调用 backend（其默认实现抛 NotImplementedError）；
+            # 支持的后端执行真实删除，返回 False（未命中任何行）才触发回退
+            if backend.supports_remove:
+                success = backend.remove_documents(name, document_ids)
+            else:
+                success = False
 
             if not success:
                 # 回退：加载向量库后通过 VectorStore.delete 删除
@@ -957,9 +1091,9 @@ class IndexManager:
                 if hasattr(vector_store, "delete"):
                     vector_store.delete(document_ids)
 
-                    if store_type != "pgvector":
-                        index_path = self._get_index_path(name)
-                        backend.save(vector_store, str(index_path))
+                    # C-1arch：无条件 save（pgvector/inmemory 为 no-op）
+                    index_path = self._get_index_path(name)
+                    backend.save(vector_store, str(index_path))
                 else:
                     logger.warning("向量库不支持删除操作")
                     return 0
@@ -992,8 +1126,15 @@ class IndexManager:
                 # PGVector: 先尝试 file_name 精确匹配
                 deleted_count = backend.remove_documents_by_metadata(name, "file_name", filename)
                 if deleted_count == 0:
-                    # 回退到 source LIKE 匹配
-                    deleted_count = backend.remove_documents_by_metadata_like(name, "source", f"%{filename}")
+                    # B15：回退到 source LIKE 匹配；文件名中的 LIKE 通配符（% _ \）
+                    # 必须转义，否则 "a_b.pdf" 会误匹配 "axb.pdf" 造成跨文件误删
+                    # （PostgreSQL LIKE 默认转义符为反斜杠，无需 ESCAPE 子句）
+                    escaped_filename = (
+                        filename.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    )
+                    deleted_count = backend.remove_documents_by_metadata_like(
+                        name, "source", f"%{escaped_filename}"
+                    )
             else:
                 # FAISS/Chroma: 需要加载后遍历 docstore
                 vector_store = self.load_index(name, embeddings)
@@ -1012,9 +1153,9 @@ class IndexManager:
                     logger.warning("向量库不支持删除操作")
                     return 0
 
-                if store_type != "pgvector":
-                    index_path = self._get_index_path(name)
-                    backend.save(vector_store, str(index_path))
+                # C-1arch：无条件 save（pgvector/inmemory 为 no-op）
+                index_path = self._get_index_path(name)
+                backend.save(vector_store, str(index_path))
 
                 deleted_count = len(ids_to_delete)
 

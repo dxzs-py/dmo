@@ -13,7 +13,9 @@ import logging
 import os
 import re
 import shutil
+import uuid
 import zipfile
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -22,6 +24,12 @@ logger = logging.getLogger(__name__)
 
 # SKILL.md name 字段验证正则：小写字母+数字+连字符，1-64字符
 SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
+
+# ZIP 解压安全上限（F1，防 ZIP bomb；调整常量即可重新配置）
+SKILL_ZIP_MAX_ENTRIES = 2000                  # 压缩包成员数上限
+SKILL_ZIP_MAX_FILE_SIZE = 50 * 1024 * 1024    # 单成员解压后体积上限（50MB）
+SKILL_ZIP_MAX_TOTAL_SIZE = 500 * 1024 * 1024  # 总解压体积上限（500MB）
+SKILL_MD_MAX_SIZE = 1024 * 1024               # SKILL.md 体积上限（validate 阶段防解压内存放大）
 
 
 class SkillLoader:
@@ -124,9 +132,11 @@ class SkillLoader:
         if skill_dir is None:
             return None
 
-        full_path = os.path.normpath(os.path.join(skill_dir, resource_path))
-        # 安全检查：防止路径遍历
-        if not full_path.startswith(os.path.normpath(skill_dir)):
+        full_path = os.path.join(skill_dir, resource_path)
+        # 安全检查：防止路径遍历。用 resolve + is_relative_to 统一 helper
+        # （Task 10 遗留收尾）：裸 startswith 无分隔符收尾时，同用户技能名
+        # 互为前缀（"a"/"a2"）可经 "../a2/x" 读到另一技能的文件
+        if not self._is_within_base_dir(full_path, skill_dir):
             logger.warning(f"路径遍历攻击检测: {resource_path}")
             return None
 
@@ -171,6 +181,10 @@ class SkillLoader:
                     return False, "压缩包中未找到 SKILL.md 文件", None
 
                 skill_md_name = skill_md_candidates[0]
+                # SKILL.md 体积上限：validate 阶段就要整读内容，防超大声明体积
+                # 的成员在解压上限生效前造成内存放大（F1 配套）
+                if zf.getinfo(skill_md_name).file_size > SKILL_MD_MAX_SIZE:
+                    return False, f"SKILL.md 体积超过 {SKILL_MD_MAX_SIZE} 字节上限", None
                 # 提取 Skill 目录名（SKILL.md 的父目录名）
                 parts = skill_md_name.split("/")
                 # 过滤空字符串（如 "my-skill/SKILL.md" → ["my-skill", "SKILL.md"]）
@@ -221,6 +235,21 @@ class SkillLoader:
             return False, f"验证失败: {e}", None
 
     def install_skill_package(self, zip_path: str, user, source: str = "user") -> tuple[bool, str, dict | None]:
+        """安装/更新 Skill 包（C10：先落盘、后写库，失败全量回滚）
+
+        流程：解压到同分区临时目录 → 旧目录改名让位（备份）→ 临时目录
+        就位为目标目录 → 写 DB → 清理备份。任一步失败：删除半成品目录、
+        恢复旧目录，DB 记录保持原状——不产生 skill_dir 指向已删目录的
+        悬挂记录。
+
+        Args:
+            zip_path: 压缩包路径
+            user: Django User 实例
+            source: 来源（system/user）
+
+        Returns:
+            (success, message, metadata_dict | None)
+        """
         from Django_xm.apps.tools.models import SkillPackage, ToolCategory
 
         is_valid, msg, frontmatter = self.validate_skill_package(zip_path)
@@ -240,45 +269,34 @@ class SkillLoader:
         license_str = frontmatter.get("license", "")
         compatibility = frontmatter.get("compatibility", "")
         metadata_json = frontmatter.get("metadata", {})
-        allowed_tools = frontmatter.get("allowed-tools", "")
 
         existing = SkillPackage.objects.filter(user=user, name=name).first()
-        if existing:
-            self._remove_skill_dir(existing.skill_dir)
-
         target_dir = os.path.join(self.skills_base_dir, str(user.id), name)
-        os.makedirs(target_dir, exist_ok=True)
+        # 临时/备份目录与目标同分区（仅追加后缀），保证 rename 原子性
+        tmp_dir = f"{target_dir}.tmp-{uuid.uuid4().hex[:8]}"
+        backup_dir = f"{target_dir}.bak-{uuid.uuid4().hex[:8]}"
+        backup_from: str | None = None  # 已挪入 backup_dir 的旧内容来源路径
+        placed = False  # 新内容是否已就位 target_dir（决定失败时能否删除）
 
         try:
             category = ToolCategory.objects.get(code="general")
+            self._extract_skill_zip(zip_path, tmp_dir)
 
-            with zipfile.ZipFile(zip_path, "r") as zf:
-                skill_md_candidates = [n for n in zf.namelist() if n.endswith("SKILL.md") and "__MACOSX" not in n]
-                if skill_md_candidates:
-                    skill_md_name = skill_md_candidates[0]
-                    parts = skill_md_name.split("/")
-                    non_empty = [p for p in parts if p]
-                    if len(non_empty) >= 2:
-                        prefix = "/".join(parts[: parts.index(non_empty[0]) + 1]) + "/"
-                    else:
-                        prefix = ""
+            # 旧内容让位：优先认领 DB 记录指向的旧目录；target_dir 上可能
+            # 同时存在历史失败残留（无记录认领），一并清掉
+            if existing and existing.skill_dir and os.path.isdir(existing.skill_dir):
+                if existing.skill_dir != target_dir and os.path.isdir(target_dir):
+                    shutil.rmtree(target_dir, ignore_errors=True)
+                os.rename(existing.skill_dir, backup_dir)
+                backup_from = existing.skill_dir
+            elif os.path.isdir(target_dir):
+                shutil.rmtree(target_dir, ignore_errors=True)
 
-                    for member in zf.namelist():
-                        if "__MACOSX" in member or member.endswith("/"):
-                            continue
-                        if prefix and member.startswith(prefix):
-                            relative = member[len(prefix) :]
-                        else:
-                            relative = member
-                        if not relative:
-                            continue
+            # 新内容就位为目标目录
+            os.rename(tmp_dir, target_dir)
+            placed = True
 
-                        target_path = os.path.join(target_dir, relative)
-                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                        with open(target_path, "wb") as f:
-                            f.write(zf.read(member))
-
-            # 创建或更新数据库记录
+            # 目录就绪后再写 DB；失败则回滚目录，DB 记录保持原状
             _pkg, created = SkillPackage.objects.update_or_create(
                 user=user,
                 name=name,
@@ -288,7 +306,6 @@ class SkillLoader:
                     "license": license_str[:200],
                     "compatibility": compatibility[:500],
                     "metadata_json": metadata_json,
-                    "allowed_tools": allowed_tools[:1000],
                     "skill_dir": target_dir,
                     "tool_type": "skill",
                     "category": category,
@@ -296,6 +313,10 @@ class SkillLoader:
                     "status": "active",
                 },
             )
+
+            # 提交成功：清理备份
+            if backup_from:
+                shutil.rmtree(backup_dir, ignore_errors=True)
 
             action = "安装" if created else "更新"
             logger.info(f"Skill '{name}' {action}成功 (user={user.id}, dir={target_dir})")
@@ -312,11 +333,19 @@ class SkillLoader:
             )
 
         except Exception as e:
-            # 清理失败的解压目录
-            if os.path.isdir(target_dir):
+            # 回滚：删除半成品目标目录（仅在新内容已就位时），恢复旧目录
+            if placed and os.path.isdir(target_dir):
                 shutil.rmtree(target_dir, ignore_errors=True)
+            if backup_from and os.path.isdir(backup_dir):
+                try:
+                    os.rename(backup_dir, backup_from)
+                except Exception:
+                    logger.exception(f"恢复旧 Skill 目录失败: {backup_dir} -> {backup_from}")
             logger.exception("安装 Skill 失败")
             return False, f"安装失败: {e}", None
+        finally:
+            # 清理解压残留（成功路径下 tmp_dir 已被 rename 走，此处为 no-op）
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def uninstall_skill_package(self, name: str, user) -> tuple[bool, str]:
         """卸载 Skill 包：删除数据库记录和文件目录
@@ -347,6 +376,20 @@ class SkillLoader:
         return True, f"Skill '{name}' 已卸载"
 
     # ---- 内部方法 ----
+
+    @staticmethod
+    def _is_within_base_dir(path: str, base_dir: str) -> bool:
+        """路径包含校验：path 解析后必须仍位于 base_dir 内，否则 False。
+
+        统一使用 resolve().is_relative_to 而非裸 normpath+startswith：
+        - 裸 startswith 无分隔符收尾时 "…/a" 会误放行 "…/a2"（同名前缀目录互窜）；
+        - resolve 规范化 ".." 与符号链接，绝对路径入参不会误判为包含。
+        解析失败（OSError/ValueError）一律视为不通过。
+        """
+        try:
+            return Path(path).resolve().is_relative_to(Path(base_dir).resolve())
+        except (OSError, ValueError):
+            return False
 
     def _get_skill_dir(self, name: str, user_id: int | None = None) -> str | None:
         """获取 Skill 的文件系统目录路径"""
@@ -387,6 +430,66 @@ class SkillLoader:
 
         body = match.group(2).strip()
         return frontmatter or {}, body
+
+    @staticmethod
+    def _extract_skill_zip(zip_path: str, dest_dir: str) -> None:
+        """解压 Skill 包到目标目录（C10：先落临时目录，成功后才替换旧目录）
+
+        安全约束（F1）：
+        - ZIP bomb 上限：成员数 / 单成员解压体积 / 总解压体积三重校验，
+          超限抛错整体失败（zipfile 按 header 声明的 file_size 截断读取，
+          上限校验在写盘前完成，不产出半成品）；
+        - Zip Slip：每个成员落点 resolve 后必须仍在 dest_dir 内（拦截
+          绝对路径成员与 "../" 穿越成员）。选择"任一恶意成员即整体失败"
+          而非跳过：安装是原子单元（C10 语义），部分解压的"净化包"会静默
+          丢失成员且其余内容照常生效，攻击者可借内容不一致混淆后续执行；
+          抛错后由 install_skill_package 既有 except 路径统一回滚清理。
+
+        提取逻辑与旧实现一致：仅提取 SKILL.md 所在前缀内的文件，
+        跳过 __MACOSX 与目录项。
+        """
+        os.makedirs(dest_dir, exist_ok=True)
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            members = [
+                info
+                for info in zf.infolist()
+                if not info.is_dir() and "__MACOSX" not in info.filename
+            ]
+            if len(members) > SKILL_ZIP_MAX_ENTRIES:
+                raise ValueError(f"ZIP 成员数超限: {len(members)} > {SKILL_ZIP_MAX_ENTRIES}")
+            total_size = sum(info.file_size for info in members)
+            if total_size > SKILL_ZIP_MAX_TOTAL_SIZE:
+                raise ValueError(f"ZIP 总解压体积超限: {total_size} > {SKILL_ZIP_MAX_TOTAL_SIZE}")
+            for info in members:
+                if info.file_size > SKILL_ZIP_MAX_FILE_SIZE:
+                    raise ValueError(
+                        f"ZIP 单文件解压体积超限: {info.filename} ({info.file_size} > {SKILL_ZIP_MAX_FILE_SIZE})"
+                    )
+
+            prefix = ""
+            skill_md_candidates = [n for n in zf.namelist() if n.endswith("SKILL.md") and "__MACOSX" not in n]
+            if skill_md_candidates:
+                skill_md_name = skill_md_candidates[0]
+                parts = skill_md_name.split("/")
+                non_empty = [p for p in parts if p]
+                if len(non_empty) >= 2:
+                    prefix = "/".join(parts[: parts.index(non_empty[0]) + 1]) + "/"
+
+            for info in members:
+                member = info.filename
+                if prefix and member.startswith(prefix):
+                    relative = member[len(prefix) :]
+                else:
+                    relative = member
+                if not relative:
+                    continue
+
+                target_path = os.path.join(dest_dir, relative)
+                if not SkillLoader._is_within_base_dir(target_path, dest_dir):
+                    raise ValueError(f"ZIP 成员路径非法（Zip Slip）: {member}")
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                with open(target_path, "wb") as f:
+                    f.write(zf.read(member))
 
     @staticmethod
     def _remove_skill_dir(skill_dir: str) -> None:

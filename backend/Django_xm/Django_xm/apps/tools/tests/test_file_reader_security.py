@@ -141,8 +141,10 @@ class TestAttachmentReaderToolOwnerCheck(TestCase):
             file_size=10,
         )
 
-    def _capture_user(self, user_id):
-        self.tool._capture_configurable({"configurable": {"user_id": user_id}})
+    def _run_with_user(self, attachment_id, user_id):
+        """以指定 configurable 调用工具（user_id 经 ``config: RunnableConfig`` 参数按调用注入）。"""
+        config = {"configurable": {"user_id": user_id}} if user_id is not None else None
+        return self.tool._run(attachment_id, config)
 
     def test_missing_user_context_rejected(self):
         """configurable 未注入 user_id（无法确认属主）→ 拒绝读取。"""
@@ -151,17 +153,15 @@ class TestAttachmentReaderToolOwnerCheck(TestCase):
 
     def test_cross_user_attachment_rejected(self):
         """用户 B 读用户 A 的附件 → 读取失败（属主过滤后等价 404）。"""
-        self._capture_user(self.user_b.id)
-        result = self.tool._run(self.attachment_a.id)
+        result = self._run_with_user(self.attachment_a.id, self.user_b.id)
         self.assertIn("读取附件失败", result)
 
     def test_owner_attachment_read_ok(self):
         """属主读取 → 通过（文件存在性与读取内容 mock 掉，聚焦属主链路）。"""
-        self._capture_user(self.user_a.id)
         with (
             mock.patch(f"{_FILE_READER_MODULE}.read_file_content", return_value="hello"),
             mock.patch(f"{_FILE_READER_MODULE}.os.path.exists", return_value=True),
         ):
-            result = self.tool._run(self.attachment_a.id)
+            result = self._run_with_user(self.attachment_a.id, self.user_a.id)
         self.assertIn("hello", result)
         self.assertIn(self.attachment_a.original_name, result)

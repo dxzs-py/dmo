@@ -86,7 +86,7 @@ const router = createRouter({
   routes: routes
 })
 
-const DEFAULT_TITLE = 'LC-StudyLab'
+const DEFAULT_TITLE = 'DX-Study-Agent'
 
 router.beforeEach((to, from, next) => {
   const userStore = useUserStore()

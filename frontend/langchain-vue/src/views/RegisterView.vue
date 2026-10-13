@@ -3,7 +3,7 @@
     <div class="register-box">
       <div class="register-header">
         <h1 class="title">创建账号</h1>
-        <p class="subtitle">加入 LC-StudyLab，开启智能学习之旅</p>
+        <p class="subtitle">加入 DX-Study-Agent，开启智能学习之旅</p>
       </div>
 
       <el-form

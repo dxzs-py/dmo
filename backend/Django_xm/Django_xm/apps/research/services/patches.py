@@ -2,7 +2,7 @@
 
 职责：
 - ``_extract_ai_response``：从 create_deep_agent 的 invoke 结果中提取最终 AI 回复。
-- ``_DeepAgentExecutor``：Deep Agent 专用执行器，扩展 AgentExecutor 支持 async rebuild
+- ``_DeepAgentExecutor``：Deep Agent 专用执行器，扩展公共执行骨架支持 async rebuild
   与多级降级（FULL → REDUCED_TOOLS → NO_TOOLS）。
 
 抽取自原 ``official_deep_agent.py``（Task 18.1）。
@@ -16,6 +16,10 @@
 依赖关系：
 - 本模块不依赖 adapter.py / builders.py，可独立导入。
 - 被 ``adapter.py`` 导入：``_DeepAgentExecutor`` / ``_extract_ai_response``。
+- 执行骨架（超时迭代 / hard timeout 信号）经 ``common.execution_loop`` 消费，
+  不再继承 ``agent_hub.services.agent_executor.AgentExecutor``（spec 任务 4.3
+  环 3 破除：research → agent_hub 反向依赖边归零；chat 侧 AgentExecutor 与本类
+  共用 common 骨架，行为等价）。
 """
 
 import asyncio
@@ -24,11 +28,11 @@ from typing import Any
 
 from langchain_core.messages import AIMessage
 
-from Django_xm.apps.agent_hub.services.agent_executor import (
-    AgentExecutor,
-    _HardTimeoutSignaled,
-)
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.common.execution_loop import (
+    HardTimeoutSignaled,
+    iter_stream_events_with_timeout,
+)
 from Django_xm.common.messages import content_to_str
 
 logger = get_logger(__name__)
@@ -43,8 +47,12 @@ def _extract_ai_response(result: dict[str, Any]) -> str:
     return ""
 
 
-class _DeepAgentExecutor(AgentExecutor):
-    """Deep Agent 专用执行器：扩展 AgentExecutor 支持 async rebuild 和多级降级。
+class _DeepAgentExecutor:
+    """Deep Agent 专用执行器：扩展公共执行骨架支持 async rebuild 和多级降级。
+
+    不再继承 ``agent_hub.services.agent_executor.AgentExecutor``（环 3 破除），
+    与 AgentExecutor 共用 ``common.execution_loop`` 骨架（超时迭代信号）。
+    构造签名与原继承形态保持一致（adapter 装配点零改动）。
 
     相对 AgentExecutor 的差异（Task 18.3）：
     1. run() 使用局部导入的 classify_and_decide / calculate_backoff（兼容测试 patch
@@ -62,15 +70,51 @@ class _DeepAgentExecutor(AgentExecutor):
 
     def __init__(
         self,
-        *args,
+        fallback_service: Any = None,
+        rebuild_agent_fn: Callable | None = None,
+        tools: list | None = None,
+        model_instance: Any = None,
+        data: dict | None = None,
+        usage_tracker: Any = None,
+        token_detail_tracker: Any = None,
+        resilience_config: Any | None = None,
+        timeout_manager: Any | None = None,
+        duplicate_detector: Any | None = None,
+        inject_warning_fn: Callable | None = None,
         rebuild_coro_fn: Any | None = None,
         fallback_direct_answer_fn: Any | None = None,
         deep_agent: Any | None = None,
         query: str | None = None,
         graph_config: dict[str, Any] | None = None,
-        **kwargs,
     ):
-        super().__init__(*args, **kwargs)
+        # 韧性组件装配（与原 AgentExecutor.__init__ 默认装配语义一致；
+        # deep 链 adapter 全显式传入，None 分支仅为构造兼容兜底）
+        from Django_xm.apps.ai_engine.services.agent_resilience import (
+            DuplicateToolCallDetector,
+            ExecutionTimeoutManager,
+            get_resilience_config,
+        )
+
+        # 基类签名兼容槽位（本类不消费，保留属性防外部读取 AttributeError）
+        self.fallback_service = fallback_service
+        self.rebuild_agent_fn = rebuild_agent_fn
+        self.model_instance = model_instance
+        self.data = data
+        self.usage_tracker = usage_tracker
+        self.token_detail_tracker = token_detail_tracker
+        self.inject_warning_fn = inject_warning_fn
+
+        self.config = resilience_config or get_resilience_config()
+        self.timeout_mgr = timeout_manager or ExecutionTimeoutManager(
+            soft_timeout=self.config.soft_timeout,
+            hard_timeout=self.config.hard_timeout,
+        )
+        self.duplicate_detector = duplicate_detector or DuplicateToolCallDetector(
+            window_seconds=self.config.duplicate_tool_call_window,
+            threshold=self.config.duplicate_tool_call_threshold,
+        )
+        self.tools = tools or []
+
         # async 重建回调：async fn(degraded_tools) -> Optional[graph]
         self._rebuild_coro_fn = rebuild_coro_fn
         # async 回退回调：async fn(query, config) -> Dict
@@ -81,6 +125,31 @@ class _DeepAgentExecutor(AgentExecutor):
         self._graph_config = graph_config or {}
         # 当前降级级别：None 表示未降级（FULL），降级后设为 REDUCED_TOOLS
         self._current_degradation: Any | None = None
+        # 内部状态：保存 ctx 引用供 _run_fallback 标记 fallback_triggered
+        self._ctx: Any = None
+
+    async def _iter_with_timeout(
+        self,
+        loop_fn: Callable,
+        agent: Any,
+        graph_input: dict,
+        config: dict,
+        ctx: Any,
+        strategy: Any,
+        data: dict,
+    ) -> AsyncGenerator[dict, None]:
+        """公共骨架薄委托（与 AgentExecutor._iter_with_timeout 同一实现）。"""
+        async for event in iter_stream_events_with_timeout(
+            loop_fn,
+            agent,
+            graph_input,
+            config,
+            ctx,
+            strategy,
+            data,
+            timeout_mgr=self.timeout_mgr,
+        ):
+            yield event
 
     async def run(
         self,
@@ -121,7 +190,7 @@ class _DeepAgentExecutor(AgentExecutor):
                     yield event
                 return  # 成功
 
-            except _HardTimeoutSignaled:
+            except HardTimeoutSignaled:
                 # Hard timeout → fallback
                 logger.warning(f"[DeepAgentExecutor] 执行超时 (hard): {self.timeout_mgr.elapsed:.1f}s")
                 async for fb_event in self._run_fallback():
@@ -289,7 +358,7 @@ class _DeepAgentExecutor(AgentExecutor):
                 yield event
             # 降级成功
             return
-        except _HardTimeoutSignaled:
+        except HardTimeoutSignaled:
             logger.warning("[DeepAgentExecutor] 降级工具重试超时，回退到无工具模式")
         except GraphRecursionError:
             logger.warning("[DeepAgentExecutor] 降级工具重试达到递归上限，回退到无工具模式")

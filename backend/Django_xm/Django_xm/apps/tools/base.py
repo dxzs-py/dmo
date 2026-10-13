@@ -17,6 +17,8 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from langchain_core.runnables import RunnableConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,21 +31,29 @@ class AsyncToolMixin:
     自动将同步 _run 方法包装为真正的异步 _arun，
     使用 asyncio.to_thread 在线程池中执行，避免阻塞事件循环。
 
+    config 透传：BaseTool 执行机制检测 ``_arun`` 签名中的
+    ``config: RunnableConfig`` 参数并注入本次调用的 RunnableConfig（官方
+    config 注入机制）；当目标 ``_run`` 同样声明该参数时转发，供工具按调用
+    局部读取 ``config["configurable"]``（禁止实例字段缓存——工具为模块级
+    单例，实例缓存会导致跨会话并发串号）。未声明 config 的 _run 不受影响。
+
     用法：
         class MyTool(AsyncToolMixin, BaseTool):
-            def _run(self, query: str) -> str:
+            def _run(self, query: str, config: RunnableConfig = None) -> str:
                 # 同步实现
                 return result
             # 无需定义 _arun，自动从 _run 生成
     """
 
-    def _arun(self, **kwargs: Any) -> Any:
+    def _arun(self, config: RunnableConfig = None, **kwargs: Any) -> Any:
         """真正的异步执行：在线程池中运行同步 _run"""
         # 获取 _run 方法的参数名列表，只传递 _run 接受的参数
         import inspect
 
         run_params = set(inspect.signature(self._run).parameters.keys())
         filtered_kwargs = {k: v for k, v in kwargs.items() if k in run_params}
+        if "config" in run_params:
+            filtered_kwargs["config"] = config
         return asyncio.to_thread(self._run, **filtered_kwargs)
 
 

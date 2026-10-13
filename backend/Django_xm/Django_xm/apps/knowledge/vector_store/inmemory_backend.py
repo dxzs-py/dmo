@@ -44,9 +44,9 @@ class InMemoryBackend(VectorStoreBackend):
             embedding=embeddings,
             **kwargs,
         )
-        self._stores[collection_name] = vector_store
+        self._stores[collection_name] = self._stamp_score_semantics(vector_store)
         logger.info(f"InMemory 向量库创建成功 (collection={collection_name})")
-        return vector_store
+        return self._stores[collection_name]
 
     def load(
         self,
@@ -107,9 +107,20 @@ class InMemoryBackend(VectorStoreBackend):
         collection_name: str,
         document_ids: list[str],
     ) -> bool:
-        """InMemory 不支持按 ID 删除"""
-        logger.warning("InMemory 向量库不支持按 ID 删除文档")
-        return False
+        """按 ID 删除文档（真实实现，3.3 去假）。
+
+        进程内 store 直接支持删除（InMemoryVectorStore.delete），
+        旧实现返回 False 纯属假失败。
+        """
+        vector_store = self._stores.get(collection_name)
+        if vector_store is None:
+            logger.warning(f"InMemory 向量库不存在: {collection_name}")
+            return False
+        if not document_ids:
+            return True
+        vector_store.delete(document_ids)
+        logger.info(f"InMemory 按 ID 删除 {len(document_ids)} 个文档 (collection={collection_name})")
+        return True
 
     def remove_documents_by_metadata(
         self,
@@ -117,9 +128,35 @@ class InMemoryBackend(VectorStoreBackend):
         key: str,
         value: str,
     ) -> int:
-        """InMemory 不支持按元数据删除"""
-        logger.warning("InMemory 向量库不支持按元数据删除文档")
-        return 0
+        """按元数据删除文档，返回删除数量（真实实现，3.3 去假）。
+
+        遍历内存 store 匹配 metadata[key] == value 后按 ID 删除；
+        旧实现恒返 0 纯属假失败。
+
+        langchain-core 1.5.4 实测：``InMemoryVectorStore.store`` 为
+        ``{doc_id: {"id", "vector", "text", "metadata"}}`` dict 条目
+        （非 Document 对象），metadata 经 entry["metadata"] 取。
+        """
+        vector_store = self._stores.get(collection_name)
+        if vector_store is None:
+            logger.warning(f"InMemory 向量库不存在: {collection_name}")
+            return 0
+        entries = getattr(vector_store, "store", None) or {}
+        ids_to_delete = [
+            doc_id
+            for doc_id, entry in entries.items()
+            if isinstance(entry, dict) and isinstance(entry.get("metadata"), dict)
+            and entry["metadata"].get(key) == value
+        ]
+        if not ids_to_delete:
+            logger.info(f"InMemory 集合 {collection_name} 中未找到 metadata[{key}]={value} 的文档")
+            return 0
+        vector_store.delete(ids_to_delete)
+        logger.info(
+            f"InMemory 按元数据删除 {len(ids_to_delete)} 个文档 "
+            f"(collection={collection_name}, {key}={value})"
+        )
+        return len(ids_to_delete)
 
     def search(
         self,
@@ -134,12 +171,16 @@ class InMemoryBackend(VectorStoreBackend):
         return vector_store.similarity_search_with_score(query=query, **kwargs)
 
     def get_stats(self, collection_name: str) -> dict[str, Any]:
-        if collection_name in self._stores:
+        """存储统计信息（num_documents 为真实计数，3.3 去掉恒 0 假值）"""
+        vector_store = self._stores.get(collection_name)
+        if vector_store is not None:
             return {
                 "name": collection_name,
                 "exists": True,
                 "store_type": "inmemory",
-                "num_documents": 0,
+                # InMemoryVectorStore.store 为 {doc_id: Document} 内存字典，
+                # len 即真实文档数（无滞后）
+                "num_documents": len(getattr(vector_store, "store", {}) or {}),
             }
         return {
             "name": collection_name,

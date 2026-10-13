@@ -467,17 +467,29 @@ SANDBOX_CONFIG = {
     "WORK_DIR_MOUNT": str(DATA_DIR),
 }
 
+# ── 持久化后端装配（fix-review-round2 1.1，ARCH-05 Django settings 通道）──
+# 真相源为 ai_engine pydantic Settings（store_backend/checkpointer_backend 字段，
+# env 键 STORE_BACKEND/CHECKPOINTER_BACKEND 一致映射）；消费方
+# ai_engine/services/checkpointer_factory 直接读 ai_engine 单例
+# （getattr(settings, "store_backend", ...)/getattr(settings, "checkpointer_backend", ...)）。
+# 此处装配为 Django settings 通道属性（对齐 ATTACHMENT_* 装配模式），
+# 一致性由 test_store_backend_wiring 防漂移断言钉住。生产默认 postgres：
+# Store 承载跨会话记忆/知识图谱等长期数据；InMemoryStore 仅作真降级路径
+# （langgraph-store-postgres 缺失或连接失败时触发 _log_memory_store_fallback error 告警）。
+STORE_BACKEND = app_cfg.store_backend
+CHECKPOINTER_BACKEND = app_cfg.checkpointer_backend
+
 # AI Engine Settings
 AI_LLM_TIMEOUT = 120.0
 AI_LLM_MAX_RETRIES = 3
 AI_DEFAULT_PROVIDER = "deepseek"
-AI_MODEL_CACHE_MAXSIZE = 32
 AI_DEFAULT_MODEL_TOKEN_LIMIT = 128000
 
 AI_HELPER_MODEL_PROVIDER = ""
 AI_HELPER_MODEL_NAME = ""
 AI_HELPER_MODEL_TEMPERATURE = 0.0
-AI_HELPER_MODEL_MAX_TOKENS = 256
+# 1024：摘要 prompt 要求"不超过400字"（≈600-800 token），256 会截断残句（A4）
+AI_HELPER_MODEL_MAX_TOKENS = 1024
 
 # 子代理最大嵌套深度（0=主 agent，1=子 agent，2=孙 agent，3=曾孙 agent）。
 # spawn_sub_agent 派生链路与 deepagents inline 子代理共用；环境变量 AGENT_MAX_DEPTH 可覆盖。
@@ -493,11 +505,15 @@ AGENT_MAX_DEPTH = int(os.environ.get("AGENT_MAX_DEPTH", "3"))
 AGENT_SOFT_TIMEOUT = 1800.0
 AGENT_HARD_TIMEOUT = 3600.0
 
-# 通用工具级缺省执行超时（B6/P2-13 不对齐项②，秒；None=不限制）。
-# 与最慢现役工具上限对齐（shell_exec MAX_TIMEOUT=300），远小于 Celery rag
-# soft_time_limit=1500s；超时返回 error ToolMessage 不中断执行流。
+# 通用工具级缺省执行超时（round3 2.4 双层职责，秒；None=不限制）。
+# 外层兜底值 = 最慢内层工具超时（shell_exec MAX_TIMEOUT=300）+ 10s 余量：
+# 内层负责优雅终止并返回自身错误结果，外层仅约束无自带超时的工具——
+# 外层必须略大于最慢内层，否则内层优雅收尾（进程组 shutdown/输出回收）
+# 会被外层先行打断。远小于 Celery rag soft_time_limit=1500s；超时返回
+# error ToolMessage 不中断执行流（文案注明工具可能仍在后台运行——wait_for
+# 无法强杀 executor 线程，框架边界）。
 # 代码级兜底：ai_engine/services/tool_timeout.py DEFAULT_TOOL_EXECUTION_TIMEOUT。
-AGENT_TOOL_EXECUTION_TIMEOUT = 300.0
+AGENT_TOOL_EXECUTION_TIMEOUT = 310.0
 
 # 子代理并发执行上限（D3/P2-9，进程级；无"禁用"语义，<1 按 1 处理）。
 # 超限排队等待而非失败（threading.BoundedSemaphore 收敛于
@@ -514,6 +530,12 @@ AGENT_TOOL_EXECUTION_TIMEOUT = 300.0
 # 代码级兜底同值：ai_engine/subagent_runtime/concurrency.py
 # DEFAULT_SUBAGENT_CONCURRENCY。
 AGENT_SUBAGENT_CONCURRENCY = 8
+
+# 子代理并发槽排队等待超时（round3 2.5，秒；<=0/None = 无限等待）。
+# 排队超过该时长仍未获得槽位 → 实例置 FAILED + 生命周期回调（父会话
+# fan-in 等待者立即收到失败，不悬挂到 watchdog 7200s）。
+# 代码级兜底同值：concurrency.py DEFAULT_SUBAGENT_ACQUIRE_TIMEOUT。
+AGENT_SUBAGENT_ACQUIRE_TIMEOUT = 30.0
 
 # ── Shell Exec 安全配置 ──────────────────────────────────────────
 # 白名单命令：单一真相源在 Django_xm.apps.tools.langchain.shell.DEFAULT_WHITELIST_COMMANDS，

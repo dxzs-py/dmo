@@ -21,7 +21,8 @@ function validateChatRequest(data) {
     data.chatHistory.forEach((msg, index) => {
       if (!['user', 'assistant', 'system'].includes(msg.role))
         errors.push(`聊天历史第${index + 1}条消息的角色无效`)
-      if (msg.content && msg.content.length > 50000)
+      // 历史条目与用户输入口径不同（见 settings.apiValidation.historyMessageMaxLength 注释）
+      if (msg.content && msg.content.length > settings.apiValidation.historyMessageMaxLength)
         errors.push(`聊天历史第${index + 1}条消息内容过长`)
     })
   }
@@ -101,7 +102,8 @@ export const chatAPI = {
   addMessage(sessionId, data) {
     if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
     const messageData = { ...data }
-    if (messageData.content && messageData.content.length > 50000) messageData.content = messageData.content.slice(0, 50000)
+    const maxLen = settings.apiValidation.historyMessageMaxLength
+    if (messageData.content && messageData.content.length > maxLen) messageData.content = messageData.content.slice(0, maxLen)
     if (!['user', 'assistant', 'system'].includes(messageData.role)) messageData.role = 'user'
     return apiClient.post(`/chat/sessions/${sessionId}/messages/`, messageData)
   },
@@ -109,7 +111,8 @@ export const chatAPI = {
   updateMessage(messageId, data) {
     if (!messageId) return Promise.reject(new Error('消息ID不能为空'))
     const updateData = { ...data }
-    if (updateData.content && updateData.content.length > 50000) updateData.content = updateData.content.slice(0, 50000)
+    const maxLen = settings.apiValidation.historyMessageMaxLength
+    if (updateData.content && updateData.content.length > maxLen) updateData.content = updateData.content.slice(0, maxLen)
     return apiClient.patch(`/chat/messages/${messageId}/`, updateData)
   },
 

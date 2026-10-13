@@ -104,26 +104,33 @@ class ChatMessageBuilder:
         response_time: float,
     ):
         try:
+            from django.db import transaction
+
             from Django_xm.apps.chat.models import ChatMessage
 
             @sync_to_async
             def _do_update():
-                msg = (
-                    ChatMessage.objects.filter(
-                        session__session_id=session_id,
-                        session__user_id=user_id,
-                        role="assistant",
+                # A17：单事务 + select_for_update 行锁读-改-写，消除与
+                # persist_stream_result 等并发写同一助手消息的末写胜出竞态
+                #（token 统计写入不应覆盖并发落库的 content/tool_calls 变更）。
+                with transaction.atomic():
+                    msg = (
+                        ChatMessage.objects.filter(
+                            session__session_id=session_id,
+                            session__user_id=user_id,
+                            role="assistant",
+                        )
+                        .select_related("session")
+                        .order_by("-created_at")
+                        .select_for_update()
+                        .first()
                     )
-                    .select_related("session")
-                    .order_by("-created_at")
-                    .first()
-                )
-                if msg:
-                    msg.token_count = token_count
-                    msg.token_detail = token_detail
-                    msg.model = model
-                    msg.response_time = response_time
-                    msg.save(update_fields=["token_count", "token_detail", "model", "response_time"])
+                    if msg:
+                        msg.token_count = token_count
+                        msg.token_detail = token_detail
+                        msg.model = model
+                        msg.response_time = response_time
+                        msg.save(update_fields=["token_count", "token_detail", "model", "response_time"])
 
             await _do_update()
         except Exception as e:

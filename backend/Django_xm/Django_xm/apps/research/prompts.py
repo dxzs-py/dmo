@@ -3,8 +3,15 @@
 抽取自 ``apps/agent_hub/builders/deep_builder.py`` 与
 ``apps/research/services/adapter.py`` 的重复定义（Task 14.3 / 14.4）。
 
-单一来源：所有研究相关 prompt 在此定义，两个实现统一从此处导入，
-避免 prompt 内容漂移（曾出现 ``_SANDBOX_ALLOWED_DIRS`` 在两处不一致的 bug）。
+单一来源：研究主 agent 相关 prompt 在此定义，避免 prompt 内容漂移。
+
+spec 任务 4.3 环 3 破除时的消费方式：
+- 主 agent 默认 prompt（DEEP_RESEARCH_SYSTEM_PROMPT / get_deep_research_prompt）
+  由组装方 ``agent_assembly.build_research_agent`` 经 ``AgentConfig.prompt_factory``
+  注入 deep_builder（builder 不再 import research.prompts，agent_hub → research
+  反向依赖边归零）；
+- 子代理角色 prompt（web-researcher / doc-analyst）已上移
+  ``ai_engine/subagent_runtime/registry.py``（与 SUBAGENT_SPECS 同域单源）。
 """
 
 from __future__ import annotations
@@ -97,25 +104,6 @@ def get_deep_research_prompt() -> str:
         深度研究系统提示词字符串
     """
     return DEEP_RESEARCH_SYSTEM_PROMPT
-
-
-# ============================================================================
-# 子智能体 Prompt
-# ============================================================================
-
-WEB_RESEARCHER_SUBAGENT_PROMPT: str = (
-    "你是一个专业的网络研究员（子代理，执行者角色），负责从互联网搜索与整理信息。"
-    "你是执行者，直接调用搜索工具完成任务：查找并评估来源，提取关键数据，"
-    "按来源类型自适配呈现，采用要点与段落混合的方式记录，"
-    "使用内联引用并在结尾列出参考来源。"
-)
-
-
-DOC_ANALYST_SUBAGENT_PROMPT: str = (
-    "你是一个专业的文档分析师（子代理，执行者角色），负责在知识库中检索并提炼信息。"
-    "你是执行者，直接调用知识库检索工具完成任务：根据研究问题执行多次检索与评估，"
-    "直接引用关键段落，整理为要点与段落混合的分析笔记，列出文档来源与位置。"
-)
 
 
 # ============================================================================

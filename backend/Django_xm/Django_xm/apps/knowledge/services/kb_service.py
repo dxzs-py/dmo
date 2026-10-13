@@ -18,16 +18,42 @@ from Django_xm.apps.cache_manager.services.cache_service import (
     invalidate_knowledge_cache,
 )
 from Django_xm.apps.knowledge.config import settings as app_cfg
+from Django_xm.common.error_codes import ErrorCode
 
-from ..exceptions import KnowledgeBaseAlreadyExistsError
+from ..exceptions import KnowledgeBaseAlreadyExistsError, KnowledgeBaseError
 from ..models import Document, IndexMetadata
+from ..serializers import INDEX_NAME_PATTERN
 from ..views_utils import get_document_type, get_file_extension, get_original_index_name, get_user_index_name
 from .document_service import load_document
-from .embedding_service import get_embeddings
+from .embedding_service import collect_fallback_info, get_embeddings
 from .index_service import IndexManager
 from .splitters import split_documents
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_kb_name(name: str) -> None:
+    """C-2 深度防御第二层：知识库名称白名单（与 serializer 的 IndexNameValidationMixin 同口径）。
+
+    serializer 挡 HTTP 面；本层独立直挡任何绕过 serializer 的调用面
+    （管理命令/内部调用/未来新视图）。名称经 get_user_index_name 拼接后直达磁盘
+    路径，`../`/`\\`/`%5c` 等穿越序列一律拒绝。
+
+    Raises:
+        ValueError: 名称含路径分隔符/穿越序列，或存在白名单外字符。
+    """
+    if not name or not INDEX_NAME_PATTERN.match(name):
+        raise ValueError(f"知识库名称只能包含字母、数字、下划线、连字符和中文: {name!r}")
+
+
+def _ensure_path_within(path: Path, container: Path) -> None:
+    """C-2 路径容器检查：resolve 后必须仍位于 container 内（防文件名单独穿越）。
+
+    Raises:
+        ValueError: 解析路径逃逸容器目录。
+    """
+    if not path.resolve().is_relative_to(container.resolve()):
+        raise ValueError(f"路径越界，已拒绝: {path.name!r}")
 
 
 def list_knowledge_bases(user) -> list[dict[str, Any]]:
@@ -84,11 +110,10 @@ def create_knowledge_base(user, name: str, description: str = "") -> dict[str, A
         包含创建结果的字典，若已存在则返回 existing=True
 
     Raises:
-        ValueError: 知识库名称为空
+        ValueError: 知识库名称为空或含非法字符（C-2 白名单）
         KnowledgeBaseAlreadyExistsError: 向量索引残留（无实体行的同名向量集合）
     """
-    if not name:
-        raise ValueError("知识库名称不能为空")
+    _validate_kb_name(name)
 
     user_index_name = get_user_index_name(user, name)
     manager = IndexManager()
@@ -107,7 +132,7 @@ def create_knowledge_base(user, name: str, description: str = "") -> dict[str, A
         }
 
     # 无活跃实体行时校验向量残留（软删墓碑 + 向量删除失败同名重建同样拒绝）
-    if manager.index_exists(user_index_name):
+    if manager.index_exists(user_index_name, user_id=user.id):
         raise KnowledgeBaseAlreadyExistsError(f"知识库已存在: {name}", name)
 
     if existing_meta:
@@ -126,7 +151,10 @@ def create_knowledge_base(user, name: str, description: str = "") -> dict[str, A
 
     manager.create_empty_index(name=user_index_name, description=description)
 
-    invalidate_knowledge_cache(user_id=user.id)
+    # B5：失效必须带 user_index_name——invalidate_knowledge_cache 只在传入时
+    # 才执行 QueryCacheService/VectorSearchCacheService.invalidate_index_queries，
+    # 只传 user_id 是空转（软删墓碑恢复路径下该索引名的历史查询缓存需真实失效）
+    invalidate_knowledge_cache(user_id=user.id, user_index_name=user_index_name)
 
     return {
         "id": name,
@@ -183,7 +211,9 @@ def update_knowledge_base(user, kb_id: str, description: str) -> dict[str, Any]:
     index_meta.description = description
     index_meta.save(update_fields=["description", "updated_at"])
 
-    invalidate_knowledge_cache(user_id=user.id)
+    # B5：实际受损场景——描述变更后若不失效查询缓存，TTL 内相关查询仍返回
+    # 旧描述上下文的答案。只传 user_id 时 invalidate_knowledge_cache 空转。
+    invalidate_knowledge_cache(user_id=user.id, user_index_name=user_index_name)
 
     return {
         "id": kb_id,
@@ -196,8 +226,14 @@ def delete_knowledge_base(user, kb_id: str) -> None:
     """
     删除知识库：向量索引/上传目录硬删，IndexMetadata 实体与 Document 行软删（墓碑）
 
+    B4 三态一致（对齐 delete_document 的 E5-04 防护）：向量删除失败即整体失败，
+    DB 行与上传目录原状保留，用户可直接重试——旧实现忽略 delete_index 的
+    fail-soft 返回值继续软删 + rmtree，PG 故障时向量残留 + 同名重建恒抛
+    KnowledgeBaseAlreadyExistsError 且无自愈路径。
+
     Raises:
         FileNotFoundError: 知识库不存在
+        KnowledgeBaseError: 向量索引删除失败（SERVICE_UNAVAILABLE，可重试）
     """
     user_index_name = get_user_index_name(user, kb_id)
     index_meta = IndexMetadata.objects.filter(name=user_index_name).first()
@@ -206,7 +242,29 @@ def delete_knowledge_base(user, kb_id: str) -> None:
         raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
     manager = IndexManager()
-    manager.delete_index(user_index_name)
+
+    # 先探测向量侧存在性：pgvector 的 delete 对"集合/表不存在"同样 fail-soft
+    # 返回 False（无操作≠失败），该情形放行删除（幂等二次删除），避免制造
+    # "向量本已不在却永远删不掉"的新死角；仅"应删而删失败"才阻断。
+    # 探测本身异常（PG 不可达等）按删除失败处理。
+    try:
+        vector_exists = manager.get_backend(manager.get_store_type(user_index_name, user_id=user.id)).exists(
+            user_index_name
+        )
+    except Exception as pe:
+        logger.exception(f"向量存在性探测失败，按向量删除失败处理: {user_index_name}")
+        raise KnowledgeBaseError(
+            "向量索引删除失败，知识库未删除，请稍后重试",
+            business_code=ErrorCode.SERVICE_UNAVAILABLE,
+        ) from pe
+
+    deleted = manager.delete_index(user_index_name)
+    if not deleted and vector_exists:
+        logger.error(f"知识库向量索引删除失败，DB 行与上传目录保持原状（可重试）: {user_index_name}")
+        raise KnowledgeBaseError(
+            "向量索引删除失败，知识库未删除，请稍后重试",
+            business_code=ErrorCode.SERVICE_UNAVAILABLE,
+        )
 
     Document.objects.filter(index=index_meta).update(is_deleted=True)
     index_meta.soft_delete()
@@ -220,9 +278,12 @@ def delete_knowledge_base(user, kb_id: str) -> None:
 
     invalidate_knowledge_cache(user_id=user.id, user_index_name=user_index_name)
 
-    from Django_xm.apps.chat.services.cross_app import clear_knowledge_base_selection
+    # A-2 依赖反转：knowledge 不再 import chat.cross_app（上行依赖），
+    # 改发 core.signals.knowledge_base_deleted，chat 侧 receiver 订阅清理。
+    # Django signal 同步分发，行为与原直接调用等价（receiver 异常向上传播）。
+    from Django_xm.apps.core.signals import knowledge_base_deleted
 
-    clear_knowledge_base_selection(user_id=user.id, kb_name=kb_id)
+    knowledge_base_deleted.send(sender=None, user_id=user.id, kb_name=kb_id)
 
 
 def list_documents(user, kb_id: str) -> list[dict[str, Any]]:
@@ -232,10 +293,11 @@ def list_documents(user, kb_id: str) -> list[dict[str, Any]]:
     Raises:
         FileNotFoundError: 知识库不存在
     """
+    _validate_kb_name(kb_id)
     user_index_name = get_user_index_name(user, kb_id)
     manager = IndexManager()
 
-    if not manager.index_exists(user_index_name):
+    if not manager.index_exists(user_index_name, user_id=user.id):
         raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
     upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
@@ -273,12 +335,13 @@ def save_uploaded_files(user, kb_id: str, uploaded_files: list) -> list[dict[str
 
     Raises:
         FileNotFoundError: 知识库不存在
-        ValueError: 文件列表为空
+        ValueError: 文件列表为空 / 名称或文件名非法（C-2 白名单 + 容器检查）
     """
+    _validate_kb_name(kb_id)
     user_index_name = get_user_index_name(user, kb_id)
     manager = IndexManager()
 
-    if not manager.index_exists(user_index_name):
+    if not manager.index_exists(user_index_name, user_id=user.id):
         raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
     if not uploaded_files:
@@ -290,6 +353,8 @@ def save_uploaded_files(user, kb_id: str, uploaded_files: list) -> list[dict[str
     saved_files = []
     for uploaded_file in uploaded_files:
         file_path = upload_dir / uploaded_file.name
+        # C-2：文件名由客户端控制，写入前容器检查（不依赖 Django 的文件名清洗）
+        _ensure_path_within(file_path, upload_dir)
         with open(file_path, "wb") as f:
             for chunk in uploaded_file.chunks():
                 f.write(chunk)
@@ -308,6 +373,8 @@ def process_uploaded_documents(
     kb_id: str,
     file_names: list,
     progress_callback=None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
 ) -> dict[str, Any]:
     """处理已落盘的上传文件：加载文档、分块、向量化、更新索引。
 
@@ -318,13 +385,16 @@ def process_uploaded_documents(
         kb_id: 知识库名称
         file_names: upload 目录下的文件名列表（save_uploaded_files 已落盘）
         progress_callback: 可选进度回调 callable(progress: int, message: str)
+        chunk_size: 可选分块大小（B13 参数接线：None 时经 split_documents
+            落到全局配置默认值）
+        chunk_overlap: 可选分块重叠（None 时同上）
 
     Returns:
-        包含上传结果的字典
+        包含上传结果的字典（B6：含 documents_failed/failed_files 部分成功报告）
 
     Raises:
         FileNotFoundError: 知识库不存在
-        ValueError: 无法提取内容
+        ValueError: 所有文件均处理失败（附各文件失败原因）
     """
     user_index_name = get_user_index_name(user, kb_id)
     manager = IndexManager()
@@ -335,13 +405,26 @@ def process_uploaded_documents(
 
     upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
 
+    # B6：逐文件容错（对齐 document_service.load_directory 口径）——坏文件跳过
+    # 并记录失败原因，不再让单坏文件 raise 拖垮整批（all-or-nothing 旧行为）；
+    # 全部失败才整体失败（确定性错误，Celery 侧按 E5-05 秒级终态不重试）。
     all_documents = []
     saved_files = []
+    failed_files: list[dict[str, str]] = []
     for name in file_names:
         file_path = upload_dir / name
         if not file_path.is_file():
-            raise ValueError(f"上传文件不存在: {name}")
-        docs = load_document(str(file_path))
+            logger.warning(f"上传文件不存在，跳过: {name}")
+            failed_files.append({"name": name, "reason": "文件不存在"})
+            continue
+        try:
+            docs = load_document(str(file_path))
+            if not docs:
+                raise ValueError("未能提取到任何内容")
+        except Exception as e:
+            logger.warning(f"文件加载失败，跳过: {name} - {e}")
+            failed_files.append({"name": name, "reason": str(e)})
+            continue
         all_documents.extend(docs)
         saved_files.append(
             {
@@ -351,59 +434,74 @@ def process_uploaded_documents(
         )
 
     if progress_callback:
-        progress_callback(30, f"文档加载完成：{len(saved_files)} 个文件")
+        progress_callback(30, f"文档加载完成：{len(saved_files)} 成功 / {len(failed_files)} 失败")
 
     if not all_documents:
-        raise ValueError("未能从上传文件中提取内容")
+        detail = "; ".join(f"{f['name']}: {f['reason']}" for f in failed_files)
+        raise ValueError(f"所有上传文件均处理失败: {detail}" if detail else "未能从上传文件中提取内容")
 
-    chunks = split_documents(all_documents)
+    # B13：chunk 参数接线——仅传非 None 值（未提供时 split_documents 落到
+    # 全局配置默认值，调用形状与旧行为逐字一致）
+    split_kwargs: dict[str, int] = {}
+    if chunk_size is not None:
+        split_kwargs["chunk_size"] = chunk_size
+    if chunk_overlap is not None:
+        split_kwargs["chunk_overlap"] = chunk_overlap
+    chunks = split_documents(all_documents, **split_kwargs)
 
     if progress_callback:
         progress_callback(60, f"分块完成：{len(chunks)} 个文本块")
 
     # 上传文档时使用索引原有维度约束（如有），确保维度一致
-    index_metadata = manager.load_metadata(user_index_name)
+    index_metadata = manager.load_metadata(user_index_name, user_id=user.id)
     required_dim = index_metadata.get("embedding_dimension") if index_metadata else None
     embeddings = get_embeddings(required_dimension=required_dim)
 
     if progress_callback:
         progress_callback(75, "正在向量化并写入索引")
 
+    # C-5 替换语义（先删后加）：同名文件旧 chunk 的稳定 ID 含内容哈希，
+    # 内容变化 → 新 ID → ON CONFLICT DO NOTHING 不会去重旧版本，直接追加
+    # 会导致新旧两版内容同时可检索。对每个上传文件先清向量侧同名旧块
+    # （新文件为无害 no-op，统一执行替换语义）；清理失败不阻断上传
+    # （写入侧幂等护栏仍在），仅 warning 留痕。
+    # B6：仅对成功加载的文件执行——坏文件本轮不写入新内容，旧版本向量
+    # 保留（与"跳过坏文件"语义一致，清了旧版再写失败会丢数据）。
+    for file_info in saved_files:
+        name = file_info["name"]
+        try:
+            manager.remove_documents_by_filename(user_index_name, embeddings, name)
+        except Exception as e:
+            logger.warning(f"重传替换：向量侧同名清理失败（新内容仍会写入）: {name} - {e}")
+
     count = manager.add_documents(user_index_name, chunks, embeddings)
 
-    # 检查 Embedding 降级事件
-    fallback_info = None
-    if hasattr(embeddings, "get_fallback_events") and hasattr(embeddings, "get_active_provider_id"):
-        events = embeddings.get_fallback_events()
-        if events:
-            actual_provider = embeddings.get_active_provider_id()
-            fallback_info = {
-                "events": events,
-                "actual_provider": actual_provider,
-            }
-            # 自动更新 SystemConfig 为实际使用的 provider
-            if actual_provider:
-                try:
-                    from Django_xm.apps.knowledge.config import SystemConfig
+    # B-5 收口：SystemConfig 同步逻辑单源在 embedding_service.collect_fallback_info，
+    # 上传编排只透传 fallback_info，不再内嵌配置管理。
+    fallback_info = collect_fallback_info(embeddings)
 
-                    current_config = SystemConfig.get_value("embedding_provider", {})
-                    if current_config.get("provider_id") != actual_provider:
-                        current_config["provider_id"] = actual_provider
-                        SystemConfig.set_value("embedding_provider", current_config)
-                        logger.info(f"Embedding 降级：SystemConfig embedding_provider 已更新为 {actual_provider}")
-                except Exception as e:
-                    logger.warning(f"Embedding 降级：更新 SystemConfig 失败: {e}")
+    # C-5：chunk_count 按文件归属统计（旧实现 len(chunks)//len(saved_files)
+    # 均值分摊恒失真）；Document 行先软删旧同名行再插新行——表无 (index, filename)
+    # 唯一约束，直接插入会让同名文件行数逐次累积。
+    chunks_by_file: dict[str, int] = {}
+    for chunk in chunks:
+        source_name = chunk.metadata.get("file_name") or Path(chunk.metadata.get("source", "")).name
+        chunks_by_file[source_name] = chunks_by_file.get(source_name, 0) + 1
 
     for file_info in saved_files:
-        ext = get_file_extension(file_info["name"])
+        name = file_info["name"]
+        for old_row in Document.objects.filter(index=index_meta, filename=name, is_deleted=False):
+            old_row.soft_delete()
+
+        ext = get_file_extension(name)
         doc_type = get_document_type(ext)
         doc = Document(
             index=index_meta,
-            filename=file_info["name"],
-            file_path=str(upload_dir / file_info["name"]),
+            filename=name,
+            file_path=str(upload_dir / name),
             file_type=doc_type,
             file_size=file_info["size"],
-            chunk_count=len(chunks) // len(saved_files) if saved_files else 0,
+            chunk_count=chunks_by_file.get(name, 0),
         )
         doc.save()
 
@@ -414,6 +512,11 @@ def process_uploaded_documents(
 
     return {
         "documents_uploaded": len(saved_files),
+        # B6：部分成功报告——失败清单随返回值/任务结果向上传递
+        # （Celery 任务 mark_success(result=...) 与 return {"status": "success", **result}），
+        # 供任务频道/前端区分"全部成功"与"部分成功（N 个失败）"
+        "documents_failed": len(failed_files),
+        "failed_files": failed_files,
         "chunks_created": count,
         "files": saved_files,
         "fallback_info": fallback_info,
@@ -451,30 +554,41 @@ def delete_document(user, kb_id: str, filename: str) -> dict[str, Any]:
 
     Raises:
         FileNotFoundError: 知识库或文件不存在
+        ValueError: 知识库名称或文件名非法（C-2 白名单 + 容器检查）
     """
+    _validate_kb_name(kb_id)
     user_index_name = get_user_index_name(user, kb_id)
+    upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
+    file_path = upload_dir / filename
+    # C-2：filename 单独穿越（kb_id 合法）同样逃逸 uploads 根目录，unlink 前容器检查
+    _ensure_path_within(file_path, upload_dir)
+
     manager = IndexManager()
     index_meta = IndexMetadata.objects.filter(name=user_index_name).first()
 
     if not index_meta:
         raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
-    upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
-    file_path = upload_dir / filename
-
     if not file_path.exists() or not file_path.is_file():
         raise FileNotFoundError(f"文件不存在: {filename}")
 
     logger.info(f"删除文档: {filename} 从 {user_index_name}")
 
+    # E5-04 三态一致：向量删除失败即整体失败——旧实现吞异常后继续删物理文件/
+    # 软删 DB 行并返回成功，造成孤儿向量 + 后续同名重传新旧内容并存 + 假
+    # "文件已删除"成功响应。失败时文件与 DB 行原状保留，用户可直接重试。
     try:
-        index_metadata = manager.load_metadata(user_index_name)
+        index_metadata = manager.load_metadata(user_index_name, user_id=user.id)
         required_dim = index_metadata.get("embedding_dimension") if index_metadata else None
         embeddings = get_embeddings(required_dimension=required_dim)
         removed = manager.remove_documents_by_filename(user_index_name, embeddings, filename)
         logger.info(f"从向量索引中删除 {removed} 个文档块")
     except Exception as ve:
-        logger.warning(f"从向量索引中删除文档失败: {ve}")
+        logger.exception(f"向量删除失败，保持文件与数据库记录不变（可重试）: {filename}")
+        raise KnowledgeBaseError(
+            "向量删除失败，文件未删除，请稍后重试",
+            business_code=ErrorCode.SERVICE_UNAVAILABLE,
+        ) from ve
 
     doc = Document.objects.filter(index=index_meta, filename=filename).first()
     if doc:
@@ -506,18 +620,24 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[
     user_index_name = get_user_index_name(user, kb_id)
     manager = IndexManager()
 
-    if not manager.index_exists(user_index_name):
+    if not manager.index_exists(user_index_name, user_id=user.id):
         raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
-    index_metadata = manager.load_metadata(user_index_name)
-    required_dim = index_metadata.get("embedding_dimension") if index_metadata else None
-    embeddings = get_embeddings(required_dimension=required_dim)
-    vector_store = manager.load_index(user_index_name, embeddings)
-
+    # RP-08：缓存读前置到 store 构建链（metadata 读取/embeddings 实例化/load_index）之前，
+    # 命中时跳过全部构建开销（含一次可能的 PG engine 建立）；归属校验（index_exists）保留在前
     cached_results = VectorSearchCacheService.get_cached_search(query, user_index_name, top_k)
     if cached_results is not None:
         logger.info("向量搜索缓存命中")
         return cached_results
+
+    # B-1：store 构建编排（metadata/维度探测/embeddings/load_index/自愈重建回调）
+    # 经 load_user_vector_store 单一门面（原内联四步删除）
+    from .retrieval_service import load_user_vector_store
+
+    loaded = load_user_vector_store(user.id, kb_id)
+    if loaded is None:
+        raise FileNotFoundError(f"知识库不存在: {kb_id}")
+    vector_store, _index_metadata, required_dim, reload_vector_store = loaded
 
     from .rag_retrieval import UnifiedRagPipeline
 
@@ -525,11 +645,15 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[
         vector_store,
         query,
         k=top_k,
-        reload_vector_store=lambda: manager.load_index(user_index_name, embeddings),
+        # 3.2：KB 主链路相似度阈值——pgvector distance 已在检索内核归一为
+        # 0~1 similarity，与附件路径（_ScoreThresholdRetriever）同一
+        # rag_score_threshold 口径；低于阈值的低相关块不再冒充检索命中
+        score_threshold=app_cfg.rag_score_threshold,
+        reload_vector_store=reload_vector_store,
         required_dim=required_dim,
-        # C1/KV-2：pgvector 原生返回 cosine distance，归一为相似度语义后再返回
-        # （score 字段此前是距离，前端"相关度"展示语义反转；归一后越大越相关）
-        score_semantics="distance" if manager.get_store_type(user_index_name) == "pgvector" else "similarity",
+        # C1/KV-2 + C-2arch：score_semantics 由后端 native_score_semantics 声明收敛
+        # （pgvector=distance，其余=similarity），调用方不再按 store_type 硬判
+        score_semantics=manager.get_score_semantics(user_index_name),
     )
 
     search_results = []
@@ -601,7 +725,8 @@ def rebuild_index_from_source_files(
         documents=chunks,
         embeddings=embeddings,
         description=index_meta.description or "",
-        store_type="pgvector",
+        # C-2arch：按实际配置解析 store_type（此前硬编码 "pgvector"，配置切走后重建行为偏离）
+        store_type=manager.get_store_type(kb_name, user_id=user.id),
         overwrite=True,
     )
 

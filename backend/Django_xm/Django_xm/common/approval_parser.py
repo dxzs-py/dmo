@@ -186,4 +186,12 @@ def _build_approval_entry(
     if req.get("subagent_thread_id"):
         entry["subagent_thread_id"] = req["subagent_thread_id"]
 
+    # Skill 步骤审批上下文（R3 1.2）：SkillBaseTool 管道内层步骤经
+    # step_gate 发起的审批中断携带技能名与步骤序号，透传到前端展示与
+    # Approval.extra，用户可见"这是技能的第几步在请求什么操作"。
+    if req.get("skill_name"):
+        entry["skill_name"] = req["skill_name"]
+    if req.get("step_idx") is not None:
+        entry["step_idx"] = req["step_idx"]
+
     return entry

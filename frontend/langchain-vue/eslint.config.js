@@ -31,6 +31,9 @@ export default defineConfig([
     rules: {
       'no-empty': ['error', { allowEmptyCatch: false }],
       'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      // 前端标识符统一 camelCase（工作区命名规范）；object properties 不检查——
+      // 网络边界（sessionTransformers 出入站转换、协议 snake_case 键）豁免
+      'camelcase': ['error', { properties: 'never', ignoreDestructuring: true }],
       'vue/multi-word-component-names': 'off',
       'vue/no-v-html': 'warn'
     },

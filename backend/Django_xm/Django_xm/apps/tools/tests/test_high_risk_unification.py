@@ -2,8 +2,8 @@
 
 契约（audit-supplement-remediate B3）：
 1. common/sandbox/executor.HIGH_RISK_COMMAND_PATTERNS 是唯一权威词表；
-2. shell._assess_command_risk_level（审批评级）与 executor.is_high_risk_command
-   （沙箱路由兜底）对同一命令产出一致口径；
+2. shell.assess_command_risk_level（审批评级；CT-09 转正公开 API）与
+   executor.is_high_risk_command（沙箱路由兜底）对同一命令产出一致口径；
 3. 原 shell 侧 5 个宽泛关键字并入词表（无行为降级）；
 4. 新增解释器/计划任务等模式确实生效；
 5. 子串匹配不得误伤白名单只读命令（cat/stat 等防误报守卫）。
@@ -11,7 +11,7 @@
 
 from django.test import SimpleTestCase
 
-from Django_xm.apps.tools.langchain.shell import _assess_command_risk_level
+from Django_xm.apps.tools.langchain.shell import assess_command_risk_level
 from Django_xm.common.sandbox.executor import (
     HIGH_RISK_COMMAND_PATTERNS,
     is_high_risk_command,
@@ -77,7 +77,7 @@ class HighRiskUnificationTests(SimpleTestCase):
         """审批评级与沙箱路由兜底同源：词表样例在 shell 侧必须为 HIGH，
         除非该命令被黑名单/白名单短路（SAFE）。"""
         for pattern, sample in PATTERN_SAMPLES.items():
-            risk = _assess_command_risk_level(sample)
+            risk = assess_command_risk_level(sample)
             self.assertIn(
                 risk,
                 (RiskLevel.HIGH, RiskLevel.SAFE),
@@ -93,7 +93,7 @@ class HighRiskUnificationTests(SimpleTestCase):
         """
         for cmd in ("cat foo.txt", "stat data.csv", "head -n 5 a.log", "python -m pytest -q"):
             self.assertIn(
-                _assess_command_risk_level(cmd),
+                assess_command_risk_level(cmd),
                 (RiskLevel.SAFE, RiskLevel.CONTROLLED),
                 f"{cmd!r} 不得判 HIGH",
             )
@@ -118,8 +118,8 @@ class HighRiskUnificationTests(SimpleTestCase):
         "echo hello" 命中白名单（echo 为跨平台白名单条目）→ SAFE 短路，
         属预期；CONTROLLED 路径用确定不在白名单的无害命令验证。
         """
-        self.assertEqual(_assess_command_risk_level("echo hello"), RiskLevel.SAFE)
+        self.assertEqual(assess_command_risk_level("echo hello"), RiskLevel.SAFE)
         self.assertEqual(
-            _assess_command_risk_level("somecustomtool --version"),
+            assess_command_risk_level("somecustomtool --version"),
             RiskLevel.CONTROLLED,
         )

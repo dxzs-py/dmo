@@ -262,3 +262,70 @@ def save_document_memory(self, attachment_id: int):
         logger.exception(f"[Celery Chat] 文档记忆写入任务失败 id={attachment_id}")
         tracker.mark_failure(error_message=str(e))
         return {"status": "error", "error": str(e)}
+
+
+@shared_task(
+    bind=True,
+    name="chat.save_cross_session_memory",
+    max_retries=1,
+    soft_time_limit=600,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=120,
+)
+def save_cross_session_memory(self, user_id: int, session_id: str, user_message: str, assistant_content: str):
+    """会话终态跨会话记忆写入（摘要合并 + 知识图谱抽取）。
+
+    从 chat_executor_core._save_cross_session_memory 移入后台：本地辅助模型
+    （ollama）做摘要合并/实体抽取耗时可达分钟级，同步执行会把会话执行器
+    占住到记忆写完——期间该会话的新消息 start 信令被 SessionManager 幂等
+    忽略，用户端表现为"发消息一直等待"。移入 Celery 后会话在主回复完成
+    时立即释放，记忆写入不再阻塞交互。
+
+    内容契约与原同步实现一致（round2 1.4 + round3 2.8）：prepare 锁外 LLM、
+    commit 行锁内二次校验写回 + KG 规则抽取；失败静默降级（记忆是增强
+    能力，不影响主链路）。
+    """
+    tracker = TrackedTask(self)
+    tracker.set_task_type("chat_cleanup")
+
+    try:
+        tracker.mark_started()
+        if not str(user_message or "").strip() or not str(assistant_content or "").strip():
+            tracker.mark_success(result={"skipped": "empty_content"})
+            return {"status": "success", "skipped": "empty_content"}
+
+        from Django_xm.apps.chat.models import ChatSession
+        from Django_xm.apps.context_manager.services.manager import create_context_manager
+        from django.db import transaction
+
+        manager = create_context_manager(user_id=user_id)
+
+        prepared = manager.prepare_turn_summary(
+            session_id=session_id,
+            user_message=str(user_message),
+            assistant_content=str(assistant_content),
+        )
+        if prepared is None:
+            tracker.mark_success(result={"saved": False, "reason": "disabled_or_skipped"})
+            return {"status": "success", "saved": False}
+
+        saved = False
+        with transaction.atomic():
+            ChatSession.objects.select_for_update().filter(session_id=session_id).first()
+            saved = manager.commit_turn_summary(session_id, prepared)
+            manager.process_conversation(
+                user_id=user_id,
+                messages=[
+                    {"role": "user", "content": str(user_message)},
+                    {"role": "assistant", "content": str(assistant_content)},
+                ],
+            )
+
+        result = {"session_id": session_id, "saved": saved}
+        tracker.mark_success(result=result)
+        return {"status": "success", **result}
+    except Exception as e:
+        logger.exception(f"[Celery Chat] 跨会话记忆写入失败 session={session_id}")
+        tracker.mark_failure(error_message=str(e))
+        return {"status": "error", "error": str(e)}

@@ -14,7 +14,7 @@
   全文精确去重（口径与管线 Level 1 的 80 字符前缀去重不同，服务于跨库合并场景）、
   key_points 补充检索与 relevance_score 递减赋值；
 - 全库降级（Level 2）经 load_kb_documents + pipeline.retrieve_documents 复用管线实现，
-  与 strict_rag_chain._handle_empty_result 同构但输出类型不同（Document 列表 vs 格式化字符串）。
+  输出 Document 列表（学习工作流编排需要原始文档对象）。
 """
 
 from typing import Any
@@ -25,7 +25,7 @@ from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.knowledge.services.cross_app import get_index_manager
 from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 from Django_xm.apps.knowledge.services.retrieval_service import create_retriever
-from Django_xm.apps.knowledge.views_utils import get_original_index_name
+from Django_xm.apps.knowledge.views_utils import build_user_index_name, get_original_index_name
 
 from ..models import WorkflowStep
 from ..services.state import RetrievedDocument, StudyFlowState
@@ -35,24 +35,31 @@ logger = get_logger(__name__)
 
 
 def _compose_user_index_name(user_id: int, kb_name: str) -> str:
-    """与 knowledge.views_utils.get_user_index_name 保持一致的索引命名规则。
+    """索引全名构造（D-1 单源委托：knowledge.views_utils.build_user_index_name）。
 
-    不直接调用 get_user_index_name(user, name) 是因为 retrieval_node 仅持有 user_id
-    （LangGraph 节点不接触 request 对象）。命名规则单一真相源在 views_utils，本函数
-    通过构造等价字符串复用规则。
+    原实现为等价 f-string 副本（因节点仅持 user_id 无法调 user 对象版
+    get_user_index_name）；views_utils 现提供 user_id 版单源函数，本函数保留
+    调用点兼容名、内部转委托。
     """
-    return f"user_{user_id}_{kb_name}"
+    return build_user_index_name(user_id, kb_name)
 
 
-def _load_and_retrieve(user_index_name: str, query: str, k: int = 5) -> tuple[list[Any], bool]:
+def _load_and_retrieve(user_index_name: str, query: str, embeddings: Any, k: int = 5) -> tuple[list[Any], bool]:
     """加载单个知识库的向量库并执行检索。
+
+    Args:
+        user_index_name: 索引全名（user_{id}_{name}）
+        query: 检索查询文本
+        embeddings: 调用方注入的 Embeddings 实例（3.5：多库循环下单次构建，
+            不再每次调用内部重建——get_embeddings 为即时构建，含 SystemConfig
+            读取与 provider 初始化开销）
+        k: 每库返回文档数
 
     Returns:
         (检索结果列表, is_degraded): is_degraded 为 True 表示向量检索无结果、
         降级加载全库文档通过 UnifiedRagPipeline.retrieve_documents() 重排序获得结果。
     """
     manager = get_index_manager()
-    embeddings = get_embeddings()
     try:
         vector_store = manager.load_index(user_index_name, embeddings)
         retriever = create_retriever(vector_store, k=k)
@@ -209,6 +216,9 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
     main_query = f"{topic}"
     logger.info(f"[Retrieval Node] 主查询: {main_query}, 知识库数量: {len(knowledge_base_ids)}")
 
+    # 3.5：Embeddings 实例循环外单次构建，主查询与关键点补充检索共用
+    embeddings = get_embeddings()
+
     # 对每个知识库独立检索后合并去重
     all_docs: list[Any] = []
     has_degraded = False
@@ -216,7 +226,7 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
         user_index_name = _compose_user_index_name(user_id, kb_name)
         original_name = get_original_index_name(user_index_name)
         logger.info(f"[Retrieval Node] 检索知识库: {original_name} (full_index={user_index_name})")
-        docs, degraded = _load_and_retrieve(user_index_name, main_query, k=5)
+        docs, degraded = _load_and_retrieve(user_index_name, main_query, embeddings, k=5)
         all_docs.extend(docs)
         if degraded:
             has_degraded = True
@@ -230,7 +240,7 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
         for point in key_points[:2]:
             for kb_name in knowledge_base_ids:
                 user_index_name = _compose_user_index_name(user_id, kb_name)
-                additional_docs, _degraded = _load_and_retrieve(user_index_name, point, k=2)
+                additional_docs, _degraded = _load_and_retrieve(user_index_name, point, embeddings, k=2)
                 for doc in additional_docs[:2]:
                     if getattr(doc, "page_content", None) and doc.page_content not in {
                         getattr(d, "page_content", None) for d in all_docs

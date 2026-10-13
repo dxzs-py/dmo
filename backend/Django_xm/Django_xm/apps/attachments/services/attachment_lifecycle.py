@@ -213,7 +213,7 @@ class AttachmentLifecycleService:
             embeddings = get_embeddings()
             manager = get_index_manager()
 
-            if not manager.index_exists(index_name):
+            if not manager.index_exists(index_name, user_id=user_id):
                 manager.create_index(
                     name=index_name,
                     documents=docs,
@@ -249,7 +249,7 @@ class AttachmentLifecycleService:
             index_name = self._get_user_index_name(user_id)
             manager = get_index_manager()
 
-            if not manager.index_exists(index_name):
+            if not manager.index_exists(index_name, user_id=user_id):
                 logger.warning(f"索引不存在: {index_name}")
                 return True
 

@@ -28,9 +28,12 @@ const STREAM_END_POLL_INTERVAL_MS = 300
  * @param {string} sessionId - 会话 ID
  * @param {string|null} messageId - assistant 消息 ID（后端返回的 message_id）
  * @param {AbortSignal} [signal] - 中止信号（用户点击停止时中止等待）
- * @returns {Promise<'completed'|'interrupted'>}
+ * @returns {Promise<'completed'|'interrupted'|'deleted'>}
+ *   - completed / interrupted：流结束信号
+ *   - deleted：等待期间会话被删除（D-7：target 永远找不到会让轮询 interval
+ *     与订阅永不清理，检测到会话不存在立即退出并回收资源）
  */
-function waitForStreamEnd(sessionId, messageId, signal) {
+export function waitForStreamEnd(sessionId, messageId, signal) {
   return new Promise((resolve, reject) => {
     if (!sessionId) {
       resolve('completed')
@@ -68,18 +71,21 @@ function waitForStreamEnd(sessionId, messageId, signal) {
     }
 
     /**
-     * 定位等待消息（spec 组 5 收敛）：精确按 messageId，兜底末条 assistant
-     * （原 findTargetMessage 闭包内联 backendId/id 双匹配 + 末条 assistant
-     * 扫描兜底，与 resolveStreamTargetMessage 语义一致，等价迁移）。
+     * 轮询兜底：会话已删除立即退出（D-7）；消息状态到达终态即结束
+     * （消息定位沿用 spec 组 5 收敛语义：resolveStreamTargetMessage 按
+     * messageId 精确匹配、兜底末条 assistant）
      */
-    const findTargetMessage = () => {
-      const session = sessionStore.sessions.find(s => s.id === sessionId)
-      return resolveStreamTargetMessage(session, messageId)
-    }
-
-    /** 轮询兜底：消息状态到达终态即结束 */
     const poll = () => {
-      const target = findTargetMessage()
+      // D-7：流式期间会话被删除时，target 永远找不到会导致 poll interval
+      // 与事件订阅永不清理（内存泄漏 + 幽灵等待）。检测到会话不在
+      // session store 中立即结束等待（done 内部统一清理 interval 与订阅）。
+      const session = sessionStore.sessions.find(s => s.id === sessionId)
+      if (!session) {
+        done('deleted')
+        return
+      }
+      const target = resolveStreamTargetMessage(session, messageId)
+      // 消息尚未同步进 store（流刚启动的窗口期）：保持等待，不视为终态
       if (!target) return
       if (target.streamState === StreamState.COMPLETED) {
         done('completed')

@@ -76,7 +76,7 @@ class ChromaBackend(VectorStoreBackend):
             **chroma_kwargs,
         )
         logger.info(f"Chroma 向量库创建成功 (persist={persist_directory}, collection={collection_name})")
-        return vector_store
+        return self._stamp_score_semantics(vector_store)
 
     def load(
         self,
@@ -104,7 +104,7 @@ class ChromaBackend(VectorStoreBackend):
 
         vector_store = Chroma(**chroma_kwargs)
         logger.info(f"Chroma 向量库加载成功 (collection={collection_name})")
-        return vector_store
+        return self._stamp_score_semantics(vector_store)
 
     def save(
         self,
@@ -241,6 +241,12 @@ class ChromaBackend(VectorStoreBackend):
                 "num_documents": count,
             }
         except Exception:
+            # E5-08：连接抖动被呈现为"库不存在"曾零日志；补 warning 留痕（语义不变）
+            logger.warning(
+                "get_stats: 查询 Chroma collection %s 状态失败，返回 exists=False（状态未知）",
+                collection_name,
+                exc_info=True,
+            )
             return {
                 "name": collection_name,
                 "exists": False,

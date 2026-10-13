@@ -5,6 +5,7 @@
 视图层只负责请求解析、服务调用、响应构建。
 """
 
+from asgiref.sync import sync_to_async
 from drf_spectacular.utils import extend_schema
 from rest_framework.exceptions import NotFound
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -31,10 +32,13 @@ from .services.kb_service import (
     get_knowledge_base_detail,
     list_documents,
     list_knowledge_bases,
+    rebuild_index_from_source_files,
     save_uploaded_files,
     search_knowledge_base,
     update_knowledge_base,
 )
+from .views_rag import AsyncAPIView
+from .views_utils import build_user_index_name
 
 
 class KnowledgeBaseListView(APIView):
@@ -215,3 +219,36 @@ class KnowledgeBaseSearchView(APIView):
             raise NotFound(str(e)) from e
         except ValueError as e:
             raise BaseAppError(str(e), business_code=ErrorCode.INVALID_PARAMS) from e
+
+
+class KnowledgeBaseRebuildView(AsyncAPIView):
+    """重建索引用户侧入口（R-UX-07）。
+
+    从原始上传文件重建指定知识库的向量索引，编排完整复用
+    kb_service.rebuild_index_from_source_files（内部已含 IndexMetadata
+    按 user 归属过滤 → 不存在抛 FileNotFoundError、重建后两层查询缓存失效），
+    本视图只做错误翻译与重活调度。
+
+    RP-01 同款约束：重建为秒级~分钟级重操作（全量分块 + embedding），
+    经 sync_to_async(thread_sensitive=False) 调度进独立线程池，不占 daphne
+    主执行器串行化全站同步视图。
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [KnowledgeRateThrottle]
+
+    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
+    async def post(self, request, kb_id):
+        # 归属构造：索引全名 = user_{id}_{kb_id}（D-1 命名规则单源），
+        # service 层按 (user, name) 归属过滤，他人知识库 404
+        user_index_name = build_user_index_name(request.user.id, kb_id)
+        try:
+            await sync_to_async(rebuild_index_from_source_files, thread_sensitive=False)(
+                request.user, user_index_name
+            )
+        except FileNotFoundError as e:
+            raise NotFound(str(e)) from e
+        except ValueError as e:
+            # 原始文件全部缺失/无法加载为确定性业务错误（400），非服务故障
+            raise BaseAppError(str(e), business_code=ErrorCode.INVALID_PARAMS) from e
+        return success_response(message="索引重建成功")

@@ -6,7 +6,9 @@
 - get_tool_execution_timeout：默认 300s / settings 覆盖
 - ToolExecutionTimeoutMiddleware：快工具透传、慢工具超时返回 error ToolMessage
   （不抛异常）、timeout=None 不限制
-- ensure_tool_timeout_middleware：收敛点注入 + 幂等跳过
+
+注：ensure_tool_timeout_middleware 收敛点注入测试已迁往
+Django_xm.apps.agent_hub.tests.test_tool_timeout_middleware（消费侧归属，任务 4.4）。
 
 运行：
     python manage.py test Django_xm.apps.ai_engine.tests.test_tool_timeout_middleware
@@ -29,7 +31,6 @@ from Django_xm.apps.ai_engine.services.tool_timeout import (
     ToolExecutionTimeoutMiddleware,
     get_tool_execution_timeout,
 )
-from Django_xm.apps.agent_hub.middleware import ensure_tool_timeout_middleware
 
 
 def _tool_request(name: str, call_id: str) -> SimpleNamespace:
@@ -75,9 +76,12 @@ class ToolExecutionTimeoutTests(SimpleTestCase):
     """不对齐项②：通用工具级缺省超时。"""
 
     def test_default_timeout_value(self):
-        """缺省超时为 300s 量级（与 shell_exec MAX_TIMEOUT 对齐）。"""
-        self.assertEqual(DEFAULT_TOOL_EXECUTION_TIMEOUT, 300.0)
-        self.assertEqual(get_tool_execution_timeout(), 300.0)
+        """缺省超时 = shell 内层 MAX_TIMEOUT(300) + 10s 余量（round3 2.4 双层职责）。"""
+        self.assertEqual(DEFAULT_TOOL_EXECUTION_TIMEOUT, 310.0)
+        self.assertEqual(get_tool_execution_timeout(), 310.0)
+        # 外层必须严格大于最慢内层（shell_exec MAX_TIMEOUT=300），
+        # 否则内层优雅收尾会被外层先行打断
+        self.assertGreater(DEFAULT_TOOL_EXECUTION_TIMEOUT, 300)
 
     @override_settings(AGENT_TOOL_EXECUTION_TIMEOUT=0.05)
     def test_settings_override_timeout(self):
@@ -95,7 +99,8 @@ class ToolExecutionTimeoutTests(SimpleTestCase):
         self.assertEqual(result.tool_call_id, "call-1")
 
     def test_slow_tool_times_out_with_error_tool_message(self):
-        """超时：返回 error ToolMessage（不抛异常），tool_call_id 匹配。"""
+        """超时：返回 error ToolMessage（不抛异常），tool_call_id 匹配；
+        文案注明工具可能仍在后台运行（round3 2.4 副作用边界）。"""
         mw = ToolExecutionTimeoutMiddleware(timeout=0.05)
 
         async def hanging_handler(request):
@@ -106,6 +111,7 @@ class ToolExecutionTimeoutTests(SimpleTestCase):
         self.assertIsInstance(result, ToolMessage)
         self.assertEqual(result.tool_call_id, "call-2")
         self.assertIn("超时", result.content)
+        self.assertIn("后台运行", result.content)
 
     def test_none_timeout_disables_limit(self):
         """timeout=None：不施加超时限制。"""
@@ -123,20 +129,3 @@ class ToolExecutionTimeoutTests(SimpleTestCase):
         """默认构造经 get_tool_execution_timeout 读取 settings。"""
         mw = ToolExecutionTimeoutMiddleware()
         self.assertEqual(mw.timeout, 0.05)
-
-
-class EnsureToolTimeoutMiddlewareTests(SimpleTestCase):
-    """收敛点注入（base/deep/subagent 三 builder 公共路径）。"""
-
-    def test_injects_when_missing(self):
-        stack: list = []
-        self.assertTrue(ensure_tool_timeout_middleware(stack))
-        self.assertEqual(len(stack), 1)
-        self.assertIsInstance(stack[0], ToolExecutionTimeoutMiddleware)
-
-    def test_idempotent_when_present(self):
-        mw = ToolExecutionTimeoutMiddleware()
-        stack: list = [mw]
-        self.assertFalse(ensure_tool_timeout_middleware(stack))
-        self.assertEqual(len(stack), 1)
-        self.assertIs(stack[0], mw)

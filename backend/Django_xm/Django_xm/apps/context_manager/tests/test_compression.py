@@ -5,8 +5,10 @@
   get_model_limit 已知模型命中与未知/空模型 fallback
 - CompressionConfig.trigger_threshold 阈值计算
 - ContextCompressionEngine.should_compress：超限触发 / 未超限不触发 /
-  超限但可压缩短消息不足时不触发
-- ContextCompressionEngine.compress：SUMMARY / SLIDING_WINDOW / HYBRID 策略选择、
+  超限但可压缩 token 不足时不触发 / 少量超长消息按 token 触发（4.1）
+- parse_compression_strategy：合法值解析、已删除策略（sliding_window）报错；
+  ContextManager 加载存量 sliding_window 配置回退 HYBRID（4.2）
+- ContextCompressionEngine.compress：SUMMARY / HYBRID 策略选择、
   LLM 摘要调用（mock 引擎内部 _get_compression_model，不发起真实请求）、
   摘要超长截断、LLM 失败回退本地摘要
 
@@ -36,7 +38,9 @@ from Django_xm.apps.context_manager.services.compression import (
     ContextCompressionEngine,
     SummaryQuality,
     TokenEstimator,
+    parse_compression_strategy,
 )
+from Django_xm.apps.context_manager.services.manager import ContextManagementConfig, ContextManager
 
 
 def _small_config(**overrides: Any) -> CompressionConfig:
@@ -147,6 +151,64 @@ class ShouldCompressTests(unittest.TestCase):
         ] + [{"role": "user", "content": "hi"}]
         self.assertFalse(engine.should_compress(messages))
 
+    def test_above_threshold_few_oversized_short_term_triggers(self) -> None:
+        """4.1：3 条超长消息（各超 2k token）不足保底窗口（keep_recent=6）仍触发压缩。
+
+        旧判定 ``short_term_count >= keep_recent`` 下该场景永不压缩（死锁）；
+        新增 token 触发条件：可压缩部分 token 总量超阈值即触发。
+        """
+        # 阈值 = int(4096 * 0.8) = 3276 token；3 条中文长消息各 3k+ token，总量约 9k+
+        config = _small_config(max_context_tokens=4096, keep_recent_messages=6)
+        engine = ContextCompressionEngine(config)
+        messages = [{"role": "user", "content": "长" * 3000} for _ in range(3)]
+
+        self.assertGreater(
+            TokenEstimator.estimate_dict_messages(messages), config.trigger_threshold
+        )
+        self.assertTrue(engine.should_compress(messages))
+
+    def test_above_threshold_few_tiny_short_term_not_triggered(self) -> None:
+        """4.1 反向：SHORT_TERM 条数不足且可压缩部分 token 未超阈值 → 不触发。
+
+        防止少量长_term 消息撑爆总量、剩余极少 SHORT_TERM 内容被误压缩。
+        """
+        engine = ContextCompressionEngine(_small_config(max_context_tokens=4096, keep_recent_messages=6))
+        messages = [
+            {"role": "user", "content": "长" * 3000, "memory_tier": "long_term"}
+            for _ in range(3)
+        ] + [{"role": "user", "content": "hi"}]
+        # 总量超阈值（长_term 消息贡献），但可压缩部分仅 "hi" ≈ 1 token
+        self.assertGreater(TokenEstimator.estimate_dict_messages(messages), 4096 * 0.8)
+        self.assertFalse(engine.should_compress(messages))
+
+    def test_compress_few_oversized_messages_produces_summary(self) -> None:
+        """4.1 端到端：3 条超长消息 compress 产出非空摘要 + 原文保留。"""
+        config = _small_config(max_context_tokens=4096, keep_recent_messages=6)
+        engine = ContextCompressionEngine(config)
+        fake_model = _fake_llm("三条超长消息的摘要")
+        messages = [{"role": "user", "content": "长" * 3000} for _ in range(3)]
+
+        with (
+            mock.patch.object(engine, "_get_compression_model", return_value=fake_model),
+            mock.patch.object(
+                engine,
+                "evaluate_summary_quality",
+                return_value=SummaryQuality(
+                    completeness=0.9, accuracy=0.9, conciseness=0.9, overall=0.9, passed=True
+                ),
+            ),
+        ):
+            compressed, result = engine.compress(messages)
+
+        self.assertTrue(result.compressed)
+        self.assertTrue(result.summary)
+        # 输出保留原始 3 条消息（保底窗口覆盖全部）+ 1 条摘要 system 消息
+        self.assertEqual(len(compressed), 4)
+        summary_messages = [m for m in compressed if m["role"] == "system"]
+        self.assertEqual(len(summary_messages), 1)
+        self.assertIn("三条超长消息的摘要", summary_messages[0]["content"])
+        self.assertEqual(sum(1 for m in compressed if m["role"] == "user"), 3)
+
 
 class CompressTests(unittest.TestCase):
     """ContextCompressionEngine.compress：策略选择与 LLM 摘要调用隔离。"""
@@ -196,23 +258,8 @@ class CompressTests(unittest.TestCase):
         self.assertEqual(len(summary_messages), 1)
         self.assertIn("【对话摘要】", summary_messages[0]["content"])
 
-    def test_compress_sliding_window_strategy_skips_llm(self) -> None:
-        """SLIDING_WINDOW 策略：纯滑窗，不调用 LLM。"""
-        config = _small_config(strategy=CompressionStrategy.SLIDING_WINDOW)
-        engine = ContextCompressionEngine(config)
-        llm_getter = mock.MagicMock()
-
-        with mock.patch.object(engine, "_get_compression_model", llm_getter):
-            compressed, result = engine.compress(_big_messages(4))
-
-        llm_getter.assert_not_called()
-        self.assertTrue(result.compressed)
-        self.assertIs(result.strategy_used, CompressionStrategy.SLIDING_WINDOW)
-        # 4 条消息 → 仅保留最近 keep_recent_messages=2 条
-        self.assertEqual(len(compressed), 2)
-
     def test_compress_hybrid_is_default_strategy(self) -> None:
-        """默认策略 HYBRID：摘要 + 滑窗混合，strategy_used=HYBRID。"""
+        """默认策略 HYBRID：摘要 + 实体/决策抽取混合，strategy_used=HYBRID。"""
         engine = ContextCompressionEngine(_small_config(summary_max_length=200))
         fake_model = _fake_llm("混合摘要内容")
 
@@ -244,6 +291,54 @@ class CompressTests(unittest.TestCase):
 
         self.assertTrue(summary.startswith("对话摘要"))
         self.assertIn("如何部署服务到生产环境", summary)
+
+
+class CompressionStrategyConfigTests(unittest.TestCase):
+    """压缩策略配置解析与存量配置回退（fix-review-round2 4.2）。"""
+
+    def test_parse_valid_strategies(self) -> None:
+        """合法值 summary/hybrid 正常解析。"""
+        self.assertIs(parse_compression_strategy("summary"), CompressionStrategy.SUMMARY)
+        self.assertIs(parse_compression_strategy("hybrid"), CompressionStrategy.HYBRID)
+
+    def test_parse_removed_sliding_window_raises(self) -> None:
+        """已删除策略 sliding_window：抛出携带迁移说明的明确 ValueError。"""
+        with self.assertRaises(ValueError) as ctx:
+            parse_compression_strategy("sliding_window")
+        self.assertIn("sliding_window", str(ctx.exception))
+        self.assertIn("已删除", str(ctx.exception))
+
+    def test_parse_unknown_value_raises(self) -> None:
+        """未知策略值同样报 ValueError。"""
+        with self.assertRaises(ValueError):
+            parse_compression_strategy("nonexistent")
+
+    def test_manager_loads_removed_strategy_falls_back_to_hybrid(self) -> None:
+        """存量配置 compression_strategy='sliding_window'：加载报错并回退 HYBRID。"""
+        config = ContextManagementConfig(
+            compression_enabled=True,
+            compression_strategy="sliding_window",
+            knowledge_graph_enabled=False,
+            cross_session_enabled=False,
+        )
+        with self.assertLogs(
+            "Django_xm.apps.context_manager.services.manager", level="ERROR"
+        ) as captured:
+            manager = ContextManager(config=config)
+        self.assertIn("sliding_window", "\n".join(captured.output))
+        self.assertIsNotNone(manager._compression_engine)
+        self.assertIs(manager._compression_engine.config.strategy, CompressionStrategy.HYBRID)
+
+    def test_manager_loads_valid_strategy(self) -> None:
+        """合法配置正常加载对应策略（回归保护）。"""
+        config = ContextManagementConfig(
+            compression_enabled=True,
+            compression_strategy="summary",
+            knowledge_graph_enabled=False,
+            cross_session_enabled=False,
+        )
+        manager = ContextManager(config=config)
+        self.assertIs(manager._compression_engine.config.strategy, CompressionStrategy.SUMMARY)
 
 
 if __name__ == "__main__":

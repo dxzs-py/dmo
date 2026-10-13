@@ -3,13 +3,16 @@ Token 使用追踪器
 用于追踪 LLM 的 token 使用情况,为前端 Context 组件提供数据
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+import asyncio
+
 from django.conf import settings as django_settings
 
-from Django_xm.apps.context_manager.services.compression import TokenEstimator
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.common.token_estimator import TokenEstimator
 
 from ..config import settings as app_cfg
 
@@ -141,30 +144,51 @@ def get_session_token_budget_limit() -> int:
     return int(getattr(app_cfg, "session_token_budget", 0) or 0)
 
 
+# ── 会话累计 token 聚合 provider（阶段 7 票②依赖倒置）─────────────────────────
+# ai_engine 不得 import chat.models（.importlinter research-chat-via-facade-only
+# 为传递性检查，research→ai_engine→chat 直连边需豁免台账维护，属"豁免=藏违规"）。
+# ChatMessage.token_count 聚合实现归位 chat 业务层（chat/services/cross_app.py
+# aggregate_session_total_tokens），经运行期 provider 注入——组合根接线在
+# chat AppConfig.ready()（先例 context_manager/services/runtime_providers.py，
+# 任务 4.1 同款）。创建点分散跨 app（chat stream/loop.py 与 research
+# services/adapter.py 均创建 SessionTokenBudgetGuard），故取注册式而非构造注入。
+SessionTotalTokensProvider = Callable[[str], int]
+
+_session_total_tokens_provider: SessionTotalTokensProvider | None = None
+
+
+def set_session_total_tokens_provider(provider: SessionTotalTokensProvider | None) -> None:
+    """注册会话累计 token 聚合实现（chat AppConfig.ready() 组合根调用）。"""
+    global _session_total_tokens_provider  # noqa: PLW0603 - 运行期 provider 注册点（先例 runtime_providers）
+    _session_total_tokens_provider = provider
+
+
+def get_session_total_tokens_provider() -> SessionTotalTokensProvider | None:
+    return _session_total_tokens_provider
+
+
 def get_session_total_tokens(session_id: str) -> int:
     """聚合单个会话已落库消息的累计 token 数（COST-01 数据源）。
 
-    数据来源：现有统计链路在消息终态时写入 ``ChatMessage.token_count``
-    （chat_service._update_last_message_tokens）。使用 all_objects 包含软删除
-    消息——已消耗的 token 不因删消息而绕过预算。
+    实现经 ``set_session_total_tokens_provider`` 注入（chat 侧
+    aggregate_session_total_tokens：``ChatMessage.token_count`` DB 聚合，
+    all_objects 含软删除消息——已消耗 token 不因删消息绕过预算）。
 
     Args:
         session_id: 聊天会话 ID（ChatSession.session_id）。
 
     Returns:
-        int: 会话累计 token；会话无消息或查询失败时返回 0（不阻塞主流程）。
+        int: 会话累计 token；未注册 provider、会话无消息或聚合失败时
+        返回 0（不阻塞主流程）。
     """
     if not session_id:
         return 0
+    provider = _session_total_tokens_provider
+    if provider is None:
+        logger.warning(f"会话累计 token provider 未注册（按 0 处理）: session={session_id}")
+        return 0
     try:
-        from django.db.models import Sum
-
-        from Django_xm.apps.chat.models import ChatMessage
-
-        total = ChatMessage.all_objects.filter(session__session_id=session_id).aggregate(
-            total=Sum("token_count")
-        )["total"]
-        return int(total or 0)
+        return int(provider(session_id) or 0)
     except Exception:
         logger.warning(f"会话累计 token 聚合失败（按 0 处理）: session={session_id}", exc_info=True)
         return 0
@@ -195,21 +219,44 @@ class SessionTokenBudgetGuard:
 
         Returns:
             dict: enabled/exceeded/session_used/current_request/total/limit。
+
+        Note:
+            同步方法：首次调用会内联执行 DB 聚合（provider 为同步 ORM），
+            **禁止在事件循环内调用**——请改用 :meth:`acheck`（fastapi 执行器/
+            流式泵均为 async 上下文，冒烟实测同步调用触发
+            SynchronousOnlyOperation，基线恒按 0 处理，COST-01 运行时失效）。
         """
         limit = get_session_token_budget_limit()
         if limit <= 0 or not self.session_id:
-            return {
-                "enabled": False,
-                "exceeded": False,
-                "session_used": 0,
-                "current_request": 0,
-                "total": 0,
-                "limit": limit,
-            }
-
+            return self._disabled_info(limit)
         if self._baseline is None:
             self._baseline = get_session_total_tokens(self.session_id)
+        return self._compose(limit, current_request_tokens)
 
+    async def acheck(self, current_request_tokens: int = 0) -> dict[str, Any]:
+        """check() 的 async 变体（事件循环内唯一合法入口）。
+
+        DB 基线聚合经 ``asyncio.to_thread`` 离环执行，行为与 check() 等价
+        （基线仅加载一次，后续调用复用基线 + 当前请求增量）。
+        """
+        limit = get_session_token_budget_limit()
+        if limit <= 0 or not self.session_id:
+            return self._disabled_info(limit)
+        if self._baseline is None:
+            self._baseline = await asyncio.to_thread(get_session_total_tokens, self.session_id)
+        return self._compose(limit, current_request_tokens)
+
+    def _disabled_info(self, limit: int) -> dict[str, Any]:
+        return {
+            "enabled": False,
+            "exceeded": False,
+            "session_used": 0,
+            "current_request": 0,
+            "total": 0,
+            "limit": limit,
+        }
+
+    def _compose(self, limit: int, current_request_tokens: int) -> dict[str, Any]:
         current = max(0, int(current_request_tokens or 0))
         total = self._baseline + current
         return {

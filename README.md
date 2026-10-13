@@ -28,10 +28,10 @@
 
 ## 核心亮点
 
-- **LangGraph 多 Agent 编排**：Plan-Execute 图（`plan → execute → reflect → 条件路由 → respond`）+ 子智能体 `spawn`/`wait` 的 fan-out / fan-in，父图 `interrupt` 挂起、子任务全部终态后 `resume` 唤醒，嵌套深度上限 3 层。
-- **MCP 协议接入**：实现工具**动态发现与注册、调用拦截与结果格式统一、资源注入、上下文切换**，并适配 LangGraph，使 MCP 工具与内置工具在同一 `ToolNode` 内无缝混用。
-- **Agent Skills 规范实现**：`SkillLoader` 按「元数据常驻 → 命中加载 `SKILL.md` → 执行期按需加载 `references/` `scripts/`」实现**三级渐进式披露**，解决工具文档膨胀上下文的问题。
-- **RAG 全链路**：8 类文档解析 → 自适应分块 → pgvector 向量存储 → 多路召回 RRF 融合 + 交叉编码器重排序 → NLI 事实一致性校验 → 来源引用回传。
+- **LangGraph 多 Agent 编排**：子智能体 `spawn`/`wait` 的 fan-out / fan-in，父图 `interrupt` 挂起、子任务全部终态后 `resume` 唤醒，嵌套深度上限 3 层（工作流自建图仅工作流学习模块：规划 → 出题 → 批改 → 反馈 6 节点）。
+- **MCP 协议接入**：基于 langchain-mcp-adapters 实现 **Server 配置解析**（系统级 + 用户级合并、stdio 安全过滤）与**多传输协议工具拉取**（stdio / sse / http / websocket），MCP 工具与内置工具经重名消解后在同一 `ToolNode` 混用，工具输出统一经外部内容信封包裹注入隔离。
+- **Agent Skills 规范实现**：构建期只向 agent 注入**元数据**（L1 常驻），命中后按需**激活**技能工具（L2）、执行期按需**读取资源**（L3 `references/` `scripts/`）——三级渐进式披露，解决工具文档膨胀上下文的问题。
+- **RAG 全链路**：11 种扩展名 / 9 类文档解析（pdf、text、markdown、html、json、csv、docx、xlsx、pptx）→ 自适应分块 → pgvector 向量存储 → FlashRank 重排序（配置开关 `retriever_use_reranker`，默认开启）→ 跨知识库检索结果 RRF 融合 → 来源引用回传；离线 LLM-as-judge 评测框架（`rag_evaluation.py`）支撑检索/生成质量回归。
 - **Human-in-the-loop 审批**：工具调用按 SAFE / CONTROLLED / HIGH 三级管控，高危操作强制人工确认，含 5 分钟超时兜底、批量恢复与熔断保护。
 - **执行与 HTTP 连接解耦**：长任务由独立 FastAPI 会话执行服务承载，Django 仅负责鉴权、持久化与 Redis 信令分发，进程重启后可恢复未完成会话。
 
@@ -58,15 +58,14 @@ flowchart TB
 
     subgraph ORCH["Agent 编排层 · LangChain + LangGraph"]
         O1["AgentFactory：Base / SubAgent / DeepAgent 构建器"]
-        O2["Plan-Execute Graph：plan → execute → reflect → respond"]
-        O3["子智能体 spawn / wait：fan-out · fan-in · 深度 ≤ 3"]
-        O4["ApprovalMiddleware：SAFE / CONTROLLED / HIGH"]
+        O2["子智能体 spawn / wait：fan-out · fan-in · 深度 ≤ 3"]
+        O3["ApprovalMiddleware：SAFE / CONTROLLED / HIGH"]
     end
 
     subgraph TOOL["工具能力层"]
-        T1["MCP 接入：discovery · middleware · resource_injector · context_switcher"]
-        T2["Agent Skills：三级渐进式披露 Loader"]
-        T3["内置工具 ×13：shell / filesystem / web_search / attachment_rag ..."]
+        T1["MCP 接入：Server 配置解析 resolve_servers · 多传输拉取 stdio/sse/http/ws · 重名消解 · 外部内容信封"]
+        T2["Agent Skills：L1 元数据常驻 · L2 激活工具 · L3 资源工具"]
+        T3["内置工具 ×19：shell / filesystem / web_search / attachment_rag ...（另含 2 个子代理扩展工具）"]
     end
 
     subgraph DATA["数据存储层"]
@@ -93,7 +92,7 @@ flowchart TB
 1. **前端** 发起 `POST /api/v1/chat/.../stream/`，携带 JWT。
 2. **Django** 完成鉴权、限流、会话与消息落库后，**立即返回 `{"status": "started"}`**（不再占用 HTTP 连接等待模型输出），同时通过 `signal_bus.publish_signal` 向 Redis 通道 `agent:start:{thread_id}` 发布信令。
 3. **FastAPI 会话执行服务**通过 `PSUBSCRIBE agent:*` 收到信令，`SessionManager` 分配会话槽，`SessionExecutor` 在单协程内驱动 LangGraph。
-4. **Agent 编排层**按图流转：`plan` 生成计划 → `execute` 调用工具 → `reflect` 反思并可修订计划 → 条件路由至 `respond`。若命中高危工具，`ApprovalMiddleware` 触发 `interrupt` 挂起，落库生成审批单。
+4. **Agent 编排层**驱动 LangGraph 工具循环执行（构建期仅注入 Skills 元数据，命中后按需激活工具 / 读取资源）。若命中高危工具，`ApprovalMiddleware` 触发 `interrupt` 挂起，落库生成审批单；子任务经 `spawn`/`wait` fan-out / fan-in 协作。
 5. **工具能力层**执行 MCP 工具 / Agent Skills / 内置工具，读写 PostgreSQL + pgvector。
 6. **状态持久化**：每步经 checkpointer 落库（postgres / sqlite / memory 三后端可选），支持断点恢复。
 7. **事件回推**：执行器复用 Django 的 `realtime_sync.publish_event` 向 Redis 广播，Channels 网关转发至 WebSocket 分组 `user_{id}` / `session_{id}`，前端实时渲染。
@@ -139,11 +138,11 @@ LangGraph 的 Send API **只会捕获首个 interrupt**。若每个工具调用�
 
 方案：在 `after_model` 阶段扫描整批 `tool_calls`，**一次性 interrupt 携带整批审批请求**；被拒或超时的 `tool_call` 注入 error `ToolMessage`，使 `ToolNode` 跳过执行。审批决策先落库（事务性发件箱，双写 + 补偿，`max_attempts=3`）再广播信令。
 
-### 6. 上下文四级渐进压缩 + 分层记忆
+### 6. 上下文压缩 + 分层记忆
 
 长会话会撞上模型上下文上限。方案：
 
-- **四级渐进压缩**（阈值 0.5 / 0.75 / 0.9）：摘要 → 相关性裁剪 → 激进压缩，逐级升级；
+- **摘要压缩**：委托官方 `langchain` `SummarizationMiddleware`（token 用量超模型上限一定比例时触发，触发比例经 `compression_level_2_threshold` 配置，默认 0.5），以 `RemoveMessage(REMOVE_ALL_MESSAGES)` 整体替换消息列表，摘要随图状态进 checkpointer 持久化；
 - **分层记忆**：`LONG_TERM` 永不压缩（系统设定、用户偏好、关键决策），`SHORT_TERM` 参与压缩；
 - **Token 预算模板**：按场景分配（system 15% / memory 10% / tools 10% / history 50% / state 5% / query 10%），并预留 10% 输出空间。
 
@@ -153,7 +152,7 @@ LangGraph 的 Send API **只会捕获首个 interrupt**。若每个工具调用�
 | --- | --- |
 | 工具调用 | `max_retries=3` + 指数退避（2s → 30s，factor 2.0） |
 | 模型调用 | 熔断状态机（连续失败 ≥ 2 次 → open，冷却 30s）+ 自动切换候选模型 |
-| 执行降级 | `FULL → REDUCED_TOOLS → NO_TOOLS → MINIMAL` 四级 |
+| 执行降级 | `FULL → REDUCED_TOOLS → NO_TOOLS` 三级 |
 | 循环检测 | 精确重复 / 模式异常 / 进展停滞 / 辅助模型判定 四层 |
 | 审批熔断 | 同会话 5 分钟窗口内 HIGH 级操作超阈值即熔断 |
 
@@ -182,7 +181,7 @@ LangGraph 的 Send API **只会捕获首个 interrupt**。若每个工具调用�
 | --- | --- |
 | 智能体对话 | 多模型对话（OpenAI / Anthropic / DeepSeek / Groq / Ollama / 千帆），SSE 流式回复，WebSocket 实时状态同步 |
 | 深度研究 | 子智能体协作：计划 → 检索 → 撰写报告，产物落盘 `data/research/` |
-| 知识库 RAG | 文档上传解析与分块、pgvector 向量存储、多路召回 + 重排序、NLI 校验、来源引用 |
+| 知识库 RAG | 文档上传解析与分块、pgvector 向量存储、FlashRank 重排序（配置开关默认开启）、跨知识库 RRF 融合、来源引用 |
 | 工作流学习 | 学习会话工作流：规划 → 出题 → 批改 → 反馈 |
 | 工具调用审批 | 人机协同：高危工具调用需人工确认，支持批量审批、超时处理、跨浏览器状态同步 |
 | 模型管理 | 多 provider 注册与切换、连通性测试、费用与 Token 用量统计 |
@@ -206,6 +205,8 @@ LangGraph 的 Send API **只会捕获首个 interrupt**。若每个工具调用�
 | Top-K | 4 |
 
 ### 评测结果
+
+> 注：下表为 reranker 接线前的**历史评测数据**（当时线上检索器未传 `use_reranker`，重排序仅在本评测命令与降级路径生效）。现线上检索器已由配置开关 `retriever_use_reranker` 接线并**默认开启**，与表中 `dense+rerank` 策略行为对齐；重排序在 22 篇语料上的"无增益"结论属于该语料的历史实测，扩大语料后需重跑（见 Roadmap）。
 
 | 检索策略 | Recall@4 | Precision@4（文档级） | HitRate | MRR | 时延 P50 | 时延 P95 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -363,8 +364,8 @@ langchain_xm/
 | 应用 | 职责 |
 | --- | --- |
 | `agent_hub` | 智能体构建与执行：多类构建器、子智能体工具（spawn / wait）、审批中间件、容错调用 |
-| `ai_engine` | AI 引擎：多模型 provider、LLM 工厂与缓存、护栏、费用 / Token 追踪、子智能体运行时、plan-execute 工作流 |
-| `knowledge` | 知识库 RAG：文档解析与分块、向量库后端抽象、检索、重排序、NLI 校验、索引重建、**检索评测** |
+| `ai_engine` | AI 引擎：多模型 provider、LLM 工厂与缓存、护栏、费用 / Token 追踪、子智能体运行时 |
+| `knowledge` | 知识库 RAG：文档解析与分块、向量库后端抽象、检索、重排序（配置开关）、离线 LLM-as-judge 评测框架、索引重建、**检索评测** |
 | `chat` | 聊天核心：会话与消息模型、SSE 流式生成、WebSocket consumer、斜杠命令、RAG / 深度研究聊天服务 |
 | `context_manager` | 上下文管理：渐进压缩、分层记忆、知识图谱、Token 预算、检索增强 |
 | `approvals` | 工具调用审批：审批单生命周期、超时处理、批量恢复、熔断 |
@@ -383,6 +384,7 @@ langchain_xm/
 ### 已知限制
 
 - **RAG 评测集存在天花板效应**（22 篇语料、问题按章节构造，`Recall@4` 易饱和），当前版本仅适合作为回归基线。
+- **pgvector 侧未建 ANN 索引**（HNSW / IVFFlat 均未创建），向量检索退化为顺序扫描；当前数据量下时延可接受（P50 14.6 ms），语料规模增大后需补建索引。
 - **`keyword` 降级路径为顺序扫描**，无索引支持（P50 61.3 ms，高于向量检索的 14.6 ms），仅适合作为 embedding 服务不可用时的兜底。
 - **知识库上传通道未做文件类型 / 大小校验**，任意类型文件可上传并被索引。
 - **FastAPI 会话执行服务的 `/health` 端点无鉴权**且默认绑定 `0.0.0.0`。
@@ -395,7 +397,7 @@ langchain_xm/
 - [x] ~~修复 `keyword` 降级路径中文失效~~ —— 已改为 CJK 2-gram + `ILIKE` 子串匹配，中文召回率 0.000 → 0.933
 - [ ] 降低降级路径时延：引入 `zhparser` / `pg_jieba` 中文分词或 `pg_bigm` / `pg_trgm` 索引，替代当前顺序扫描
 - [ ] 扩展评测集至 100+ 题、跨 3 个以上语料域，消除天花板效应；补充 chunk 级标注以衡量块级排序精度
-- [ ] 评测重排序增益：在候选集跨越多个文档的场景下重跑消融，验证 cross-encoder 的实际收益
+- [ ] 评测重排序增益：在候选集跨越多个文档的场景下重跑消融，验证 cross-encoder 的实际收益（线上已默认开启 `retriever_use_reranker`，若证实负增益可关闭该开关回退）
 - [ ] 知识库上传校验：文件类型白名单 + 大小上限 + 病毒扫描
 - [ ] 执行服务 `/health` 增加鉴权，默认绑定 `127.0.0.1`
 - [ ] 敏感 token 从 URL query 迁移到 Header

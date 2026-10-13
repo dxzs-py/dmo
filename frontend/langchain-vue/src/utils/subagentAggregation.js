@@ -5,7 +5,7 @@
  * - 子代理元数据（status/resultPreview/pendingInterruptInfo/task/spawnToolCallId）
  *   来自 GET 接口（经 axios 拦截器 toCamelCase）；
  * - 子代理工具调用来自 message.toolCalls（toolCall.subagentThreadId 过滤）；
- * - 子代理正文/思考来自 message.subagentContents[threadId]（事件增量累计）；
+ * - 子代理正文/思考来自 message.subagentContents[threadId]（阶段 2：事件为累积全量快照，覆盖渲染）；
  * - task 回退：主 agent spawn_sub_agent 工具 input（对象或 JSON 字符串）的 task 字段。
  *
  * 主 Agent 的 toolCalls（subagentThreadId 为空）不进入任何子代理视图。

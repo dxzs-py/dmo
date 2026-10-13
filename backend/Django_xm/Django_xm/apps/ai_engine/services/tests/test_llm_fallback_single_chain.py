@@ -388,9 +388,9 @@ class LazyFallbackCrossLoopTests(unittest.TestCase):
         # 旧缓存实现下 loop B 复用实例 A，factory 仅被调 1 次（回归检出力）
         self.assertEqual(len(factory_calls), 2)
         self.assertIsNot(result_a, result_b)
-        # factory 必须收到 use_cache=False（绕过 llm_factory 实例缓存）
-        self.assertIs(factory_calls[0]["use_cache"], False)
-        self.assertIs(factory_calls[1]["use_cache"], False)
+        # use_cache 参数已随 factory 实例缓存退役而删除，factory 调用不得再携带
+        self.assertNotIn("use_cache", factory_calls[0])
+        self.assertNotIn("use_cache", factory_calls[1])
 
 
 if __name__ == "__main__":

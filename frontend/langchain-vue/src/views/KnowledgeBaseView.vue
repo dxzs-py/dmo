@@ -4,13 +4,14 @@ import { ElMessage } from 'element-plus'
 import { Plus, Search, Upload, Delete, View, Document, FolderOpened, Edit, Refresh } from '@element-plus/icons-vue'
 import { knowledgeAPI } from '@/api/knowledge'
 import { cacheAPI } from '@/api/cache'
+import { extractErrorMessage } from '../utils/apiErrorHandler'
 import { logger } from '../utils/logger'
-import { formatFileSize } from '../utils/format'
+import { formatFileSize, formatDate } from '../utils/format'
 import { confirmDelete, confirmAction } from '../utils/dialog'
 import { useSessionStore } from '../stores/session'
 import { useUserStore } from '../stores/user'
 import { useRealtimeSync } from '../composables/useRealtimeSync'
-import { buildUploadFormData, notifyEmbeddingFallback, getUploadErrorMessage, trackUploadTask } from '../utils/knowledgeUpload'
+import { buildUploadFormData, notifyEmbeddingFallback, getUploadErrorMessage, trackUploadTask, mapUploadProgress } from '../utils/knowledgeUpload'
 import { trackEvent } from '@/utils/analytics'
 
 const sessionStore = useSessionStore()
@@ -52,6 +53,9 @@ const filteredKBs = computed(() => {
   )
 })
 
+// R-UX-09：测试面板搜索状态（空结果与初始态文案区分，复用跨库面板 crossKbSearched 模式）
+const testSearched = ref(false)
+
 // keep-alive 首挂 mounted→activated 依次触发，初始化统一收敛 onActivated 单一入口
 // （此前双钩子同帧各调一次 loadKnowledgeBases，接口双发）；
 // loadCacheInfo（缓存状态轮询基础数据）仅首挂需要，由首挂标志区分。
@@ -64,6 +68,8 @@ onActivated(async () => {
   }
 })
 
+// R-UX-06：keep-alive 停用不取消上传任务订阅——WS 回调持续更新响应式状态，
+// 回到页面即见终态（任务后台继续执行）；订阅仅随组件销毁释放
 const cleanupKnowledgeBaseView = () => {
   if (cacheTimer) {
     clearInterval(cacheTimer)
@@ -73,13 +79,16 @@ const cleanupKnowledgeBaseView = () => {
     clearTimeout(crossKbTimer)
     crossKbTimer = null
   }
+}
+const disposeKnowledgeBaseView = () => {
+  cleanupKnowledgeBaseView()
   if (cancelUploadTask) {
     cancelUploadTask()
     cancelUploadTask = null
   }
 }
-onUnmounted(cleanupKnowledgeBaseView)
-// keep-alive 缓存生效后组件停用不卸载（onUnmounted 不触发），停用时显式清理
+onUnmounted(disposeKnowledgeBaseView)
+// keep-alive 缓存生效后组件停用不卸载（onUnmounted 不触发），停用时清理轮询类定时器
 onDeactivated(cleanupKnowledgeBaseView)
 
 function toggleAutoRefresh(val) {
@@ -92,15 +101,29 @@ function toggleAutoRefresh(val) {
   }
 }
 
+// R-UX-02：KB 列表消费分页 payload——page_size=100 一次拉取 + 总数提示
+// （列表含本地搜索过滤，真分页会与之冲突；100 为后端 page_size 上限）
+const kbTotal = ref(0)
+// R-UX-05：列表加载失败与空态区分（error 态 + 重试）
+const kbLoadError = ref('')
+
 async function loadKnowledgeBases() {
   loading.value = true
+  kbLoadError.value = ''
   try {
-    const response = await knowledgeAPI.getKnowledgeBases()
+    const response = await knowledgeAPI.getKnowledgeBases({ page_size: 100 })
     if (response.data?.code === 200) {
       knowledgeBases.value = response.data.data?.items || []
+      kbTotal.value = response.data.data?.total || 0
+      if (kbTotal.value > 100) {
+        logger.warn(`知识库总数 ${kbTotal.value} 超过单页上限 100，仅显示前 100 个`)
+      }
+    } else {
+      kbLoadError.value = response.data?.message || '获取知识库列表失败，请稍后重试'
     }
   } catch (error) {
     logger.error('加载知识库失败:', error)
+    kbLoadError.value = extractErrorMessage(error)
   } finally {
     loading.value = false
   }
@@ -118,9 +141,12 @@ async function handleCreate() {
       createDialog.value = false
       newKB.value = { name: '', description: '' }
       await loadKnowledgeBases()
+    } else {
+      ElMessage.error(response.data?.message || '创建失败')
     }
-  } catch {
-    ElMessage.error('创建失败')
+  } catch (error) {
+    logger.error('创建知识库失败:', error)
+    ElMessage.error(extractErrorMessage(error))
   }
 }
 
@@ -132,9 +158,44 @@ async function handleDelete(kb) {
       ElMessage.success('删除成功')
       await loadKnowledgeBases()
       await sessionStore.loadKnowledgeBases()
+    } else {
+      ElMessage.error(response.data?.message || '删除失败')
     }
+  } catch (error) {
+    // 用户取消确认框（ElMessageBox reject 'cancel'/'close'）不算失败
+    if (error !== 'cancel' && error !== 'close') {
+      logger.error('删除知识库失败:', error)
+      ElMessage.error(extractErrorMessage(error))
+    }
+  }
+}
+
+// R-UX-07：重建索引用户侧入口（后端复用 rebuild_index_from_source_files，同步重操作）
+const rebuildingId = ref('')
+
+async function handleRebuild(kb) {
+  try {
+    await confirmAction(
+      `确定要重建知识库 "${kb.name}" 的索引吗？将从原始文件重新分块并向量化，耗时取决于文档数量。`,
+      { confirmButtonText: '重建', type: 'warning' }
+    )
   } catch {
-    // cancelled
+    return
+  }
+  rebuildingId.value = kb.id
+  try {
+    const response = await knowledgeAPI.rebuildIndex(kb.id)
+    if (response.data?.code === 200) {
+      ElMessage.success(`知识库 "${kb.name}" 索引重建成功`)
+      await loadKnowledgeBases()
+    } else {
+      ElMessage.error(response.data?.message || '索引重建失败')
+    }
+  } catch (error) {
+    logger.error('索引重建失败:', error)
+    ElMessage.error(extractErrorMessage(error))
+  } finally {
+    rebuildingId.value = ''
   }
 }
 
@@ -169,9 +230,12 @@ async function handleEdit() {
       ElMessage.success('更新成功')
       editDialog.value = false
       await loadKnowledgeBases()
+    } else {
+      ElMessage.error(response.data?.message || '更新失败')
     }
-  } catch {
-    ElMessage.error('更新失败')
+  } catch (error) {
+    logger.error('更新知识库失败:', error)
+    ElMessage.error(extractErrorMessage(error))
   }
 }
 
@@ -184,6 +248,8 @@ function openUpload(kb) {
 const uploadLoading = ref(false)
 const uploadProgress = ref(0)
 const uploadStatusText = ref('')
+// UX-c：消费上传响应 files 字段——接收确认区列出后端已接收的文件清单
+const receivedFiles = ref([])
 
 const realtimeSync = useRealtimeSync()
 let cancelUploadTask = null
@@ -197,8 +263,20 @@ async function handleUpload() {
   uploadLoading.value = true
   uploadProgress.value = 0
   uploadStatusText.value = '正在上传文件...'
+  receivedFiles.value = []
   try {
-    const response = await knowledgeAPI.uploadDocuments(currentKB.value.id, formData)
+    // R-UX-06：HTTP 上传段经 onUploadProgress 映射到 0-30 段，消除首段盲窗
+    const response = await knowledgeAPI.uploadDocuments(currentKB.value.id, formData, {
+      onUploadProgress: (event) => {
+        const pct = mapUploadProgress(event.loaded, event.total)
+        if (pct > 0) {
+          uploadProgress.value = Math.max(uploadProgress.value, pct)
+          uploadStatusText.value = `正在上传文件... ${pct}%`
+        }
+      },
+    })
+    // UX-c：files 为后端已接收文件清单（保存成功即返回，先于向量化终态）
+    receivedFiles.value = (response.data?.data?.files || []).map(f => f.name || f.fileName).filter(Boolean)
     const taskId = response.data?.data?.taskId
     if (!taskId) {
       throw new Error('上传响应缺少任务ID')
@@ -235,47 +313,65 @@ async function handleUpload() {
   }
 }
 
-async function openDocuments(kb) {
+// R-UX-02：文档列表真分页（后端默认 20/页，消费 total 翻页，消除第 21 个文档起静默消失）
+const documentsPage = ref(1)
+const documentsPageSize = ref(20)
+const documentsTotal = ref(0)
+
+async function openDocuments(kb, page = 1) {
   currentKB.value = kb
   documents.value = []
   documentsLoading.value = true
   try {
-    const response = await knowledgeAPI.getDocuments(kb.id)
+    const response = await knowledgeAPI.getDocuments(kb.id, {
+      page,
+      page_size: documentsPageSize.value,
+    })
     if (response.data?.code === 200) {
       documents.value = response.data.data?.items || []
-      logger.info('获取文档列表成功:', documents.value)
+      documentsTotal.value = response.data.data?.total || 0
+      documentsPage.value = response.data.data?.page || page
     } else {
       ElMessage.error('获取文档列表失败: ' + (response.data?.message || '未知错误'))
     }
   } catch (error) {
     logger.error('获取文档列表失败:', error)
-    ElMessage.error('获取文档列表失败，请重试')
+    ElMessage.error('获取文档列表失败: ' + extractErrorMessage(error))
   } finally {
     documentsLoading.value = false
   }
   documentsDialog.value = true
 }
 
+function handleDocumentsPageChange(page) {
+  if (currentKB.value) {
+    openDocuments(currentKB.value, page)
+  }
+}
+
 async function handleDeleteDocument(kbId, filename) {
   try {
     await confirmDelete(`确定要删除文档 "${filename}" 吗？`)
-    
+
     logger.info('正在删除文档:', filename)
     const response = await knowledgeAPI.deleteDocument(kbId, filename)
     logger.info('删除文档响应:', response.data)
-    
+
     if (response.data?.code === 200) {
       ElMessage.success('删除成功')
-      
+
       // 立即从本地列表中移除，确保用户看到立即的反馈
       const initialLength = documents.value.length
       documents.value = documents.value.filter(d => d.name !== filename)
+      documentsTotal.value = Math.max(0, documentsTotal.value - 1)
       logger.info(`从列表中移除文件: ${filename}, 之前: ${initialLength}, 之后: ${documents.value.length}`)
-      
-      // 稍等一下后再刷新，确保后端处理完成
+
+      // 稍等一下后再刷新，确保后端处理完成；当前页删空时回退一页（R-UX-02 分页配套）
       setTimeout(async () => {
         logger.info('重新加载文档列表...')
-        await openDocuments(currentKB.value)
+        const lastPage = Math.max(1, Math.ceil(documentsTotal.value / documentsPageSize.value))
+        const targetPage = documents.value.length === 0 ? Math.min(documentsPage.value - 1, lastPage) : documentsPage.value
+        await openDocuments(currentKB.value, Math.max(1, targetPage))
         await loadKnowledgeBases()
         logger.info('文档列表刷新完成')
       }, 300)
@@ -283,9 +379,9 @@ async function handleDeleteDocument(kbId, filename) {
       ElMessage.error('删除失败: ' + (response.data?.message || '未知错误'))
     }
   } catch (error) {
-    if (error !== 'cancel') {
+    if (error !== 'cancel' && error !== 'close') {
       logger.error('删除文档失败:', error)
-      ElMessage.error('删除失败，请重试')
+      ElMessage.error('删除失败: ' + extractErrorMessage(error))
     }
   }
 }
@@ -294,12 +390,14 @@ function openTest(kb) {
   currentKB.value = kb
   testQuery.value = ''
   testResults.value = []
+  testSearched.value = false
   testDialog.value = true
 }
 
 async function handleTestSearch() {
   if (!testQuery.value) return
   testLoading.value = true
+  testSearched.value = true
   try {
     const response = await knowledgeAPI.testSearch(currentKB.value.id, {
       query: testQuery.value,
@@ -307,9 +405,12 @@ async function handleTestSearch() {
     })
     if (response.data?.code === 200) {
       testResults.value = response.data.data?.results || []
+    } else {
+      ElMessage.error('检索测试失败: ' + (response.data?.message || '未知错误'))
     }
-  } catch {
-    ElMessage.error('检索测试失败')
+  } catch (error) {
+    logger.error('检索测试失败:', error)
+    ElMessage.error('检索测试失败: ' + extractErrorMessage(error))
   } finally {
     testLoading.value = false
   }
@@ -432,9 +533,14 @@ async function handleClearCache(scope = 'all') {
     if (response.data?.code === 200) {
       ElMessage.success('缓存清除成功')
       await loadCacheInfo()
+    } else {
+      ElMessage.error(response.data?.message || '缓存清除失败')
     }
-  } catch {
-    // cancelled
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      logger.error('清除缓存失败:', error)
+      ElMessage.error(extractErrorMessage(error))
+    }
   } finally {
     cacheClearLoading.value = false
   }
@@ -460,11 +566,25 @@ async function handleClearCache(scope = 'all') {
       <el-button type="primary" :icon="Plus" @click="createDialog = true">
         创建知识库
       </el-button>
+      <!-- R-UX-02：分页 payload 总数消费，消除"第 21 个起静默消失" -->
+      <span v-if="kbTotal > 0" class="kb-total-hint">共 {{ kbTotal }} 个知识库</span>
     </div>
+
+    <!-- R-UX-05：列表加载失败与空态区分（error 态 + 重试） -->
+    <el-alert
+      v-if="kbLoadError && !loading"
+      :title="kbLoadError"
+      type="error"
+      show-icon
+      :closable="false"
+      style="margin-bottom: 20px"
+    >
+      <el-button size="small" type="primary" link @click="loadKnowledgeBases">重试</el-button>
+    </el-alert>
 
     <el-row v-loading="loading" :gutter="20">
       <el-col
-v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.documentCount, kb.chunkCount, kb.updatedAt]" :xs="24" :sm="12"
+        v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.documentCount, kb.chunkCount, kb.updatedAt]" :xs="24" :sm="12"
               :md="8">
         <el-card class="kb-card" shadow="hover">
           <template #header>
@@ -492,6 +612,10 @@ v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.docu
                     <el-dropdown-item @click="openTest(kb)">
                       <el-icon><Search /></el-icon>检索测试
                     </el-dropdown-item>
+                    <!-- R-UX-07：重建索引用户侧入口（向量数据丢失/检索异常时的自救路径） -->
+                    <el-dropdown-item :disabled="rebuildingId === kb.id" @click="handleRebuild(kb)">
+                      <el-icon><Refresh /></el-icon>{{ rebuildingId === kb.id ? '重建中...' : '重建索引' }}
+                    </el-dropdown-item>
                     <el-dropdown-item divided @click="handleDelete(kb)">
                       <el-icon><Delete /></el-icon>删除
                     </el-dropdown-item>
@@ -509,9 +633,14 @@ v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.docu
       </el-col>
     </el-row>
 
-    <el-empty v-if="!loading && filteredKBs.length === 0" description="暂无知识库，点击创建" />
+    <el-empty
+      v-if="!loading && !kbLoadError && filteredKBs.length === 0"
+      :description="searchQuery ? '没有匹配的知识库' : '暂无知识库，点击创建'"
+    />
 
-    <el-card v-loading="cacheLoading" class="cache-card" shadow="hover">
+    <!-- R-UX-09：数据库实时监控卡含 PostgreSQL 版本/表数量、Redis 键数、向量存储 basePath
+         等运维敏感信息，整体权限门控为管理员可见（isAdmin 此前仅控制清缓存按钮） -->
+    <el-card v-if="userStore.isAdmin" v-loading="cacheLoading" class="cache-card" shadow="hover">
       <template #header>
         <div class="cache-card-header">
           <span class="card-title">数据库实时监控</span>
@@ -648,7 +777,7 @@ v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.docu
         <el-descriptions :column="2" border>
           <el-descriptions-item label="名称">{{ currentKB.name }}</el-descriptions-item>
           <el-descriptions-item label="分段数">{{ currentKB.chunkCount || 0 }}</el-descriptions-item>
-          <el-descriptions-item label="创建时间">{{ currentKB.createdAt }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ formatDate(currentKB.createdAt) }}</el-descriptions-item>
           <el-descriptions-item label="描述" :span="2">{{ currentKB.description || '暂无' }}</el-descriptions-item>
         </el-descriptions>
       </template>
@@ -661,12 +790,12 @@ v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.docu
         :auto-upload="false"
         :on-change="handleFileChange"
         :file-list="uploadFiles"
-        accept=".pdf,.txt,.md,.csv,.json,.docx"
+        accept=".pdf,.txt,.md,.mdx,.html,.htm,.json,.csv,.docx,.xlsx,.pptx"
       >
         <el-icon :size="48"><Upload /></el-icon>
         <div>拖拽文件到此处或 <em>点击上传</em></div>
         <template #tip>
-          <div class="upload-tip">支持 PDF、TXT、Markdown、CSV、JSON、DOCX 格式，支持多选上传</div>
+          <div class="upload-tip">支持 PDF、TXT、Markdown、MDX、HTML、JSON、CSV、DOCX、XLSX、PPTX 格式，支持多选上传</div>
         </template>
       </el-upload>
       <div v-if="uploadFiles.length > 0" class="upload-file-list">
@@ -679,6 +808,14 @@ v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.docu
       <div v-if="uploadLoading" class="upload-progress">
         <el-progress :percentage="uploadProgress" :status="uploadProgress >= 100 ? 'success' : undefined" />
         <div class="upload-status-text">{{ uploadStatusText }}</div>
+      </div>
+      <!-- UX-c：接收确认区列出后端已接收文件清单（files 字段消费） -->
+      <div v-if="receivedFiles.length" class="received-files">
+        <el-alert type="success" :closable="false" show-icon>
+          <template #title>
+            已接收 {{ receivedFiles.length }} 个文件：{{ receivedFiles.join('、') }}
+          </template>
+        </el-alert>
       </div>
       <template #footer>
         <el-button :disabled="uploadLoading" @click="uploadDialog = false">取消</el-button>
@@ -712,6 +849,16 @@ v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.docu
         </el-table>
         <el-empty v-else description="暂无文档" :image-size="80" />
       </div>
+      <!-- R-UX-02：文档列表服务端分页（默认 20/页），消费 total 翻页 -->
+      <div v-if="documentsTotal > documentsPageSize" class="documents-pagination">
+        <el-pagination
+          layout="total, prev, pager, next"
+          :total="documentsTotal"
+          :page-size="documentsPageSize"
+          :current-page="documentsPage"
+          @current-change="handleDocumentsPageChange"
+        />
+      </div>
     </el-dialog>
 
     <el-dialog v-model="testDialog" title="检索测试" width="600px">
@@ -727,12 +874,15 @@ v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.docu
       <div v-if="testResults.length" class="test-results">
         <div v-for="(result, idx) in testResults" :key="idx" class="test-result-item">
           <div class="result-header">
-            <el-tag size="small">相似度: {{ ((1 - result.score) * 100).toFixed(1) }}%</el-tag>
+            <!-- score 语义：后端 kb_service 已归一为相似度（越高越相关），直显不再做 1-score 距离换算 -->
+            <el-tag size="small">相似度: {{ formatScore(result.score) }}</el-tag>
             <span class="result-source">{{ result.source || '未知来源' }}</span>
           </div>
           <p class="result-content">{{ result.content }}</p>
         </div>
       </div>
+      <!-- R-UX-09：空结果与初始态文案区分（补 searched 状态，复用跨库面板模式） -->
+      <el-empty v-else-if="testSearched && !testLoading" description="未找到相关内容" :image-size="80" />
       <el-empty v-else-if="!testLoading" description="输入查询进行检索测试" :image-size="80" />
     </el-dialog>
 
@@ -795,6 +945,22 @@ v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.docu
 
 .search-input {
   max-width: 300px;
+}
+
+.kb-total-hint {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.received-files {
+  margin-top: 12px;
+}
+
+.documents-pagination {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .kb-card {

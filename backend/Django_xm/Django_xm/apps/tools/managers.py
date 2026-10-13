@@ -59,6 +59,24 @@ def _drf_validation_message(exc) -> str:
     return str(exc)
 
 
+# auth_token 掩码回显前缀：以该前缀开头的值识别为掩码（非真实凭证）
+MASKED_AUTH_TOKEN_PREFIX = "******"
+
+
+def mask_auth_token(token: str) -> str:
+    """auth_token 掩码回显（C13）：保留尾 4 位便于用户辨识，其余以 * 代替。
+
+    约定：update_server 收到以 ``MASKED_AUTH_TOKEN_PREFIX`` 开头或空串的
+    auth_token 时视为"不更新凭证"，避免列表掩码值经编辑回传覆盖真实凭证。
+    真实凭证理论上不会以连续 6 个 * 开头。
+    """
+    if not token:
+        return ""
+    if len(token) <= 4:
+        return MASKED_AUTH_TOKEN_PREFIX
+    return f"{MASKED_AUTH_TOKEN_PREFIX}{token[-4:]}"
+
+
 # ---------------------------------------------------------------------------
 # 抽象基类
 # ---------------------------------------------------------------------------
@@ -314,7 +332,8 @@ class McpToolManager(BaseToolManager):
                 if srv_obj.headers:
                     entry["headers"] = srv_obj.headers
                 if srv_obj.auth_token:
-                    entry["auth_token"] = srv_obj.auth_token
+                    # C13：明文 token 不出后端，掩码回显（尾 4 位可辨识）
+                    entry["auth_token"] = mask_auth_token(srv_obj.auth_token)
             result.append(entry)
 
         return result
@@ -454,7 +473,11 @@ class McpToolManager(BaseToolManager):
             if "headers" in config_dict:
                 srv.headers = config_dict["headers"]
             if "auth_token" in config_dict:
-                srv.auth_token = config_dict["auth_token"]
+                token = config_dict["auth_token"]
+                # C13 约定：空串或掩码回显值视为"不更新凭证"，
+                # 防止 GET 列表返回的掩码经编辑表单回传后覆盖真实凭证
+                if token and not token.startswith(MASKED_AUTH_TOKEN_PREFIX):
+                    srv.auth_token = token
             if "description" in config_dict:
                 srv.description = config_dict["description"]
             if "category" in config_dict:
@@ -473,33 +496,6 @@ class McpToolManager(BaseToolManager):
             logger.exception("MCP Server 更新失败")
             return {"success": False, "error_code": "UNKNOWN", "message": f"更新失败: {e}"}
 
-    def test_server(self, user, server_name: str) -> dict[str, Any]:
-        """测试 MCP Server 连接
-
-        Args:
-            user: 用户实例
-            server_name: MCP Server 名称
-
-        Returns:
-            {"success": bool, "message": str, "data": dict}
-        """
-        from Django_xm.apps.tools.mcp import is_mcp_available
-
-        if not is_mcp_available():
-            return {"success": False, "error_code": "UNKNOWN", "message": "langchain-mcp-adapters 未安装"}
-
-        # 合并查找目标 Server 配置
-        target = self._find_server_config(server_name, user)
-        if not target:
-            return {"success": False, "error_code": "NOT_FOUND", "message": f"未找到 MCP Server: {server_name}"}
-
-        try:
-            data: dict[str, Any] = run_async(self._test_mcp_server_async(server_name, target))
-            return {"success": True, "message": "连接测试成功", "data": data}
-        except Exception as e:
-            logger.exception("MCP Server 连接测试失败 (%s)", server_name)
-            return {"success": False, "error_code": "UNKNOWN", "message": f"连接失败: {e}"}
-
     # ---- MCP 内部辅助 ----
 
     @staticmethod
@@ -512,49 +508,6 @@ class McpToolManager(BaseToolManager):
         from Django_xm.apps.tools.mcp import _get_mcp_servers_config
 
         return any(s.get("name") == name for s in _get_mcp_servers_config())
-
-    def _find_server_config(self, server_name: str, user) -> dict[str, Any] | None:
-        """在系统级 + 用户级配置中查找指定名称的 Server
-
-        系统级 Server（config 模块，管理员维护）属可信配置，对所有用户可见
-        （含 stdio）；非管理员仅跳过用户自建（source="user"）的 stdio Server。
-        """
-        from Django_xm.apps.tools.mcp import _get_mcp_servers_config
-        from Django_xm.apps.tools.models import McpServerConfig
-        from Django_xm.apps.tools.serializers import is_mcp_admin
-
-        # 系统级（可信，含 stdio，所有用户可见）
-        for srv in _get_mcp_servers_config():
-            if srv.get("name") == server_name:
-                return srv
-
-        # 用户级（非管理员跳过自建 stdio）
-        user_qs = McpServerConfig.objects.filter(user=user, name=server_name)
-        if not is_mcp_admin(user):
-            user_qs = user_qs.exclude(transport="stdio", source="user")
-        srv_obj = user_qs.first()
-        if srv_obj:
-            return srv_obj.to_config_dict()
-
-        return None
-
-    @staticmethod
-    async def _test_mcp_server_async(server_name: str, target: dict[str, Any]) -> dict[str, Any]:
-        """异步测试 MCP Server 连接（transport 分派复用 ``fetch_tools_for_server``）。"""
-        from Django_xm.apps.tools.mcp.resolve_servers import fetch_tools_for_server
-
-        transport = target.get("transport", "sse")
-        # 缺少 url 时由 fetch_tools_for_server 抛 ValueError，经 test_server 统一转错误响应
-        tools = await fetch_tools_for_server(target)
-
-        tool_list = [{"name": t.name, "description": t.description or ""} for t in tools]
-        return {
-            "server": server_name,
-            "transport": transport,
-            "connected": True,
-            "tools": tool_list,
-            "tool_count": len(tools),
-        }
 
 
 # ---------------------------------------------------------------------------
@@ -620,7 +573,7 @@ class SkillToolManager(BaseToolManager):
                     "source": "system",
                     "deletable": False,
                     "status": "active",
-                    "mode": spec.mode,
+                    "mode": "pipeline",
                     "steps": [s.model_dump() for s in spec.steps],
                     "steps_desc": steps_desc,
                     "visibility": "selectable",

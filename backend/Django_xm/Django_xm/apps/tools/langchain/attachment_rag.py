@@ -1,10 +1,47 @@
+import contextvars
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+# ── 会话存在性校验 provider（阶段 7 票②依赖倒置）───────────────────────────────
+# tools 不得直连 chat.models（.importlinter research-chat-via-facade-only 传递性
+# 豁免台账清零）：ChatSession 存在性校验实现归位 chat 业务层
+# （chat/services/cross_app.is_chat_session_exists），经运行期 provider 注入，
+# 组合根接线在 chat AppConfig.ready()（先例 context_manager/services/
+# runtime_providers.py）。工具为模块级单例（C-1 ContextVar 身份先例），构造注入
+# 不便，故取注册式。未注册时按既有降级路径处理（返回"未找到会话"，跳过检索）。
+ChatSessionExistsProvider = Callable[[str], bool]
+
+_chat_session_exists_provider: ChatSessionExistsProvider | None = None
+
+
+def set_chat_session_exists_provider(provider: ChatSessionExistsProvider | None) -> None:
+    """注册会话存在性校验实现（chat AppConfig.ready() 组合根调用）。"""
+    global _chat_session_exists_provider  # noqa: PLW0603 - 运行期 provider 注册点（先例 runtime_providers）
+    _chat_session_exists_provider = provider
+
+
+def get_chat_session_exists_provider() -> ChatSessionExistsProvider | None:
+    return _chat_session_exists_provider
+
+
+# ── 身份传递（C-1 多租户安全，B1 同款身份传递模式）───────────────────────────────
+# thread_id 不落单例实例字段：单例被全部会话共享，实例字段在并发下会被后一个
+# 会话的捕获覆写，导致会话 A 以会话 B 的 session 检索附件 → 跨用户附件内容泄漏
+# （审批策略 SAFE 自动通过，无人工闸门拦截）。
+# 传递链：invoke/ainvoke 边界从本次调用的 config.configurable 捕获 → ContextVar
+# （任务级上下文；asgiref sync_to_async 复制上下文进工作线程）→ _run 读取；
+# 图内直接 _run 调用回退 langgraph.config.get_config()（运行期 config，与
+# termination_judge 身份取值同口径）。
+_current_thread_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "attachment_rag_thread_id", default=""
+)
 
 
 # ── 输入模型 ────────────────────────────────────────────────────────────────────
@@ -21,11 +58,11 @@ class AttachmentRagSearchTool(BaseTool):
     """附件 RAG 检索工具
 
     自动检索当前会话中用户最近一次上传的非图片附件内容。
-    thread_id 由 invoke/ainvoke 从 LangGraph ToolNode 传入的 RunnableConfig 中提取，
-    无需用户手动指定附件 ID。
+    thread_id 由 invoke/ainvoke 从本次调用的 RunnableConfig.configurable 按次
+    捕获传递（不存实例状态），无需用户手动指定附件 ID。
 
     检索流程:
-        1. 通过 self.thread_id 查找 ChatSession
+        1. 以本次调用的 thread_id 查找 ChatSession
         2. 找到最近一次包含非图片附件的用户消息
         3. 加载附件文档分块 → UnifiedRagPipeline 检索
     """
@@ -46,50 +83,48 @@ class AttachmentRagSearchTool(BaseTool):
     )
     args_schema: type[BaseModel] = AttachmentRagSearchInput
 
-    # thread_id 由 invoke/ainvoke 从 RunnableConfig 中提取，每次工具调用前更新
-    thread_id: str = Field(default="", description="当前会话 ID，由 invoke/ainvoke 注入")
-
     # ── config 注入 ─────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _extract_thread_id(config) -> str:
+        """从 RunnableConfig.configurable 提取 thread_id（即 chat_session_id）。"""
+        if config and isinstance(config, dict):
+            configurable = config.get("configurable") or {}
+            if isinstance(configurable, dict):
+                return configurable.get("thread_id") or ""
+        return ""
+
     def invoke(self, input: str | dict | BaseModel, config=None, **kwargs) -> Any:
-        """从 config 提取 thread_id，再委托父类执行。"""
-        self._capture_thread_id(config)
-        logger.info("DIAG: invoke thread_id=%s, has_config=%s",
-                    self.thread_id, bool(config))
+        """从本次调用的 config 捕获 thread_id 进当前任务上下文，再委托父类执行。"""
+        token = _current_thread_id.set(self._extract_thread_id(config))
         try:
-            result = super().invoke(input, config=config, **kwargs)
-            logger.info("DIAG: invoke 完成 result_type=%s", type(result).__name__)
-            return result
-        except Exception:
-            logger.exception("DIAG: invoke 执行异常")
-            raise
+            return super().invoke(input, config=config, **kwargs)
+        finally:
+            _current_thread_id.reset(token)
 
     async def ainvoke(self, input: str | dict | BaseModel, config=None, **kwargs) -> Any:
-        """从 config 提取 thread_id，再委托父类异步执行。"""
-        self._capture_thread_id(config)
-        logger.info("DIAG: ainvoke thread_id=%s, has_config=%s",
-                    self.thread_id, bool(config))
+        """从本次调用的 config 捕获 thread_id 进当前任务上下文，再委托父类执行。"""
+        token = _current_thread_id.set(self._extract_thread_id(config))
         try:
-            result = await super().ainvoke(input, config=config, **kwargs)
-            logger.info("DIAG: ainvoke 完成 result_type=%s content_preview=%s",
-                        type(result).__name__, str(result)[:200])
-            return result
-        except Exception:
-            logger.exception("DIAG: ainvoke 执行异常")
-            raise
+            return await super().ainvoke(input, config=config, **kwargs)
+        finally:
+            _current_thread_id.reset(token)
 
-    def _capture_thread_id(self, config) -> None:
-        """从 RunnableConfig 提取 thread_id 并设置到 self。
+    def _resolve_thread_id(self) -> str:
+        """解析当前调用身份：invoke/ainvoke 边界捕获值 → LangGraph 运行期 config → 空。
 
-        LangGraph 的 ToolNode 通过 tool.ainvoke(input, config) 调用工具，
-        config 中包含 configurable.thread_id（即 chat_session_id）。
+        并发会话下各调用方持有各自上下文中的 thread_id，单例不携带任何跨调用状态。
         """
-        if config and isinstance(config, dict):
-            configurable = config.get("configurable", {})
-            if isinstance(configurable, dict):
-                tid = configurable.get("thread_id", "")
-                if tid:
-                    self.thread_id = tid
+        thread_id = _current_thread_id.get()
+        if thread_id:
+            return thread_id
+        try:
+            from langgraph.config import get_config
+
+            return self._extract_thread_id(get_config())
+        except Exception:
+            # 图外调用无运行期上下文，属正常；返回空由调用方给出明确文案
+            return ""
 
     # ── 核心逻辑 ────────────────────────────────────────────────────────────────
 
@@ -99,19 +134,22 @@ class AttachmentRagSearchTool(BaseTool):
         Returns:
             格式化后的检索结果字符串
         """
-        logger.info("AttachmentRAGSearch: query=%s, thread_id=%s", query[:80] if query else "", self.thread_id)
+        thread_id = self._resolve_thread_id()
+        logger.info("AttachmentRAGSearch: query=%s, thread_id=%s", query[:80] if query else "", thread_id)
 
-        thread_id = self.thread_id
         if not thread_id:
             return "无法确定当前会话，请重新发送消息。"
 
-        # ── 1. 查找 ChatSession ────────────────────────────────────────────
+        # ── 1. 会话存在性校验（provider 注入，E5-10：异常细节只进日志）────────
+        resolver = get_chat_session_exists_provider()
+        if resolver is None:
+            logger.warning("ChatSession 校验 provider 未注册（按未找到会话处理）: session_id=%s", thread_id)
+            return f"未找到会话 (session_id={thread_id})"
         try:
-            from Django_xm.apps.chat.models import ChatSession
-
-            ChatSession.objects.get(session_id=thread_id)
-        except Exception as e:
-            logger.warning("查找会话失败 (session_id=%s): %s", thread_id, e)
+            if not resolver(thread_id):
+                return f"未找到会话 (session_id={thread_id})"
+        except Exception:
+            logger.warning("查找会话失败 (session_id=%s)", thread_id, exc_info=True)
             return f"未找到会话 (session_id={thread_id})"
 
         # ── 2. 查找最近一次包含非图片附件的用户消息 ─────────────────────────
@@ -129,7 +167,9 @@ class AttachmentRagSearchTool(BaseTool):
             )
         except Exception as e:
             logger.exception("查询附件列表失败")
-            return f"查询附件列表时出错: {e}"
+            # E5-10：异常文本可能携带 SQL/路径等内部细节，不进 LLM 上下文
+            # （ToolCallCard 展示位）；全栈经上方 logger.exception 留档。
+            return f"错误：查询会话附件列表失败（{type(e).__name__}），请稍后重试。"
 
         if not attachments:
             return "当前会话没有上传附件。请先上传文件后再使用此工具检索。"
@@ -178,13 +218,20 @@ class AttachmentRagSearchTool(BaseTool):
             pipeline = UnifiedRagPipeline()
             result = pipeline.search(query, documents, total_tokens)
             logger.info("AttachmentRAGSearch: 检索完成, 结果长度=%d", len(result))
-            return result
+            # R3 1.11：检索结果源自用户上传附件（外部内容），进模型上下文前
+            # 对齐 file_reader/web_fetch 的 B4 注入隔离信封（先截断后包裹由
+            # pipeline 内部截断语义保证；错误分支为系统生成文案，不包裹）
+            from Django_xm.apps.tools.langchain.external_content import wrap_external_content
+
+            return wrap_external_content(f"会话附件检索结果 (query={query[:80]})", result)
         except Exception as e:
             logger.exception("AttachmentRAGSearch 检索失败")
-            return f"附件检索过程中发生错误: {e}"
+            # E5-10：异常文本可能携带内部细节，不进 LLM 上下文；类型名作为
+            # 有限细节保留，全栈经上方 logger.exception 留档。
+            return f"错误：附件检索过程中发生错误（{type(e).__name__}），请稍后重试。"
 
     async def _arun(self, query: str) -> str:
-        """异步执行 RAG 检索，委托给同步 _run。"""
+        """异步执行 RAG 检索，委托给同步 _run（sync_to_async 复制上下文，身份随行）。"""
         from asgiref.sync import sync_to_async
 
         return await sync_to_async(self._run)(query=query)

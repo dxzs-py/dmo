@@ -132,6 +132,31 @@ class Settings(ProjectSettings):
 
     ollama_embedding_model: str = Field(default="bge-m3", description="Ollama 默认 embedding 模型（推荐 bge-m3）")
 
+    # ==================== LLM 速率限制 ====================
+    # 多 Agent 并行（主 agent + N 子代理）共享 LLM 出口，限速按 provider 区分：
+    # 本地 provider（ollama，无 API 限额）默认不限速；外部 API 各自限速；
+    # 特定 provider 可用 overrides 精确覆盖（如 Groq 免费档 30 RPM → 0.5 rps）。
+    rate_limit_rps: float = Field(
+        default=1.0,
+        description="外部 API provider 默认速率限制（requests/second）；按 provider 独立计数而非全局共享",
+    )
+
+    rate_limit_bucket: int = Field(
+        default=60,
+        ge=1,
+        description="令牌桶容量（允许的突发请求数）",
+    )
+
+    rate_limit_unlimited_providers: list[str] = Field(
+        default_factory=lambda: ["ollama"],
+        description="不限速的 provider 列表（本地推理服务，无 API 限额）",
+    )
+
+    rate_limit_rps_overrides: dict[str, float] = Field(
+        default_factory=dict,
+        description='按 provider 覆盖速率限制，如 {"groq": 0.5}；优先级高于 rate_limit_rps 默认值',
+    )
+
     chunk_size: int = Field(default=1000, ge=100, le=10000, description="文本分块大小(字符)")
 
     chunk_overlap: int = Field(default=200, ge=0, le=1000, description="分块重叠大小(字符)")
@@ -161,6 +186,10 @@ class Settings(ProjectSettings):
 
     retriever_use_multi_query: bool = Field(default=True, description="全局分析模式是否启用 MultiQuery 扩展召回")
 
+    retriever_use_reranker: bool = Field(
+        default=True, description="检索器是否启用 FlashRank 重排序（build_user_retriever 读取并透传 create_retriever）"
+    )
+
     retriever_intent_classification_enabled: bool = Field(default=True, description="是否启用查询意图自动分类")
 
     retriever_map_reduce_batch_size: int = Field(default=4, ge=2, le=10, description="Map-Reduce 每批文档数")
@@ -173,10 +202,6 @@ class Settings(ProjectSettings):
     rag_initial_k: int = Field(default=6, ge=1, le=50, description="RAG Pipeline 初始检索返回文档数")
 
     rag_degraded_k: int = Field(default=12, ge=1, le=100, description="RAG Pipeline 降级检索返回文档数")
-
-    rag_keyword_max: int = Field(default=5, ge=1, le=20, description="RAG Pipeline 关键词最大数量")
-
-    rag_keyword_k: int = Field(default=3, ge=1, le=20, description="RAG Pipeline 每个关键词检索文档数")
 
     rag_rerank_top_n: int = Field(default=6, ge=1, le=50, description="RAG Pipeline FlashRank 重排序保留数")
 
@@ -261,6 +286,39 @@ class Settings(ProjectSettings):
         le=100,
         description="同一资源在去重窗口内累计调用次数超过此值且最近 3 次 payload_hash 全部相同，"
         "判定为无进展循环并 BLOCK。适用于所有工具（按 tool_fingerprint 注册表）。",
+    )
+
+    # ==================== LLM 熔断配置（安全修复 2.6）====================
+    # 原 llm_fallback.py.LazyFallbackChatModel 的硬编码字面量提为配置项，
+    # 默认值与原字面量一致（行为不变，仅可运维调整）。
+    llm_circuit_failure_threshold: int = Field(
+        default=2,
+        ge=1,
+        le=100,
+        description="主模型连续失败多少次后熔断（Circuit Breaker 转 OPEN，永久性错误立即熔断）",
+    )
+
+    llm_circuit_breaker_cooldown: float = Field(
+        default=30.0,
+        ge=0.0,
+        description="熔断冷却时长（秒），冷却期满转 half_open 试探主模型",
+    )
+
+    # ==================== MCP 连接配置（安全修复 2.7）====================
+    # 原 mcp/__init__.py.get_mcp_tools 的硬编码超时（stdio 15s / 远程 50s）
+    # 提为配置项，默认值与原字面量一致（行为不变，仅可运维调整）。
+    mcp_tool_fetch_timeout_stdio: int = Field(
+        default=15,
+        ge=1,
+        le=300,
+        description="MCP stdio 传输单 server 工具拉取超时（秒，本地子进程建连+枚举工具）",
+    )
+
+    mcp_tool_fetch_timeout_remote: int = Field(
+        default=50,
+        ge=1,
+        le=300,
+        description="MCP 远程传输（sse/http/websocket）单 server 工具拉取超时（秒）",
     )
 
     def get_openai_config(self) -> dict[str, Any]:
@@ -445,7 +503,7 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "icon": "🦙",
         "models": [
             {"name": "qwen3:8b", "capabilities": ["tool_calling", "streaming", "deep_thinking"]},
-            {"name": "qwen3.5:9b", "capabilities": ["tool_calling", "streaming"]},
+            {"name": "qwen3.5:4b", "capabilities": ["tool_calling", "streaming", "deep_thinking"]},
             {"name": "hermes3:8b", "capabilities": ["tool_calling", "streaming"]},
         ],
         "default_model": "qwen3:8b",
@@ -463,10 +521,10 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
                 "description": "Ollama 本地 qwen3 8B，无需 API key",
             },
             "ollama_qwen35": {
-                "model_name": "qwen3.5:9b",
+                "model_name": "qwen3.5:4b",
                 "model_provider": "ollama",
                 "temperature": 0.7,
-                "description": "Ollama 本地 qwen3.5 9B",
+                "description": "Ollama 本地 qwen3.5 4B",
             },
             "ollama_hermes": {
                 "model_name": "hermes3:8b",

@@ -63,6 +63,8 @@ def _make_guard(enabled: bool, exceeded: bool) -> tuple[mock.MagicMock, list]:
         }
 
     guard.check.side_effect = _check
+    # adapter 经 await acheck(...)（基线离环变体）——AsyncMock 使 await 可用，同一 info
+    guard.acheck = mock.AsyncMock(side_effect=_check)
     return guard, calls
 
 

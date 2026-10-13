@@ -3,6 +3,8 @@ RAG 评估框架
 提供检索质量和生成质量的评估能力
 """
 
+import re
+
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, Field
@@ -50,9 +52,41 @@ EVALUATION_PROMPT = """请评估以下 RAG 系统的生成质量。
 {{"faithfulness": 0.0, "relevance": 0.0, "completeness": 0.0}}"""
 
 
+# CJK 表意文字区（含扩展 A 与兼容区）：无空格分词语言，词级 split 无法切分
+_CJK_RUN_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
+_HAS_CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+
+def _tokenize_for_overlap(text: str) -> set[str]:
+    """CJK 感知重叠分词（RP-05）
+
+    原实现恒 ``text.lower().split()``：中文查询/文本无空格 → 整句成单个 token，
+    词集交集恒空 → keyword_overlap 对 CJK 恒 0（评估重试判据恒真无收敛）。
+
+    规则：
+    - 拉丁/数字词：保持整词匹配（与原 split 行为等价，小写化）；
+    - CJK 连续段：按二元组（bigram）匹配，单字成段时保留单字；
+    - 混合块（如 "文本embedding模型"）：拉丁片段保持整词、CJK 段按二元组。
+    """
+    tokens: set[str] = set()
+    for chunk in text.lower().split():
+        if not _HAS_CJK_PATTERN.search(chunk):
+            tokens.add(chunk)
+            continue
+        for cjk_run in _CJK_RUN_PATTERN.findall(chunk):
+            if len(cjk_run) == 1:
+                tokens.add(cjk_run)
+            else:
+                tokens.update(cjk_run[i : i + 2] for i in range(len(cjk_run) - 1))
+        for piece in _CJK_RUN_PATTERN.split(chunk):
+            if piece:
+                tokens.add(piece)
+    return tokens
+
+
 def keyword_overlap(query: str, text: str) -> float:
-    query_tokens = set(query.lower().split())
-    text_tokens = set(text.lower().split())
+    query_tokens = _tokenize_for_overlap(query)
+    text_tokens = _tokenize_for_overlap(text)
     if not query_tokens:
         return 0.0
     overlap = query_tokens & text_tokens
@@ -155,17 +189,20 @@ class RAGEvaluator:
     ) -> GenerationMetrics:
         relevance = keyword_overlap(query, response)
 
+        # RP-05：与 keyword_overlap 同源 CJK 感知分词（原 .lower().split() 对
+        # 中文恒产出整句单 token，faithfulness/completeness 同型恒 0/恒 1 缺陷）
         source_text = " ".join(doc.page_content for doc in source_docs)
-        response_tokens = set(response.lower().split())
-        source_tokens = set(source_text.lower().split())
+        response_tokens = _tokenize_for_overlap(response)
+        source_tokens = _tokenize_for_overlap(source_text)
         if response_tokens:
             faithfulness = len(response_tokens & source_tokens) / len(response_tokens)
         else:
             faithfulness = 0.0
 
-        query_tokens = set(query.lower().split())
+        query_tokens = _tokenize_for_overlap(query)
         if query_tokens:
-            covered = sum(1 for t in query_tokens if t in response.lower())
+            response_lower = response.lower()
+            covered = sum(1 for t in query_tokens if t in response_lower)
             completeness = covered / len(query_tokens)
         else:
             completeness = 0.0

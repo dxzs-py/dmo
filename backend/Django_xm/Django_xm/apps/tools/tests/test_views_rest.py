@@ -282,9 +282,10 @@ class CustomToolResourceTests(ToolsRestTestBase):
         )
 
         self.assertEqual(resp.status_code, 200, resp.content)
+        # R3 1.3：PUT 响应携带 approval_status
         self.assertEqual(
             resp.json()["data"],
-            {"name": "demo-tool", "description": "updated", "status": "active"},
+            {"name": "demo-tool", "description": "updated", "status": "active", "approval_status": "pending"},
         )
 
     def test_update_tool_not_found(self):

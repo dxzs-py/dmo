@@ -1809,6 +1809,22 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
         return
 
     try:
+        # D-5 竞态修复：拿锁后重读 state（对齐 resume_approval 锁内重读模式）。
+        # 锁外读到 PENDING 后、拿锁前，用户可能已 resume_approval 置 APPROVED；
+        # 若不重读，后续无条件写 PROCESSING→TIMEOUT 会覆盖用户决断。
+        # 非 PENDING 一律幂等放弃（含 APPROVED/REJECTED/WAITING/PROCESSING/TIMEOUT）。
+        try:
+            approval = Approval.objects.get(interrupt_id=interrupt_id)
+        except Approval.DoesNotExist:
+            logger.info(f"[ApprovalService] 锁内重读审批不存在: interrupt_id={interrupt_id}")
+            return
+        if approval.state != Approval.State.PENDING:
+            logger.info(
+                f"[ApprovalService] 超时处理幂等放弃(锁内重读非 PENDING): "
+                f"interrupt_id={interrupt_id}, state={approval.state}"
+            )
+            return
+
         approval.state = Approval.State.PROCESSING
         extra_data = approval.extra or {}
         if not isinstance(extra_data, dict):

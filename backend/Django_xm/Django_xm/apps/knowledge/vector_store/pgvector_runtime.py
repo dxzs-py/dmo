@@ -18,6 +18,8 @@
 import logging
 import threading
 
+from Django_xm.common.exceptions import DimensionMismatchError
+
 logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
@@ -53,18 +55,45 @@ def warm_up_pgvector_runtime():
         try:
             import langchain_postgres.vectorstores as _lcpg_vs
 
-            # 注意：必须引用模块级 _classes（值拷贝导入会拿到初始化时的 None，
-            # 导致幂等判断恒为假、每次调用都重新进入 _get_embedding_collection_store）
             if _lcpg_vs._classes is not None:
+                """
+                - `_classes = None`：**还没有根据维度生成 ORM 模型**
+                - `_classes != None`：**已经生成过一次模型，缓存好了，不用再生成**
+                """
                 return
             dim = _current_db_dimension()
             if dim is None:
                 logger.warning("PGVector 预热跳过：无法解析 embedding 列维度")
                 return
+            # **核心预热动作**：传入维度，触发 langchain_postgres
+            # 内部动态生成 EmbeddingStore / CollectionStore
+            # 两个 SQLAlchemy ORM 模型，赋值给模块全局变量 `_classes`。
             _lcpg_vs._get_embedding_collection_store(dim)
             logger.info(f"PGVector 映射类预热完成 (dimension={dim})")
         except Exception as e:
             logger.warning(f"PGVector 预热失败(非致命): {e}")
+
+
+def as_dimension_mismatch_error(exc: BaseException) -> DimensionMismatchError | None:
+    """pgvector 维度不匹配识别收口：pgvector 专属知识不再内嵌通用检索入口
+
+    DB 层（pgvector 扩展）对"查询向量维度 != 列维度"只以错误消息文本暴露
+    （"different vector dimensions: X != Y"），无独立 SQLSTATE 可靠判定，
+    消息子串是唯一信号——该识别原先内嵌在 rag_retrieval.search_scored 通用
+    入口，现收口至 pgvector 层，命中即包装为类型化 DimensionMismatchError
+    （isinstance 判定优先，对齐 CT-06 EmbeddingUnavailableError 先例；
+    原始异常经 __cause__ 保留）。
+
+    Returns:
+        DimensionMismatchError（识别命中，含已类型化异常则原样返回）或 None
+    """
+    if isinstance(exc, DimensionMismatchError):
+        return exc
+    if "different vector dimensions" in str(exc):
+        wrapped = DimensionMismatchError(str(exc))
+        wrapped.__cause__ = exc
+        return wrapped
+    return None
 
 
 def reset_pgvector_cache(dimension=None):
@@ -77,8 +106,8 @@ def reset_pgvector_cache(dimension=None):
         try:
             import langchain_postgres.vectorstores as _lcpg_vs
 
-            _lcpg_vs.Base.metadata.clear()
-            _lcpg_vs._classes = None
+            _lcpg_vs.Base.metadata.clear()  # `.clear()`：**清空 SQLAlchemy 元数据表注册表**
+            _lcpg_vs._classes = None  # 把模块全局缓存 `_classes` 手动置空。
             dim = dimension or _current_db_dimension()
             if dim is not None:
                 _lcpg_vs._get_embedding_collection_store(dim)

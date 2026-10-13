@@ -32,12 +32,14 @@ from unittest.mock import AsyncMock, patch
 
 from django.test import SimpleTestCase
 
-from Django_xm.async_utils import run_async
 from Django_xm.apps.chat.services.stream_broadcast import (
     REASONING_BROADCAST_INTERVAL,
-    TimeWindowThrottle,
     publish_stream_event,
 )
+from Django_xm.async_utils import run_async
+
+# TimeWindowThrottle 已下沉 common.stream_throttle（阶段 2：research 链复用）
+from Django_xm.common.stream_throttle import TimeWindowThrottle
 
 PUBLISH_EVENT = "Django_xm.common.realtime_events.publish_event"
 

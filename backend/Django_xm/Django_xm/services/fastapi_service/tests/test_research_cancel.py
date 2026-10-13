@@ -34,6 +34,9 @@ from Django_xm.services.fastapi_service.session_manager import SessionManager
 _MODULE = "Django_xm.services.fastapi_service.session_executor"
 _MGR_MODULE = "Django_xm.services.fastapi_service.session_manager"
 _TM_MODULE = "Django_xm.apps.research.services.task_manager"
+# 取消 chat 收尾为函数内 import：patch 源模块命名空间（writeback 公共单源，
+# 执行器级联与 session_manager 兜底两条路径共用）
+_WB_MODULE = "Django_xm.apps.research.services.writeback"
 
 
 def _make_executor(thread_id="t1", session_type="research", **kw):
@@ -116,6 +119,9 @@ class TestResearchCancelFinalization(unittest.TestCase):
                     mock.patch.object(SessionExecutor, "_build_agent", new_callable=mock.AsyncMock,
                                       return_value=mock.Mock())
                 )
+                chat_final = stack.enter_context(
+                    mock.patch(f"{_WB_MODULE}.finalize_chat_message_cancelled")
+                )
                 ex.start()
                 await asyncio.sleep(0.05)
                 ex.stop()
@@ -131,6 +137,9 @@ class TestResearchCancelFinalization(unittest.TestCase):
             # 最后一次必须为 CANCELLED（终态不被覆盖的前提）
             self.assertEqual(publish.await_count, 2)
             self.assertEqual(publish.await_args_list[-1].args[0], "cancelled")
+            # chat 侧收尾（2026-10-06 缺陷修复）：回写 ChatMessage + 广播取消终态，
+            # 聊天模块实时同步（此前取消路径零 chat 广播 → 聊天侧"毫无反应"）
+            chat_final.assert_called_once_with("t1")
             # 审批批次收尾：source=deep_research
             abandon.assert_called_once_with("deep_research", "t1")
             # 子代理终止（父 awaiter 先注销）
@@ -139,6 +148,55 @@ class TestResearchCancelFinalization(unittest.TestCase):
             runtime.terminate.assert_awaited_once_with("sub-1")
             # 会话槽移除 + 沙箱清理（协程 finally 与终态化各移除一次，幂等设计）
             self.assertEqual(ex.manager.remove_session.call_args_list, [mock.call("t1"), mock.call("t1")])
+            cleanup.assert_awaited_once()
+
+        asyncio.run(_case())
+
+    def test_chat_finalization_failure_nonfatal(self):
+        """chat 收尾异常：不中断取消级联（审批收尾/子代理终止/沙箱清理照常执行）。"""
+        async def _case():
+            from contextlib import ExitStack
+
+            ex = _make_executor()
+            async def _never_returns(*args, **kwargs):
+                await asyncio.Event().wait()
+
+            with ExitStack() as stack:
+                abandon, runtime, _lifecycle = _patch_cascade(stack)
+                stack.enter_context(
+                    mock.patch.object(SessionExecutor, "_publish_status_change", new_callable=mock.AsyncMock)
+                )
+                stack.enter_context(
+                    mock.patch.object(SessionExecutor, "_persist_research_progress", new_callable=mock.AsyncMock)
+                )
+                stack.enter_context(
+                    mock.patch.object(SessionExecutor, "_release_checkpointer", new_callable=mock.AsyncMock)
+                )
+                cleanup = stack.enter_context(
+                    mock.patch.object(SessionExecutor, "_schedule_sandbox_cleanup", new_callable=mock.AsyncMock)
+                )
+                stack.enter_context(
+                    mock.patch(f"{_WB_MODULE}.finalize_chat_message_cancelled", side_effect=RuntimeError("db down"))
+                )
+                stack.enter_context(mock.patch(f"{_MODULE}._update_task_status", new_callable=mock.AsyncMock))
+                stack.enter_context(
+                    mock.patch(f"{_MODULE}.execute_research_async", side_effect=_never_returns)
+                )
+                stack.enter_context(
+                    mock.patch.object(SessionExecutor, "_build_agent", new_callable=mock.AsyncMock,
+                                      return_value=mock.Mock())
+                )
+                ex.start()
+                await asyncio.sleep(0.05)
+                ex.stop()
+                for _ in range(100):
+                    if all(t.done() for t in list(ex._background_tasks)):
+                        break
+                    await asyncio.sleep(0.01)
+
+            # 收尾失败的后续级联不受影响
+            abandon.assert_called_once()
+            runtime.terminate.assert_awaited_once_with("sub-1")
             cleanup.assert_awaited_once()
 
         asyncio.run(_case())
@@ -278,12 +336,18 @@ class TestStopSessionFallbackAndGuard(unittest.TestCase):
         """无内存执行器（PENDING/信令丢失）：cancel_task_if_active 兜底终态化。"""
         async def _case():
             manager = self._make_manager()
+            publish_mock = mock.AsyncMock()
             with mock.patch(f"{_TM_MODULE}.cancel_task_if_active", return_value=True) as cancel, \
-                 mock.patch("Django_xm.common.realtime_sync.publish_task_status", new_callable=mock.AsyncMock) as publish:
+                 mock.patch(
+                     "Django_xm.common.realtime_sync.publish_task_status", new=publish_mock
+                 ), \
+                 mock.patch(f"{_WB_MODULE}.finalize_chat_message_cancelled") as chat_final:
                 await manager.stop_session("t-pending")
             cancel.assert_called_once_with("t-pending")
-            publish.assert_awaited_once()
-            self.assertEqual(publish.await_args.kwargs["status"], "cancelled")
+            publish_mock.assert_awaited_once()
+            self.assertEqual(publish_mock.await_args.kwargs["status"], "cancelled")
+            # chat 侧收尾与执行器级联同源（2026-10-06 缺陷修复：兜底路径同样收尾）
+            chat_final.assert_called_once_with("t-pending")
 
         asyncio.run(_case())
 

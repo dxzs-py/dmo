@@ -39,6 +39,80 @@ logger = logging.getLogger(__name__)
 STREAM_MODE = ("messages", "updates")
 
 
+class HardTimeoutSignaled(Exception):
+    """内部信号：流式循环中触发 hard timeout（执行器骨架公共信号）。
+
+    单一定义在 common 层：chat（agent_hub.services.agent_executor）与 research
+    （research.services.patches._DeepAgentExecutor）的执行器共用同一类对象，
+    except 捕获语义与模块别名（_HardTimeoutSignaled）完全一致。
+    """
+
+
+async def iter_stream_events_with_timeout(
+    loop_fn: Callable,
+    agent: Any,
+    graph_input: dict,
+    config: dict,
+    ctx: Any,
+    strategy: Any,
+    data: dict,
+    timeout_mgr=None,
+) -> AsyncGenerator[dict, None]:
+    """带超时检查和审批 pause/resume 的事件迭代（执行器骨架能力，函数化下沉）。
+
+    原 ``AgentExecutor._iter_with_timeout`` 方法体原样迁移（research 执行器不再继承 agent_hub 基类，chat/research 共用本函数）：
+
+    - hard timeout → 抛出 :class:`HardTimeoutSignaled`
+    - soft timeout → 警告一次
+    - approval 事件 → yield 前 pause()，yield 后 resume()
+      （避免用户审批等待时间计入 elapsed，RC17 修复）
+
+    注意：hard timeout 检查在 soft timeout 之前，避免 hard timeout 已触发
+    却先 yield soft timeout 事件的逻辑倒置。
+
+    Args:
+        loop_fn: 核心循环函数（async generator，签名同执行器 run 的 loop_fn）。
+        agent: 已创建的 agent（含 graph 属性；deep 链传 None）。
+        graph_input: graph 输入。
+        config: graph 运行配置。
+        ctx: 流式可变状态（StreamContext 或兼容对象）。
+        strategy: 模式策略（Normal / DeepThinking）。
+        data: 请求数据。
+        timeout_mgr: 执行超时管理器（``ExecutionTimeoutManager``，duck typing；
+            common 层不依赖 ai_engine，None 表示不检查超时仅透传事件）。
+    """
+    async for event in loop_fn(agent, graph_input, config, ctx, strategy, data):
+        # Hard timeout 检查（优先）
+        if timeout_mgr is not None and timeout_mgr.hard_timeout and timeout_mgr.elapsed >= timeout_mgr.hard_timeout:
+            raise HardTimeoutSignaled()
+
+        # Soft timeout（仅警告一次）
+        if timeout_mgr is not None and timeout_mgr.check_soft_timeout():
+            logger.warning(f"[AgentExecutor] 执行超时 (soft): {timeout_mgr.elapsed:.1f}s")
+            yield {
+                "type": "timeout_warning",
+                "data": {
+                    "elapsed": round(timeout_mgr.elapsed),
+                    "limit": timeout_mgr.soft_timeout,
+                },
+            }
+
+        # 审批事件：暂停计时，避免用户思考时间惩罚 agent
+        # yield 期间若上游断开/异常（如 SSE 断开触发 GeneratorExit），
+        # finally 保证恢复计时，防止 pause 泄漏导致同一 executor 在重试/
+        # 降级复用本计时器时 elapsed 持续偏低、超时判定被推迟（边界审查修复）。
+        is_approval = isinstance(event, dict) and event.get("type") == "approval"
+        if is_approval:
+            timeout_mgr.pause()
+
+        try:
+            yield event
+        finally:
+            # 审批处理完毕（外部继续迭代），恢复计时
+            if is_approval:
+                timeout_mgr.resume()
+
+
 @dataclass
 class ChunkLoopControl:
     """chunk 处理器向主循环回传的控制信号。

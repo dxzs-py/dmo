@@ -21,6 +21,13 @@
 评测集格式（JSONL，逐行一个 case）：
     {"query": "...", "relevant": ["03_持久化机制.md"]}
     relevant 为「该问题答案所在的源文件名」，按文件名（basename）匹配。
+
+与线上检索配置的差异（本命令保持轻量检索指标定位，不随线上配置对齐）：
+- 已对齐：rerank 消融策略显式传 use_reranker=True——线上 precise/comprehensive
+  检索器现由 settings.retriever_use_reranker（默认 True，B8/D1 接线）控制，
+  两侧重排序行为一致。
+- 仍存在的差异：HyDE 改写与 comprehensive（MMR + MultiQuery 叠加）模式仅线上
+  存在，本命令未覆盖；本命令的 dense 策略为纯 similarity 检索，无 MultiQuery。
 """
 
 import json
@@ -166,11 +173,9 @@ class Command(BaseCommand):
         if strategy == "dense+rerank":
             return create_retriever(store, search_type="similarity", k=top_k, use_reranker=True)
         if strategy == "keyword":
-            from Django_xm.apps.knowledge.services.retrieval_service import (
-                _keyword_search_fallback,
-            )
+            from Django_xm.apps.knowledge.services.keyword_fallback import keyword_search_fallback
 
-            return _keyword_search_fallback
+            return keyword_search_fallback
         raise CommandError(f"未知策略: {strategy}")
 
     def _run_strategy(self, strategy: str, retriever, cases: list[dict], top_k: int) -> dict:

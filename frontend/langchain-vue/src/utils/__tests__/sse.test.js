@@ -1,11 +1,13 @@
 /**
- * sse.js / apiErrorHandler.js 单元测试（B1 Task 7）
+ * sse.js / apiErrorHandler.js 单元测试（B1 Task 7 + D-8 回归）
  *
  * 覆盖：
  * - parseProtocolEvent：深层键转换、type 还原、subagent_thread_id 还原、
  *   非普通对象透传、数组逐项转换、无 type 字段不添加键
  * - extractSSEError：JSON body（message/error 优先级、errors 校验详情、data 详情）、
  *   SSE data 行 body、空 body、非 JSON 无 data 行回退 HTTP 状态描述
+ * - readSSEStream（D-8）：多行 data 合并、事件空行分发、分包边界、
+ *   [DONE] 关流（reader.cancel + 后续数据不再消费）、data: 无空格、尾部无空行兜底
  *
  * mock 说明：
  * - '@/stores/user'：sse.js 顶层静态引入（fetchSSE 鉴权头），其依赖链含
@@ -27,7 +29,7 @@ vi.mock('element-plus', () => ({
   ElNotification: Object.assign(vi.fn(), { error: vi.fn() }),
 }))
 
-import { parseProtocolEvent } from '../sse.js'
+import { parseProtocolEvent, readSSEStream } from '../sse.js'
 import { extractSSEError } from '../apiErrorHandler.js'
 
 describe('parseProtocolEvent', () => {
@@ -130,5 +132,105 @@ describe('extractSSEError', () => {
     await response.text() // 预先消费 body
     const err = await extractSSEError(response)
     expect(err.message).toBe('HTTP 500')
+  })
+})
+
+// ============================================================
+// readSSEStream（D-8：SSE 规范解析——多行 data 合并 / 空行分发 / [DONE] 关流）
+// ============================================================
+
+const encoder = new TextEncoder()
+
+/**
+ * 构造 readSSEStream 可消费的伪 response（仅依赖 body.getReader()）。
+ * closeAfter=false 模拟服务端保持连接不关闭（验证 [DONE] 主动关流）。
+ */
+function makeStreamResponse(chunks, { closeAfter = true } = {}) {
+  const stream = new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk))
+      }
+      if (closeAfter) controller.close()
+    },
+  })
+  const reader = stream.getReader()
+  const cancelSpy = vi.spyOn(reader, 'cancel').mockResolvedValue(undefined)
+  return { response: { body: { getReader: () => reader } }, cancelSpy }
+}
+
+describe('readSSEStream', () => {
+  it('同一事件的多行 data: 按规范以 \\n 拼接后整体 JSON.parse', async () => {
+    const { response } = makeStreamResponse(['data: {"final_report":\ndata: "line1\\nline2"}\n\n'])
+    const events = []
+    await readSSEStream(response, (e) => events.push(e))
+    expect(events).toStrictEqual([{ finalReport: 'line1\nline2' }])
+  })
+
+  it('事件以空行分发：连续两个事件按序到达', async () => {
+    const { response } = makeStreamResponse([
+      'data: {"tool_call_id":"t1"}\n\n',
+      'data: {"tool_call_id":"t2"}\n\n',
+    ])
+    const events = []
+    await readSSEStream(response, (e) => events.push(e))
+    expect(events).toStrictEqual([
+      { toolCallId: 't1' },
+      { toolCallId: 't2' },
+    ])
+  })
+
+  it('分包边界：单个 JSON 事件跨两个 chunk 到达仍完整解析', async () => {
+    const { response } = makeStreamResponse(['data: {"spl', 'it":"ok"}\n\n'])
+    const events = []
+    await readSSEStream(response, (e) => events.push(e))
+    expect(events).toStrictEqual([{ split: 'ok' }])
+  })
+
+  it('[DONE] 后调用 reader.cancel 主动关流，且不再消费后续数据', async () => {
+    const { response, cancelSpy } = makeStreamResponse(
+      [
+        'data: {"x_y":1}\n\n',
+        'data: [DONE]\n\n',
+        'data: {"after_done":true}\n\n',
+      ],
+      { closeAfter: false }
+    )
+    const events = []
+    await readSSEStream(response, (e) => events.push(e))
+    expect(cancelSpy).toHaveBeenCalledTimes(1)
+    expect(events).toStrictEqual([{ xY: 1 }])
+  })
+
+  it('[DONE] 仅有换行无空行收尾（data 行已完整）同样关流', async () => {
+    const { response, cancelSpy } = makeStreamResponse(
+      ['data: {"a_b":1}\n\n', 'data: [DONE]\n'],
+      { closeAfter: false }
+    )
+    const events = []
+    await readSSEStream(response, (e) => events.push(e))
+    expect(cancelSpy).toHaveBeenCalledTimes(1)
+    expect(events).toStrictEqual([{ aB: 1 }])
+  })
+
+  it("data: 后无空格（规范允许）仍可解析", async () => {
+    const { response } = makeStreamResponse(['data:{"no_space":true}\n\n'])
+    const events = []
+    await readSSEStream(response, (e) => events.push(e))
+    expect(events).toStrictEqual([{ noSpace: true }])
+  })
+
+  it('流结束但最后一个事件无空行收尾：兜底分发', async () => {
+    const { response } = makeStreamResponse(['data: {"tail":1}\n', 'data: {"tail":2}'])
+    const events = []
+    await readSSEStream(response, (e) => events.push(e))
+    expect(events).toStrictEqual([{ tail: 1 }, { tail: 2 }])
+  })
+
+  it('非 data 行（注释/其他字段）被忽略', async () => {
+    const { response } = makeStreamResponse([': keep-alive\nevent: message\ndata: {"ok":1}\n\n'])
+    const events = []
+    await readSSEStream(response, (e) => events.push(e))
+    expect(events).toStrictEqual([{ ok: 1 }])
   })
 })

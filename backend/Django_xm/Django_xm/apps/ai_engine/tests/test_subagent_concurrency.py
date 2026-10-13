@@ -24,11 +24,14 @@ from unittest import mock
 
 from django.test import SimpleTestCase, override_settings
 
+from Django_xm.apps.ai_engine.models import SubAgentStatus
 from Django_xm.apps.ai_engine.subagent_runtime.adapters.langgraph_adapter import (
     LangGraphAdapter,
 )
 from Django_xm.apps.ai_engine.subagent_runtime.concurrency import (
+    DEFAULT_SUBAGENT_ACQUIRE_TIMEOUT,
     DEFAULT_SUBAGENT_CONCURRENCY,
+    get_subagent_concurrency_acquire_timeout,
     get_subagent_concurrency_limit,
     get_subagent_concurrency_semaphore,
     reset_subagent_concurrency_semaphore,
@@ -88,6 +91,30 @@ class SubAgentConcurrencyConfigTests(SimpleTestCase):
     @override_settings(AGENT_SUBAGENT_CONCURRENCY="not-a-number")
     def test_non_numeric_falls_back_to_default(self):
         self.assertEqual(get_subagent_concurrency_limit(), 8)
+
+
+class SubAgentAcquireTimeoutConfigTests(SimpleTestCase):
+    """round3 2.5：并发槽排队超时配置层（代码默认 / settings 覆盖 / 禁用语义）。"""
+
+    def test_default_value_is_thirty(self):
+        self.assertEqual(DEFAULT_SUBAGENT_ACQUIRE_TIMEOUT, 30.0)
+        self.assertEqual(get_subagent_concurrency_acquire_timeout(), 30.0)
+
+    @override_settings(AGENT_SUBAGENT_ACQUIRE_TIMEOUT=15)
+    def test_settings_override(self):
+        self.assertEqual(get_subagent_concurrency_acquire_timeout(), 15.0)
+
+    @override_settings(AGENT_SUBAGENT_ACQUIRE_TIMEOUT=0)
+    def test_zero_means_unlimited(self):
+        self.assertIsNone(get_subagent_concurrency_acquire_timeout())
+
+    @override_settings(AGENT_SUBAGENT_ACQUIRE_TIMEOUT=None)
+    def test_none_means_unlimited(self):
+        self.assertIsNone(get_subagent_concurrency_acquire_timeout())
+
+    @override_settings(AGENT_SUBAGENT_ACQUIRE_TIMEOUT="bad")
+    def test_invalid_means_unlimited(self):
+        self.assertIsNone(get_subagent_concurrency_acquire_timeout())
 
 
 class SubAgentConcurrencySemaphoreTests(SimpleTestCase):
@@ -244,3 +271,84 @@ class SubAgentConcurrencyQueueingTests(SimpleTestCase):
             self._wait_all_slots_free(limit=2)
         # 异常路径状态更新被调用（FAILED 终态）
         runtime._update_status.assert_called_once()
+
+
+class SubAgentAcquireTimeoutTests(SimpleTestCase):
+    """round3 2.5：排队超时路径——置 FAILED + 唤醒父等待者（不悬挂到 watchdog）。"""
+
+    def setUp(self):
+        reset_subagent_concurrency_semaphore()
+        self.addCleanup(reset_subagent_concurrency_semaphore)
+
+    def _wait_all_slots_free(self, limit: int) -> None:
+        semaphore = get_subagent_concurrency_semaphore()
+        deadline = time.monotonic() + _WAIT_TIMEOUT
+        while time.monotonic() < deadline:
+            acquired = 0
+            all_free = True
+            for _ in range(limit):
+                if semaphore.acquire(blocking=False):
+                    acquired += 1
+                else:
+                    all_free = False
+                    break
+            for _ in range(acquired):
+                semaphore.release()
+            if all_free:
+                return
+            time.sleep(_POLL_INTERVAL)
+        self.fail(f"并发槽在 {_WAIT_TIMEOUT}s 内未全数释放（limit={limit}），疑似槽泄漏")
+
+    @override_settings(AGENT_SUBAGENT_CONCURRENCY=1, AGENT_SUBAGENT_ACQUIRE_TIMEOUT=0.2)
+    def test_acquire_timeout_marks_failed_and_notifies_parent(self):
+        """槽满且排队超时 → FAILED + _notify_finished("failed")，槽不泄漏。"""
+        runtime = mock.MagicMock()
+        runtime._update_status = mock.AsyncMock()
+        adapter = LangGraphAdapter(runtime=runtime)
+        lifecycle_manager = mock.MagicMock()
+        lifecycle_manager.on_subagent_finished = mock.AsyncMock()
+
+        started: list = []
+        stop_event = threading.Event()
+
+        async def gated_execute(instance, agent_config, configurable, resume_payload):
+            started.append(instance.thread_id)
+            while not stop_event.is_set():
+                await asyncio.sleep(_POLL_INTERVAL)
+
+        self.addCleanup(stop_event.set)
+
+        with (
+            mock.patch.object(adapter, "_execute", gated_execute),
+            mock.patch(
+                "Django_xm.apps.ai_engine.subagent_runtime.lifecycle.get_lifecycle_manager",
+                return_value=lifecycle_manager,
+            ),
+        ):
+            # 占住唯一槽
+            asyncio.run(adapter.spawn(_make_instance("subagent_hold"), None, None))
+            deadline = time.monotonic() + _WAIT_TIMEOUT
+            while time.monotonic() < deadline and "subagent_hold" not in started:
+                time.sleep(_POLL_INTERVAL)
+            self.assertIn("subagent_hold", started, "占位子代理未进入执行")
+
+            # 第二个 spawn 排队 → 0.2s 超时 → FAILED 终态 + 父等待者唤醒
+            asyncio.run(adapter.spawn(_make_instance("subagent_timeout"), None, None))
+            deadline = time.monotonic() + _WAIT_TIMEOUT
+            while (
+                time.monotonic() < deadline
+                and not lifecycle_manager.on_subagent_finished.await_count
+            ):
+                time.sleep(_POLL_INTERVAL)
+
+            stop_event.set()  # 释放占位者
+
+        runtime._update_status.assert_awaited_once_with("subagent_timeout", SubAgentStatus.FAILED)
+        lifecycle_manager.on_subagent_finished.assert_awaited_once()
+        kwargs = lifecycle_manager.on_subagent_finished.await_args.kwargs
+        self.assertEqual(kwargs.get("subagent_thread_id"), "subagent_timeout")
+        self.assertEqual(kwargs.get("status"), "failed")
+        # 超时者从未进入图执行
+        self.assertNotIn("subagent_timeout", started)
+        # 全部退出后槽位归还（超时路径不泄漏槽）
+        self._wait_all_slots_free(limit=1)

@@ -13,12 +13,14 @@ from Django_xm.common.messages import content_to_str
 
 logger = get_logger(__name__)
 
+# 总结性语言模式（round3 2.9 收紧）：仅保留强总结性短语。
+# 移除「完成/总结/综上所述」等通用词——它们高频出现在正常进行中的
+# 中文回复里（"接下来要完成…"、"简单总结一下第一步…"），仅凭通用词
+# 加低置信度即 TERMINATE 会误杀长任务；goal_completed 仍受 min_rounds
+# 与"窗口内无工具调用"双重前置约束。
 _SUMMARY_PATTERNS = [
     re.compile(r"以上是", re.IGNORECASE),
-    re.compile(r"总结", re.IGNORECASE),
-    re.compile(r"完成", re.IGNORECASE),
     re.compile(r"希望这", re.IGNORECASE),
-    re.compile(r"综上所述", re.IGNORECASE),
     re.compile(r"总的来说", re.IGNORECASE),
     re.compile(r"in summary", re.IGNORECASE),
     re.compile(r"to summarize", re.IGNORECASE),
@@ -66,8 +68,13 @@ class ContextTerminationJudge:
         thread_id: str = "",
     ) -> None:
         self._goal_complete_window = goal_complete_window or context_settings.termination_goal_complete_window
+        # round3 2.9：goal_completed 最低轮数配置化（原硬编码 6）
+        self._goal_complete_min_rounds = context_settings.termination_goal_complete_min_rounds
         self._info_gain_threshold = info_gain_threshold or context_settings.termination_info_gain_threshold
         self._info_gain_window = info_gain_window or context_settings.termination_info_gain_window
+        # round3 2.9：INFO_GAIN_DECAY 需连续 N 轮低增益才 TERMINATE（原仅 window=4
+        # 且 confidence=0.5 即终止，中文长任务易误杀）
+        self._info_gain_consecutive = context_settings.termination_info_gain_consecutive_rounds
         self._token_budget_limit = token_budget_limit or context_settings.token_budget_limit
         self._model_name = model_name
         # B1/N-2：hard-stop 交接身份兜底（由 ContextManagerMiddleware 注入
@@ -89,7 +96,6 @@ class ContextTerminationJudge:
         self._cumulative_tokens: int = 0
         self._recent_tool_calls: list[dict[str, Any]] = []
         self._recent_info_gains: list[float] = []
-        self._last_compressed_index: int = 0
 
     def judge(self, state: dict[str, Any]) -> TerminationVerdict:
         try:
@@ -128,14 +134,19 @@ class ContextTerminationJudge:
                 should_compress=False,
             )
 
-    def record_token_usage(self, tokens: int) -> None:
-        self._cumulative_tokens += tokens
+    def set_token_usage(self, total_tokens: int) -> None:
+        """设置累计 token 口径（round3 2.10：全量替换而非增量累加）。
+
+        调用方（ContextManagerMiddleware.after_model）每轮以全量消息估算
+        （system prompt + 输入 + 工具结果 + 输出）整体设置——替代旧
+        record_token_usage 增量累加"仅最后一条 AIMessage"的低估口径。
+        """
+        self._cumulative_tokens = total_tokens
 
     def reset(self) -> None:
         self._cumulative_tokens = 0
         self._recent_tool_calls = []
         self._recent_info_gains = []
-        self._last_compressed_index = 0
 
     def _check_budget_exhausted(self, state: dict[str, Any]) -> TerminationVerdict | None:
         if self._cumulative_tokens >= self._token_budget_limit:
@@ -281,33 +292,41 @@ class ContextTerminationJudge:
                 },
             )
 
-        # ── 2. ToolUsageGuard 交接 ──
+        # ── 2. ToolUsageGuard 交接（环 1 消边：原函数内 import
+        # ai_engine.tool_usage_guard，现经 runtime_providers 注入单例获取器，
+        # ai_engine apps.ready() 注册；未注册/异常走既有 debug 降级） ──
         try:
-            from Django_xm.apps.ai_engine.services.tool_usage_guard import (
-                get_tool_usage_guard,
+            from Django_xm.apps.context_manager.services.runtime_providers import (
+                get_tool_usage_guard_provider,
             )
 
-            thread_id = self._resolve_handoff_thread_id(state)
-            if get_tool_usage_guard().is_in_hard_stop_state(thread_id):
-                write_file_calls = [tc for tc in self._recent_tool_calls if tc["name"] == "fs_write_file"]
-                if len(write_file_calls) >= 3:
-                    reason = (
-                        f"ToolUsageGuard 已连续阻断，fs_write_file 在最近窗口内仍被 "
-                        f"调用 {len(write_file_calls)} 次，判定为不可收敛循环"
-                    )
-                    logger.warning(reason)
-                    return TerminationVerdict(
-                        signal=TerminationSignal.LOOP_DETECTED,
-                        action=TerminationAction.TERMINATE,
-                        confidence=0.95,
-                        reason=reason,
-                        should_terminate=True,
-                        metadata={
-                            "tool_name": "fs_write_file",
-                            "write_count": len(write_file_calls),
-                            "source": "tool_usage_guard_handoff",
-                        },
-                    )
+            guard_provider = get_tool_usage_guard_provider()
+            if guard_provider is None:
+                logger.debug("ToolUsageGuard 状态检查失败: 提供者未注册（ai_engine apps.ready() 接线缺失）")
+            else:
+                thread_id = self._resolve_handoff_thread_id(state)
+                if guard_provider().is_in_hard_stop_state(thread_id):
+                    write_file_calls = [
+                        tc for tc in self._recent_tool_calls if tc["name"] == "fs_write_file"
+                    ]
+                    if len(write_file_calls) >= 3:
+                        reason = (
+                            f"ToolUsageGuard 已连续阻断，fs_write_file 在最近窗口内仍被 "
+                            f"调用 {len(write_file_calls)} 次，判定为不可收敛循环"
+                        )
+                        logger.warning(reason)
+                        return TerminationVerdict(
+                            signal=TerminationSignal.LOOP_DETECTED,
+                            action=TerminationAction.TERMINATE,
+                            confidence=0.95,
+                            reason=reason,
+                            should_terminate=True,
+                            metadata={
+                                "tool_name": "fs_write_file",
+                                "write_count": len(write_file_calls),
+                                "source": "tool_usage_guard_handoff",
+                            },
+                        )
         except Exception as e:
             logger.debug(f"ToolUsageGuard 状态检查失败: {e}")
 
@@ -420,8 +439,9 @@ class ContextTerminationJudge:
 
         # 深度研究模式需要更多轮次才能判定完成，避免浅尝辄止
         # 统计已有 AI 消息轮数，至少需要 min_rounds 轮才允许 goal_completed 判定
+        # （round3 2.9：min_rounds 配置化，context_settings.termination_goal_complete_min_rounds）
         ai_msg_count = sum(1 for m in messages if isinstance(m, AIMessage))
-        min_rounds = 6
+        min_rounds = self._goal_complete_min_rounds
         if ai_msg_count < min_rounds:
             logger.debug(f"目标完成检测: AI 消息轮数不足 ({ai_msg_count} < {min_rounds})，跳过")
             return None
@@ -454,18 +474,27 @@ class ContextTerminationJudge:
         return None
 
     def _check_info_gain_decay(self, state: dict[str, Any]) -> TerminationVerdict | None:
+        """信息增益衰减检测（round3 2.9 收紧）：需连续 N 轮低增益才 TERMINATE。
+
+        原实现仅要求 info_gain_window（默认 4）轮低增益、confidence=0.5 即
+        TERMINATE——中文长任务中"汇报性/重复表述轮"（低新颖度但任务仍在推进）
+        易触发误杀。现要求连续 termination_info_gain_consecutive_rounds（默认 6，
+        取与 window 的较大值）轮全部低于阈值才终止，并把连续轮数写入 metadata。
+        """
         messages = state.get("messages", [])
         if not messages:
             return None
 
+        # 观测窗口取「连续轮数要求」与「检测窗口」的较大值，保证判定覆盖
+        n_required = max(self._info_gain_consecutive, self._info_gain_window)
         ai_messages = [msg for msg in messages if isinstance(msg, AIMessage) and msg.content]
-        if len(ai_messages) < self._info_gain_window + 1:
+        if len(ai_messages) < n_required + 1:
             return None
 
-        recent_ai = ai_messages[-(self._info_gain_window + 1) :]
+        recent_ai = ai_messages[-(n_required + 1) :]
 
         novelties: list[float] = []
-        for i in range(max(1, len(recent_ai) - self._info_gain_window), len(recent_ai)):
+        for i in range(max(1, len(recent_ai) - n_required), len(recent_ai)):
             content = recent_ai[i].content
             new_text = content_to_str(content)
             context_text = " ".join(content_to_str(msg.content)[:500] for msg in recent_ai[:i])
@@ -474,12 +503,12 @@ class ContextTerminationJudge:
 
         self._recent_info_gains = novelties
 
-        if len(novelties) >= self._info_gain_window:
-            all_below_threshold = all(n < self._info_gain_threshold for n in novelties[-self._info_gain_window :])
+        if len(novelties) >= n_required:
+            all_below_threshold = all(n < self._info_gain_threshold for n in novelties[-n_required:])
             if all_below_threshold:
-                avg_novelty = sum(novelties[-self._info_gain_window :]) / self._info_gain_window
+                avg_novelty = sum(novelties[-n_required:]) / n_required
                 reason = (
-                    f"信息增益衰减: 连续 {self._info_gain_window} 轮新颖度低于阈值 "
+                    f"信息增益衰减: 连续 {n_required} 轮新颖度低于阈值 "
                     f"(平均={avg_novelty:.3f}, 阈值={self._info_gain_threshold})"
                 )
                 logger.info(reason)
@@ -494,7 +523,8 @@ class ContextTerminationJudge:
                         "avg_novelty": avg_novelty,
                         "threshold": self._info_gain_threshold,
                         "window_size": self._info_gain_window,
-                        "recent_novelties": novelties[-self._info_gain_window :],
+                        "consecutive_rounds_required": n_required,
+                        "recent_novelties": novelties[-n_required:],
                     },
                 )
 
@@ -560,12 +590,19 @@ class ContextTerminationJudge:
 
     @staticmethod
     def _embedding_similarity(text_a: str, text_b: str) -> float | None:
+        # 环 1 消边：原函数内 import knowledge.embedding_service（经
+        # knowledge.config re-export 传递触达 ai_engine），改经 runtime_providers
+        # 注入（knowledge apps.ready() 注册）。
+        import numpy as np
+
+        from Django_xm.apps.context_manager.services.runtime_providers import get_embedding_provider
+
+        embedding_provider = get_embedding_provider()
+        if embedding_provider is None:
+            logger.warning("终止判定: embedding 相似度计算失败，回退文本启发式: Embedding 提供者未注册")
+            return None
         try:
-            import numpy as np
-
-            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
-
-            embeddings = get_embeddings()
+            embeddings = embedding_provider()
             vec_a = embeddings.embed_query(text_a[:500])
             vec_b = embeddings.embed_query(text_b[:500])
             vec_a_arr = np.array(vec_a)
@@ -575,5 +612,7 @@ class ContextTerminationJudge:
             if norm_a == 0 or norm_b == 0:
                 return None
             return float(np.dot(vec_a_arr, vec_b_arr) / (norm_a * norm_b))
-        except Exception:
+        except Exception as e:
+            # E5-03：静默降级必须留痕——相似度证据缺失时回退文本启发式不可观测
+            logger.warning(f"终止判定: embedding 相似度计算失败，回退文本启发式: {e}")
             return None

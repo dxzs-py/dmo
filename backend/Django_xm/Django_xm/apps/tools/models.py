@@ -184,8 +184,6 @@ class SkillConfig(UserToolResource):
 
     class Mode(models.TextChoices):
         PIPELINE = "pipeline", "管线模式"
-        ADVISOR = "advisor", "顾问模式"
-        HYBRID = "hybrid", "混合模式"
 
     mode = models.CharField(
         max_length=20,
@@ -232,7 +230,6 @@ class SkillConfig(UserToolResource):
         return SkillSpec(
             name=self.name,
             description=self.description or "",
-            mode=self.mode,
             steps=skill_steps,
             version=self.version,
             source=self.source,
@@ -246,7 +243,6 @@ class SkillPackage(UserToolResource):
     license = models.CharField(max_length=200, blank=True, default="", verbose_name="许可证")
     compatibility = models.CharField(max_length=500, blank=True, default="", verbose_name="兼容性要求")
     metadata_json = models.JSONField(default=dict, blank=True, verbose_name="元数据")
-    allowed_tools = models.CharField(max_length=1000, blank=True, default="", verbose_name="预批准工具列表")
     skill_dir = models.CharField(max_length=500, verbose_name="Skill 包文件系统路径")
 
     class Meta(UserToolResource.Meta):

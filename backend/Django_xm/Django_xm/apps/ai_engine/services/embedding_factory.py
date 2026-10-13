@@ -5,7 +5,7 @@ Embedding 模型工厂
 1. 使用各 provider 官方 SDK 真实初始化（不是 OpenAI 兼容的"伪兼容"）
 2. 集成 InMemoryRateLimiter 速率限制
 3. 多级 fallback：主提供商 → 备选 API → 本地模型
-4. 单例缓存
+4. 每次调用即时构建（实例缓存禁令：async 模型实例禁止跨事件循环复用）
 
 参考：
 - https://docs.langchain.com/oss/python/integrations/embeddings/index
@@ -21,6 +21,7 @@ from typing import Any
 from langchain_core.embeddings import Embeddings
 
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.common.exceptions import EmbeddingUnavailableError
 
 from ..config import settings
 
@@ -77,33 +78,12 @@ EMBEDDING_PROVIDER_REGISTRY: list[dict] = [
 ]
 
 
-# ============== Embedding 实例缓存（独立于 model_cache.py） ==============
-
-from collections import OrderedDict
-
-_embedding_instance_cache: OrderedDict[str, Embeddings] = OrderedDict()
-_embedding_cache_lock = threading.Lock()
-_EMBEDDING_CACHE_MAXSIZE = 8
-
-
-def _embedding_cache_get(key: str):
-    with _embedding_cache_lock:
-        if key in _embedding_instance_cache:
-            _embedding_instance_cache.move_to_end(key)
-            return _embedding_instance_cache[key]
-    return None
-
-
-def _embedding_cache_set(key: str, value: Embeddings) -> None:
-    with _embedding_cache_lock:
-        _embedding_instance_cache[key] = value
-        _embedding_instance_cache.move_to_end(key)
-        while len(_embedding_instance_cache) > _EMBEDDING_CACHE_MAXSIZE:
-            _embedding_instance_cache.popitem(last=False)
-
-
-def _make_embedding_cache_key(provider_id: str, model: str, batch_size: int) -> str:
-    return f"emb:{provider_id}:{model}:bs{batch_size}"
+# ============== Embedding 即时构建 ==============
+# 实例缓存禁令（eliminate-priority-debts 阶段 1）：原 _embedding_instance_cache
+# LRU 与 _embedding_fallback_cache dict 两层进程级实例缓存已退役——
+# FallbackEmbedding 暴露 aembed_* 异步接口，其 async 客户端绑定"首次使用时的
+# 事件循环"，多 loop 架构（chat 主链常驻 loop + 子代理线程 loop + sync 线程）
+# 下缓存实例跨 loop 复用不安全；实例构建成本可忽略，配置读取走 django-redis 缓存。
 
 
 def _import_factory(factory_path: str):
@@ -143,7 +123,7 @@ def _create_single_embedding(
     dimension: int | None = None,
     **kwargs: Any,
 ) -> Embeddings:
-    """创建单个 embedding 实例（带缓存）
+    """创建单个 embedding 实例（即时构建，无进程级缓存）
 
     自动按 supported_params 过滤通用参数（batch_size / model），
     避免 pydantic extra_forbidden 错误。
@@ -156,11 +136,6 @@ def _create_single_embedding(
         **kwargs: 透传给 provider factory
     """
     model = kwargs.get("model", "") or provider_cfg.get("default_model", "")
-    cache_key = _make_embedding_cache_key(provider_cfg["id"], model, batch_size)
-    cached = _embedding_cache_get(cache_key)
-    if cached is not None:
-        logger.debug(f"Embedding 缓存命中: {provider_cfg['label']}")
-        return cached
 
     supported = provider_cfg.get("supported_params", set())
     init_kwargs: dict[str, Any] = {}
@@ -184,7 +159,6 @@ def _create_single_embedding(
     # 初始化失败抛出异常，让上层 try/except 排除此 provider
     embedding = factory(**init_kwargs)
 
-    _embedding_cache_set(cache_key, embedding)
     return embedding
 
 
@@ -287,8 +261,9 @@ class FallbackEmbedding(Embeddings):
         return None
 
     def _call_with_fallback(self, method_name: str, *args, **kwargs):
-        # 每次调用前清空降级事件，避免缓存实例导致误报
-        self._fallback_events = []
+        # E5-01：降级事件 append-only（实例级全量历史）——原实现每次调用头清空，
+        # 分批 embed 与维度探测会擦除先前的切换事件，kb_service 消费点恒读到空。
+        # 即时构建（实例缓存退役）下实例生命周期=单请求，append-only 无跨请求误报。
         last_error: Exception | None = None
 
         # 获取候选 provider 索引列表
@@ -318,11 +293,13 @@ class FallbackEmbedding(Embeddings):
                 logger.warning(f"Embedding 提供商 {self._labels[idx]} 调用 {method_name} 失败: {e}")
                 continue
         logger.error(f"所有 Embedding 提供商均失败，最后错误: {last_error}")
-        raise last_error  # type: ignore[misc]
+        # CT-06：类型化契约——包装为 EmbeddingUnavailableError（common.exceptions）
+        # 后抛出，knowledge 侧降级判定 isinstance 优先命中，不再依赖异常消息
+        # 子串匹配；原始异常经 __cause__ 保留、消息含末位错误文本
+        raise EmbeddingUnavailableError(f"所有 Embedding 提供商均失败: {last_error}") from last_error
 
     async def _acall_with_fallback(self, method_name: str, *args, **kwargs):
-        # 每次调用前清空降级事件，避免缓存实例导致误报
-        self._fallback_events = []
+        # E5-01：同 _call_with_fallback——降级事件 append-only，不再每次调用头清空
         last_error: Exception | None = None
 
         # 获取候选 provider 索引列表
@@ -352,7 +329,8 @@ class FallbackEmbedding(Embeddings):
                 logger.warning(f"Embedding 提供商 {self._labels[idx]} 异步调用 {method_name} 失败: {e}")
                 continue
         logger.error(f"所有 Embedding 提供商均失败，最后错误: {last_error}")
-        raise last_error  # type: ignore[misc]
+        # CT-06：同 sync 版——类型化包装（原始异常经 __cause__ 保留）
+        raise EmbeddingUnavailableError(f"所有 Embedding 提供商均失败: {last_error}") from last_error
 
     def embed_documents(self, texts):
         return self._call_with_fallback("embed_documents", texts)
@@ -368,10 +346,6 @@ class FallbackEmbedding(Embeddings):
 
 
 # ============== 公开 API ==============
-
-_embedding_fallback_cache: dict = {}
-_embedding_fallback_lock = threading.Lock()
-
 
 def get_embeddings_with_fallback(
     model: str | None = None,
@@ -408,7 +382,7 @@ def get_embeddings_with_fallback(
         RuntimeError: 所有 provider 不可用时
         ValueError: required_dimension 不为 None 但无维度兼容的 provider
     """
-    # ===== 提前构建 cache_key 并检查缓存，避免重复 DB 查询和日志输出 =====
+    # ===== 读取用户配置（每次调用即时执行；SystemConfig 走 django-redis 缓存） =====
     user_primary_id = preferred_provider
     user_fallback_id: str | None = None
     try:
@@ -423,7 +397,7 @@ def get_embeddings_with_fallback(
         # 配置读取失败时回退到默认 provider，不影响主流程
         logger.debug("读取 embedding provider 配置失败，使用默认值")
 
-    # 读取 MRL 维度配置（缓存 key 需要）
+    # 读取 MRL 维度配置
     user_mrl_dimension = dimension
     if user_mrl_dimension is None:
         try:
@@ -439,16 +413,6 @@ def get_embeddings_with_fallback(
             # MRL 维度配置读取失败时回退到传入维度，不影响主流程
             logger.debug("读取 MRL 维度配置失败，使用传入维度")
 
-    cache_key = (
-        f"emb_fb:{user_primary_id or 'default'}:"
-        f"{model or ''}:{batch_size}:dim{required_dimension or 'any'}:mrl{user_mrl_dimension or 'off'}"
-    )
-    with _embedding_fallback_lock:
-        if use_cache and cache_key in _embedding_fallback_cache:
-            logger.debug(f"Embedding fallback 缓存命中: {cache_key}")
-            return _embedding_fallback_cache[cache_key]
-
-    # ===== 缓存未命中，执行完整逻辑 =====
     providers = get_embedding_fallback_chain()
     if not providers:
         raise RuntimeError(
@@ -535,8 +499,6 @@ def get_embeddings_with_fallback(
         f"{f', required_dimension={required_dimension}' if required_dimension else ''}"
     )
 
-    # 缓存 key 已在函数入口提前构建并检查
-
     embeddings_list: list[Embeddings] = []
     labels: list[str] = []
     errors: list[str] = []
@@ -576,24 +538,16 @@ def get_embeddings_with_fallback(
         logger.info(f"Embedding 单 provider 模式: {labels[0]}")
 
     # 包装缓存层（依赖倒置，ARCH-03）：包装器工厂由调用方注入，
-    # 本模块不感知 knowledge 的 CachedEmbeddings 实现
+    # 本模块不感知 knowledge 的 CachedEmbeddings 实现。
+    # 注意：此为**响应级**缓存（Redis 缓存 embedding 结果），非实例缓存，
+    # 与实例缓存禁令无关，予以保留。
     if use_cache:
         if cache_wrapper_factory is not None:
             result = cache_wrapper_factory(result)
         else:
             logger.debug("use_cache=True 但未注入 cache_wrapper_factory，跳过 Embedding 缓存包装")
 
-    with _embedding_fallback_lock:
-        _embedding_fallback_cache[cache_key] = result
-
     return result
-
-
-def reset_embedding_factory() -> None:
-    """重置单例缓存（供测试）"""
-    global _embedding_fallback_cache  # noqa: PLW0603 - 模块级测试缓存重置
-    with _embedding_fallback_lock:
-        _embedding_fallback_cache = {}
 
 
 # ============== 数据库配置读取 ==============

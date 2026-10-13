@@ -72,6 +72,37 @@ class BaseAppError(Exception):
         }
 
 
+class EmbeddingUnavailableError(Exception):
+    """Embedding 服务全 provider 不可用（CT-06 类型化契约）。
+
+    由 ai_engine.embedding_factory.FallbackEmbedding 在全部 provider 失败后
+    包装抛出（``raise ... from last_error``，原始异常经 __cause__ 保留），
+    消息必须包含末位失败异常的文本。knowledge 侧降级判定
+    （keyword_fallback.is_embedding_error）对该类型 isinstance 优先命中，
+    使"embedding 故障 → PG 关键词降级"分支不再依赖异常消息子串匹配。
+
+    有意不继承 BaseAppError：本异常是服务层内部降级信号（strict_rag 关键词
+    降级 / search-all 全失败计数等消费方捕获后自行降级），不应进入业务
+    错误码协议映射。
+    """
+
+
+class DimensionMismatchError(Exception):
+    """向量库维度不匹配（B-4附 类型化契约，与 CT-06 先例同构）。
+
+    pgvector 扩展对查询向量与列维度不一致只以错误消息文本暴露
+    （"different vector dimensions: X != Y"），无独立 SQLSTATE 可靠判定；
+    该 pgvector 专属识别知识收口于
+    knowledge.vector_store.pgvector_runtime.as_dimension_mismatch_error，
+    识别命中即包装为本类型（原始异常经 __cause__ 保留），下游
+    （UnifiedRagPipeline.search_scored 维度自愈）isinstance 判定优先，
+    不再在通用检索入口内嵌异常消息子串匹配。
+
+    有意不继承 BaseAppError：服务层内部自愈信号（可自愈重试 / 无法自愈时
+    原样上抛），不应进入业务错误码协议映射。
+    """
+
+
 # Agent 异常 error_code → 业务 ErrorCode 映射
 # 用于 _handle_agent_error 中将 BaseAppError 子类的 error_code 转换为统一业务错误码
 _AGENT_ERROR_CODE_MAP = {

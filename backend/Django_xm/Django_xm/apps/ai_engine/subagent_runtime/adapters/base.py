@@ -42,4 +42,4 @@ class BaseRuntimeAdapter(ABC):
 
     @abstractmethod
     async def terminate(self, instance: Any) -> None:
-        """终止子代理（仅标记元数据状态，不强制 kill 正在运行的协程）。"""
+        """终止子代理（协作式取消：置取消标志，执行协程在下一个流事件处停止；不强制 kill）。"""

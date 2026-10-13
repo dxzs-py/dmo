@@ -1,140 +1,196 @@
 """
 上下文管理中间件
 
-替代 SummarizationMiddleware，在 Agent 执行循环中自动检测 Token 用量并触发压缩。
-使用 ProgressiveCompressor 实现多级渐进式压缩，支持长短时记忆分离。
+压缩核心委托官方 langchain.agents.middleware.SummarizationMiddleware
+（langchain 1.3.x）：其 before_model 以
+``[RemoveMessage(id=REMOVE_ALL_MESSAGES), *摘要HumanMessage, *保留消息]``
+返回 state 更新，经 add_messages reducer 真正删除旧消息（旧自研实现返回
+压缩后列表会被 reducer 追加而非替换，摘要重复堆积），且压缩结果随图状态
+进入 checkpointer 持久化；摘要模型调用经 with_retry 重试后失败向上传播。
 
-继承 langchain.agents.middleware.AgentMiddleware，通过 before_model 钩子
-在每轮模型调用前检测 Token 用量，超阈值触发渐进式压缩。
+本中间件在官方压缩之上保留项目特有能力：
+1. memory_tier 分层：SystemMessage 与显式标记 ``memory_tier=long_term``
+   的消息永不压缩、原样保留在摘要之前；
+2. _sanitize_tool_messages：tool_calls/ToolMessage 配对合规，
+   经 wrap_model_call 的 request.override 送达模型；
+3. 渐进式终止判断（after_model：WARN → THROTTLE → TERMINATE）。
+
+另含 MemoryInjectionMiddleware（fix-review-round2 1.2）：chat agent 的
+运行时记忆注入（wrap_model_call request.override，不写回 checkpoint state）。
 """
 
 import logging
+import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from langchain.agents.middleware import AgentMiddleware, AgentState
+from langchain.agents.middleware import AgentMiddleware, AgentState, SummarizationMiddleware
 from langchain.agents.middleware.types import ModelRequest
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.runtime import Runtime
 
 from Django_xm.apps.context_manager.config import context_settings
-from Django_xm.apps.context_manager.services.compression import (
-    TokenEstimator,
-    dicts_to_messages,
-    messages_to_dicts,
-)
-from Django_xm.apps.context_manager.services.progressive_compressor import (
-    CompressionLevel,
-    ProgressiveCompressor,
-)
+from Django_xm.apps.context_manager.services.runtime_providers import get_compression_model_provider
 from Django_xm.apps.context_manager.services.termination_judge import (
     ContextTerminationJudge,
     TerminationAction,
     TerminationSignal,
 )
 from Django_xm.common.messages import content_to_str
+from Django_xm.common.token_estimator import TokenEstimator
 
 logger = logging.getLogger(__name__)
 
 
 class ContextManagerMiddleware(AgentMiddleware):
     """
-    上下文管理中间件 - 在 Agent 执行循环中自动触发渐进式压缩
+    上下文管理中间件 - 官方 SummarizationMiddleware 组合 + 项目特有治理
 
-    使用 ProgressiveCompressor 替代单一阈值压缩：
-    1. 每轮 Agent 模型调用前检测 Token 用量
-    2. 根据占用比例自动选择压缩级别（Level 1-4）
-    3. 跳过 LONG_TERM 记忆，仅压缩 SHORT_TERM 消息
+    职责：
+    1. before_model：token 用量检测，超阈值时委托官方 SummarizationMiddleware
+       生成摘要并以 RemoveMessage(REMOVE_ALL_MESSAGES) 真正替换消息列表；
+    2. wrap_model_call：tool_calls/ToolMessage 配对清理（request.override）；
+    3. after_model：渐进式终止判断（WARN/THROTTLE/TERMINATE）。
     """
 
     def __init__(
         self,
         model_name: str | None = None,
         trigger_tokens: int | None = None,
-        keep_messages: int | None = None,
-        strategy: str = "hybrid",
-        user_id: str | None = None,
-        store=None,
         thread_id: str | None = None,
     ):
         super().__init__()
         self._model_name = model_name or ""
         model_limit = TokenEstimator.get_model_limit(self._model_name)
 
+        # 压缩触发阈值对齐自研体系 Level 2（摘要）语义：模型上限 × level_2 比例
         if trigger_tokens is not None:
             self._trigger_tokens = trigger_tokens
         else:
-            self._trigger_tokens = int(model_limit * context_settings.compression_threshold_ratio)
+            self._trigger_tokens = int(model_limit * context_settings.compression_level_2_threshold)
 
-        level_thresholds = {
-            CompressionLevel.LEVEL_1_BASELINE: 0.0,
-            CompressionLevel.LEVEL_2_SUMMARY: context_settings.compression_level_2_threshold,
-            CompressionLevel.LEVEL_3_RELEVANCE: context_settings.compression_level_3_threshold,
-            CompressionLevel.LEVEL_4_AGGRESSIVE: context_settings.compression_level_4_threshold,
-        }
-
-        self._progressive_compressor = ProgressiveCompressor(
-            model_name=self._model_name,
-            store=store,
-            user_id=user_id,
-            level_thresholds=level_thresholds,
-            thread_id=thread_id,
-        )
         self._termination_judge = ContextTerminationJudge(
             model_name=self._model_name,
             # B1/N-2：注入 hard-stop 交接身份兜底（运行期优先取图 config 的
             # thread_id，见 termination_judge._resolve_handoff_thread_id）
             thread_id=thread_id,
         )
-        self._user_id = user_id
         self._thread_id = thread_id
+        # round3 2.10：系统提示词 token（wrap_model_call 从 request.system_prompt
+        # 捕获估算，全量 token 预算口径的组成部分；after_model 的 state.messages
+        # 不含 system prompt，须单独计入）
+        self._system_prompt_tokens = 0
+        self._summarizer = self._build_summarizer(model_limit)
         logger.info(
             f"ContextManagerMiddleware 初始化: model={model_name}, "
             f"trigger={self._trigger_tokens} tokens, "
-            f"level_thresholds={{{', '.join(f'{k.value}={v}' for k, v in level_thresholds.items())}}}, "
+            f"keep={context_settings.compression_keep_recent} messages, "
+            f"summarizer={'ready' if self._summarizer is not None else 'disabled'}, "
             f"thread_id={thread_id}"
         )
 
+    def _build_summarizer(self, model_limit: int) -> SummarizationMiddleware | None:
+        """构建官方 SummarizationMiddleware。
+
+        模型走 compression_bridge 解析链（轻量模型 → 辅助模型 → SystemConfig
+        默认 → 兜底，经 runtime_providers 由 ai_engine apps.ready() 注入）。
+        构建失败 = 压缩能力不可用（error 留痕），不阻塞 agent 装配——
+        收敛点保底注入（agent_hub.build_middleware）要求本中间件构建不抛异常。
+        """
+        if not context_settings.compression_enabled:
+            logger.info("上下文自动压缩已禁用（context_settings.compression_enabled=False）")
+            return None
+        try:
+            provider = get_compression_model_provider()
+            if provider is None:
+                logger.error(
+                    "压缩模型提供者未注册（ai_engine apps.ready() 接线缺失），上下文自动压缩不可用；"
+                    "context_manager 禁止 import ai_engine（环 1 契约）"
+                )
+                return None
+            model = provider(context_settings.compression_lightweight_model)
+            trigger: list[Any] = []
+            if self._trigger_tokens > 0:
+                trigger.append(("tokens", self._trigger_tokens))
+            # 硬限制兜底：消息数超限也触发（与自研体系 hard_limit 语义一致）
+            hard_limit_msgs = int(model_limit / 50) if model_limit > 0 else 0
+            if hard_limit_msgs > 0:
+                trigger.append({"messages": hard_limit_msgs})
+            if not trigger:
+                logger.error("压缩触发阈值配置无效（trigger_tokens<=0 且无消息数兜底），上下文自动压缩不可用")
+                return None
+            return SummarizationMiddleware(
+                model,
+                trigger=trigger,
+                keep=("messages", context_settings.compression_keep_recent),
+                token_counter=self._estimate_messages_tokens,
+            )
+        except Exception:
+            logger.exception("SummarizationMiddleware 构建失败，上下文自动压缩不可用")
+            return None
+
     def before_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
-        """模型调用前检测 Token 用量，根据压缩级别触发渐进式压缩，并清理孤立 ToolMessage"""
+        """模型调用前检测 Token 用量，超阈值委托官方中间件执行真实压缩"""
         messages = state.get("messages", [])
         if not messages:
             return None
 
-        sanitized = self._sanitize_tool_messages(messages)
+        sanitized = self._sanitize_tool_messages(list(messages))
+        self._log_token_usage(sanitized)
 
-        total_tokens = self._estimate_messages_tokens(sanitized)
-        max_tokens = TokenEstimator.get_model_limit(self._model_name)
+        if self._summarizer is None:
+            return None
 
-        level = self._progressive_compressor.determine_level(total_tokens, max_tokens)
-        ratio = total_tokens / max_tokens if max_tokens > 0 else 0.0
+        # memory_tier 分层：长期记忆永不压缩，官方中间件仅处理短期消息
+        long_term, short_term = self._split_memory_tiers(sanitized)
 
-        # 每轮模型调用前输出 Token 用量，便于排查压缩是否触发
-        logger.debug(
-            f"[ContextMgr] before_model: tokens={total_tokens}/{max_tokens} "
-            f"({ratio:.1%}), level={level.value}, msgs={len(sanitized)}, model={self._model_name}"
-        )
+        update = self._summarizer.before_model({"messages": short_term}, runtime)
+        if update is None:
+            return None
 
-        if level == CompressionLevel.LEVEL_1_BASELINE:
-            if ratio < context_settings.compression_level_2_threshold:
-                # 硬限制兜底：即使 token 估算有误差，消息数超过阈值也强制压缩
-                # 粗略估算：每条消息至少 50 token
-                hard_limit_msgs = int(max_tokens / 50) if max_tokens > 0 else 2000
-                if len(sanitized) > hard_limit_msgs:
-                    logger.warning(f"消息数 {len(sanitized)} 超过硬限制 {hard_limit_msgs}，强制触发压缩")
-                    level = CompressionLevel.LEVEL_2_SUMMARY
-                else:
-                    if sanitized is not messages and sanitized != messages:
-                        return {"messages": sanitized}
-                    return None
-
+        # update["messages"] = [RemoveMessage(REMOVE_ALL_MESSAGES), 摘要, *保留消息]
+        # 摘要 HumanMessage 位于最近消息之前（官方语义）；
+        # 长期记忆原样保留在摘要之前（system 上下文前置）。
+        summarized = update["messages"][1:]
+        new_messages = self._ensure_message_ids([*long_term, *summarized])
         logger.info(
-            f"Token 用量 {total_tokens}/{max_tokens} ({total_tokens / max_tokens:.1%})，"
-            f"压缩级别={level.value}，触发渐进式压缩（消息数: {len(sanitized)}）"
+            f"上下文压缩触发: 压缩后 {len(new_messages)} 条消息 "
+            f"（长期记忆 {len(long_term)} 条原样保留，摘要 1 条）"
         )
+        return {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *new_messages]}
 
-        compressed = self.process_messages(sanitized)
-        return {"messages": compressed}
+    async def abefore_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        """异步版本：委托官方中间件的原生异步摘要（不经 executor 兜底）"""
+        messages = state.get("messages", [])
+        if not messages:
+            return None
+
+        sanitized = self._sanitize_tool_messages(list(messages))
+        self._log_token_usage(sanitized)
+
+        if self._summarizer is None:
+            return None
+
+        long_term, short_term = self._split_memory_tiers(sanitized)
+
+        update = await self._summarizer.abefore_model({"messages": short_term}, runtime)
+        if update is None:
+            return None
+
+        summarized = update["messages"][1:]
+        new_messages = self._ensure_message_ids([*long_term, *summarized])
+        logger.info(
+            f"上下文压缩触发(异步): 压缩后 {len(new_messages)} 条消息 "
+            f"（长期记忆 {len(long_term)} 条原样保留，摘要 1 条）"
+        )
+        return {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *new_messages]}
+
+    def _capture_system_prompt_tokens(self, request: ModelRequest) -> None:
+        """捕获系统提示词 token（round3 2.10 全量预算口径；幂等估算，廉价）"""
+        system_prompt = getattr(request, "system_prompt", None)
+        if isinstance(system_prompt, str) and system_prompt:
+            self._system_prompt_tokens = TokenEstimator.estimate_tokens(system_prompt, self._model_name)
 
     def wrap_model_call(
         self,
@@ -143,9 +199,9 @@ class ContextManagerMiddleware(AgentMiddleware):
     ):
         """在模型调用前清理消息序列，确保 tool_calls/ToolMessage 合规
 
-        关键：使用 request.override() 直接替换消息列表，
-        而不是通过 before_model 返回值（add_messages reducer 无法完全替换）。
+        关键：使用 request.override() 直接替换送达模型的消息列表。
         """
+        self._capture_system_prompt_tokens(request)
         if not request.messages:
             return handler(request)
 
@@ -162,6 +218,7 @@ class ContextManagerMiddleware(AgentMiddleware):
         handler,
     ):
         """异步版本：在模型调用前清理消息序列"""
+        self._capture_system_prompt_tokens(request)
         if not request.messages:
             return await handler(request)
 
@@ -173,16 +230,21 @@ class ContextManagerMiddleware(AgentMiddleware):
         return await handler(request)
 
     def after_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
-        """模型调用后检测是否应该终止（渐进式：WARN → THROTTLE → TERMINATE）"""
+        """模型调用后检测是否应该终止（渐进式：WARN → THROTTLE → TERMINATE）
+
+        注意：压缩只在 before_model 触发（官方 SummarizationMiddleware 语义）。
+        after_model 返回压缩消息列表会经 add_messages reducer 追加而非替换
+        （旧自研实现的缺陷），故此处不做任何压缩。
+
+        Token 预算口径（round3 2.10）：改为全量消息估算——系统提示词（wrap_model_call
+        捕获）+ 输入 + 工具调用/结果 + 输出，统一经 _estimate_messages_tokens
+        （TokenEstimator 对齐），替代旧实现的"仅累计最后一条 AIMessage"
+        （严重低估、预算永不触发）。
+        """
         messages = state.get("messages", [])
         if messages:
-            last_msg = messages[-1]
-            if isinstance(last_msg, AIMessage) and last_msg.content:
-                tokens = TokenEstimator.estimate_tokens(
-                    content_to_str(last_msg.content),
-                    self._model_name,
-                )
-                self._termination_judge.record_token_usage(tokens)
+            total_tokens = self._system_prompt_tokens + self._estimate_messages_tokens(messages)
+            self._termination_judge.set_token_usage(total_tokens)
 
         verdict = self._termination_judge.judge(state)
 
@@ -227,17 +289,24 @@ class ContextManagerMiddleware(AgentMiddleware):
             logger.warning(f"循环限流警告注入: {verdict.reason}")
             return {"messages": [HumanMessage(content=throttle_msg)]}
 
-        # ── CONTINUE: 检查是否需要压缩 ──
-        if verdict.should_compress:
-            messages = state.get("messages", [])
-            if messages:
-                compressed = self.process_messages(messages)
-                return {"messages": compressed}
-
         return None
 
+    def _log_token_usage(self, messages: Sequence[BaseMessage]) -> None:
+        """每轮模型调用前输出 Token 用量，便于排查压缩是否触发"""
+        total_tokens = self._estimate_messages_tokens(messages)
+        max_tokens = TokenEstimator.get_model_limit(self._model_name)
+        ratio = total_tokens / max_tokens if max_tokens > 0 else 0.0
+        logger.debug(
+            f"[ContextMgr] before_model: tokens={total_tokens}/{max_tokens} "
+            f"({ratio:.1%}), msgs={len(messages)}, model={self._model_name}"
+        )
+
     def _estimate_messages_tokens(self, messages: Sequence[BaseMessage]) -> int:
-        """估算消息列表的 token 数（含工具调用、格式化开销）"""
+        """估算消息列表的 token 数（含工具调用、格式化开销）
+
+        同时作为官方 SummarizationMiddleware 的 token_counter（官方契约：
+        Callable[[Iterable[MessageLikeRepresentation]], int]）。
+        """
         total = 0
         for msg in messages:
             # 1. 消息内容
@@ -262,53 +331,34 @@ class ContextManagerMiddleware(AgentMiddleware):
 
         return total
 
-    def _messages_to_dicts(self, messages: Sequence[BaseMessage]) -> list[dict[str, Any]]:
-        """BaseMessage → dict：委托统一适配层单源（phase6a G3 归一）。"""
-        return messages_to_dicts(list(messages))
+    @staticmethod
+    def _is_long_term_message(msg: BaseMessage) -> bool:
+        """memory_tier 分层判定：SystemMessage 与显式 long_term 标记永不压缩
 
-    def _dicts_to_messages(self, dicts: list[dict[str, Any]]) -> list[BaseMessage]:
-        """dict → BaseMessage：委托统一适配层单源（phase6a G3 归一）。"""
-        return dicts_to_messages(dicts)
-
-    def process_messages(
-        self,
-        messages: Sequence[BaseMessage],
-    ) -> list[BaseMessage]:
+        仅认显式标记（additional_kwargs.memory_tier）与 system 角色，
+        不做内容关键词启发式标记——关键词误标会阻止压缩、使上下文只增不减。
         """
-        处理消息列表：检测 Token 用量，使用渐进式压缩
+        if isinstance(msg, SystemMessage):
+            return True
+        tier = msg.additional_kwargs.get("memory_tier") if msg.additional_kwargs else None
+        return tier == "long_term"
 
-        此方法可在 Agent 每轮执行后手动调用，也可通过 before_model 钩子自动触发。
-        """
-        dict_messages = self._messages_to_dicts(messages)
-
-        query = self._extract_latest_query(dict_messages)
-
-        compressed_dicts, result = self._progressive_compressor.compress(dict_messages, query=query)
-
-        if result.compressed_tokens < result.original_tokens:
-            logger.info(
-                f"渐进式压缩完成: level={result.level.value}, "
-                f"{result.original_tokens} -> {result.compressed_tokens} tokens, "
-                f"压缩率 {result.compression_ratio:.1%}, "
-                f"策略={result.strategy_used}"
-            )
-            converted = self._dicts_to_messages(compressed_dicts)
-            return self._sanitize_tool_messages(converted)
-
-        return self._sanitize_tool_messages(list(messages))
+    @classmethod
+    def _split_memory_tiers(
+        cls, messages: list[BaseMessage]
+    ) -> tuple[list[BaseMessage], list[BaseMessage]]:
+        """切分长期/短期消息：长期原样保留，短期交由官方中间件摘要"""
+        long_term = [m for m in messages if cls._is_long_term_message(m)]
+        short_term = [m for m in messages if not cls._is_long_term_message(m)]
+        return long_term, short_term
 
     @staticmethod
-    def _extract_latest_query(messages: list[dict[str, Any]]) -> str | None:
-        for msg in reversed(messages):
-            if msg.get("role") == "user":
-                content = msg.get("content", "")
-                if isinstance(content, str) and content.strip():
-                    return content.strip()[:500]
-                elif isinstance(content, list):
-                    text = content_to_str(content)
-                    if text.strip():
-                        return text.strip()[:500]
-        return None
+    def _ensure_message_ids(messages: list[BaseMessage]) -> list[BaseMessage]:
+        """确保消息有唯一 id（官方同款语义：add_messages reducer 依赖 id）"""
+        for msg in messages:
+            if msg.id is None:
+                msg.id = str(uuid.uuid4())
+        return messages
 
     @staticmethod
     def _sanitize_tool_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -460,3 +510,43 @@ class ContextManagerMiddleware(AgentMiddleware):
             return final_result
 
         return result
+
+
+class MemoryInjectionMiddleware(AgentMiddleware):
+    """运行时记忆注入中间件（fix-review-round2 1.2）：模型调用前动态前插注入 SystemMessage。
+
+    注入语义（与旧 graph_input 前置注入的本质区别）：
+    - 注入文本（KG/跨会话记忆，chat 侧每请求经 ContextManager.get_injection_context
+      获取后构造本中间件）仅经 ``wrap_model_call`` 的 ``request.override`` 前插到
+      **送达模型**的消息列表，**不写回图 state**——checkpoint state messages 不残留
+      注入消息（旧实现把注入 SystemMessage 放进 graph_input，随 checkpoint 持久化
+      且逐轮堆积）；
+    - 每次模型调用（含工具循环内的多轮调用）都重新前插，注入内容始终新鲜；
+    - 注入文本为空（无 KG/跨会话记忆或获取失败降级）时完全透传，零开销。
+
+    system prompt（含研究上下文，经 AgentConfig.system_prompt 注入）由 langchain
+    factory 在模型调用时单独拼接，不在 request.messages 内，本中间件的前插不会
+    挤占或重复 system prompt。
+
+    装配点：仅 chat agent（AgentService.create_agent_with_memory，use_checkpointer
+    分支）经 AgentConfig.middleware 显式栈接线；deep_research/子代理等其他
+    builder 链路不受影响。
+    """
+
+    def __init__(self, injection_text: str):
+        super().__init__()
+        self._injection_text = (injection_text or "").strip()
+
+    def wrap_model_call(self, request: ModelRequest, handler):
+        """模型调用前把注入文本前插到送达模型的消息列表（request.override，不写 state）"""
+        if not self._injection_text:
+            return handler(request)
+        injected = [SystemMessage(content=self._injection_text), *request.messages]
+        return handler(request.override(messages=injected))
+
+    async def awrap_model_call(self, request: ModelRequest, handler):
+        """异步版本：语义同 wrap_model_call"""
+        if not self._injection_text:
+            return await handler(request)
+        injected = [SystemMessage(content=self._injection_text), *request.messages]
+        return await handler(request.override(messages=injected))

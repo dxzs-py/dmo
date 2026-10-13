@@ -31,14 +31,16 @@ class SkillStep(BaseModel):
 
 
 class SkillSpec(BaseModel):
-    """统一技能定义模型"""
+    """统一技能定义模型（pipeline 管道执行规格）
+
+    旧 advisor/hybrid 模式已随全量注入路径删除（Task 10）：
+    SKILL.md body 由模型经 activate_skill 工具按需读取，不再进 system prompt。
+    """
 
     name: str = Field(description="技能名称")
     description: str = Field(description="技能描述")
-    mode: str = Field(default="pipeline", description="执行模式: pipeline/advisor/hybrid")
-    steps: list[SkillStep] = Field(default_factory=list, description="执行步骤（pipeline/hybrid 模式）")
-    skill_dir: str | None = Field(default=None, description="Skill 包文件系统路径（advisor 模式）")
-    allowed_tools: str | None = Field(default=None, description="预批准工具列表")
+    steps: list[SkillStep] = Field(default_factory=list, description="执行步骤链")
+    skill_dir: str | None = Field(default=None, description="Skill 包文件系统路径（可选）")
     version: str = Field(default="1.0.0")
     source: str = Field(default="user", description="来源: system/user")
 
@@ -51,7 +53,6 @@ PRESET_SKILLS: list[dict] = [
     {
         "name": "web_research",
         "description": "网络研究技能：搜索关键词 → 抓取相关网页 → 总结关键信息。适用场景：需要深入了解某个话题。",
-        "mode": "pipeline",
         "steps": [
             {"tool_name": "web_search", "args_template": {"query": "{query}"}},
             {"tool_name": "web_fetch", "args_template": {"url": "{prev_result.top_url}"}},
@@ -60,7 +61,6 @@ PRESET_SKILLS: list[dict] = [
     {
         "name": "document_qa",
         "description": "文档问答技能：读取附件内容 → 基于内容回答问题。适用场景：基于上传文档回答问题。",
-        "mode": "pipeline",
         "steps": [
             {"tool_name": "attachment_reader", "args_template": {"query": "{query}"}},
         ],
@@ -77,7 +77,6 @@ def _build_preset_specs() -> list[SkillSpec]:
             SkillSpec(
                 name=preset["name"],
                 description=preset["description"],
-                mode=preset.get("mode", "pipeline"),
                 steps=steps,
                 version="1.0.0",
                 source="system",
