@@ -1,6 +1,21 @@
 import { z } from 'zod'
 import { MessageRole } from '@/types'
 
+/** 密码复杂度规则：与后端 UserRegisterSerializer.PASSWORD_COMPLEXITY_PATTERN 保持一致（单一权威源在本模块） */
+export const PASSWORD_COMPLEXITY_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=[\]{}|;:,.<>?]).{8,}$/
+
+/**
+ * 校验密码复杂度（注册与修改密码共用，规则与后端统一）
+ * @param {string} password - 待校验密码
+ * @returns {string|null} 不合规时返回错误提示文案，合规返回 null
+ */
+export function validatePasswordComplexity(password) {
+  if (!PASSWORD_COMPLEXITY_PATTERN.test(password)) {
+    return '密码至少 8 位，必须同时包含大写字母、小写字母、数字和特殊字符（特殊字符集：!@#$%^&*()_+-=[]{}|;:,.<>?）'
+  }
+  return null
+}
+
 /** 消息对象结构校验（权威 schema）：role 枚举引用 types/index.js 的 MessageRole 单一权威源 */
 export const MessageSchema = z.object({
   id: z.string().min(1),

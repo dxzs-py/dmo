@@ -27,19 +27,19 @@ django.setup()
 
 import ipaddress
 import socket
-from asgiref.sync import sync_to_async
 from unittest.mock import AsyncMock, patch
 
+from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model
 from django.db import connections
 from django.test import TestCase, TransactionTestCase, override_settings
 from rest_framework.test import APIClient
 
-from Django_xm.async_utils import run_async
 from Django_xm.apps.tools import views_mcp
 from Django_xm.apps.tools.managers import McpToolManager
 from Django_xm.apps.tools.models import McpServerConfig, ToolCategory
 from Django_xm.apps.tools.serializers import McpServerAddSerializer
+from Django_xm.async_utils import run_async
 from Django_xm.common.net.guards import is_blocked_ip as _is_blocked_ip
 
 TOOLS_URL = "/api/v1/tools/"
@@ -417,7 +417,7 @@ class McpUrlSsrfValidationTests(McpSecurityTestBase, TestCase):
             "::ffff:127.0.0.1",
             "169.254.169.254",
             "172.16.1.1",
-            "0.0.0.0",
+            "0.0.0.0",  # noqa: S104 -- SSRF 阻断清单测试数据，非真实绑定地址
             "10.1.2.3",
             "192.168.0.1",
         ]

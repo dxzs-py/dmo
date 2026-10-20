@@ -33,7 +33,7 @@ class TestStreamBroadcastEventSubtype(SimpleTestCase):
     def _assert_published(self, mock_publish, *, event_type: str, subtype: str | None):
         """断言 publish_event 单次调用且 payload 子类型注入符合预期。"""
         mock_publish.assert_awaited_once()
-        args, kwargs = mock_publish.call_args
+        args, _kwargs = mock_publish.call_args
         evt_type, payload = args[0], args[1]
         self.assertEqual(evt_type.value, event_type)
         if subtype is None:
@@ -108,7 +108,7 @@ class TestErrorEventBroadcast(SimpleTestCase):
     def _assert_published(self, mock_publish, *, event_type: str, subtype: str | None):
         """断言 publish_event 单次调用且 payload 子类型注入符合预期。"""
         mock_publish.assert_awaited_once()
-        args, kwargs = mock_publish.call_args
+        args, _kwargs = mock_publish.call_args
         evt_type, payload = args[0], args[1]
         self.assertEqual(evt_type.value, event_type)
         if subtype is None:
@@ -166,7 +166,7 @@ class TestRetryAndTimeoutWarningBroadcast(SimpleTestCase):
     def _assert_published(self, mock_publish, *, event_type: str, subtype: str | None):
         """断言 publish_event 单次调用且 payload 子类型注入符合预期。"""
         mock_publish.assert_awaited_once()
-        args, kwargs = mock_publish.call_args
+        args, _kwargs = mock_publish.call_args
         evt_type, payload = args[0], args[1]
         self.assertEqual(evt_type.value, event_type)
         if subtype is None:

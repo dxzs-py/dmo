@@ -48,7 +48,10 @@ class GraphRecursionDegradeTests(unittest.TestCase):
         executor = _make_executor()
         ctx = _make_ctx(
             all_messages=[
-                AIMessage(content="我先搜索一下相关资料。", tool_calls=[{"name": "web_search", "args": {}, "id": "c1"}]),
+                AIMessage(
+                    content="我先搜索一下相关资料。",
+                    tool_calls=[{"name": "web_search", "args": {}, "id": "c1"}],
+                ),
                 ToolMessage(content="结果1", tool_call_id="c1"),
                 AIMessage(content="再查一次。", tool_calls=[{"name": "web_search", "args": {}, "id": "c2"}]),
                 ToolMessage(content="结果2", tool_call_id="c2"),

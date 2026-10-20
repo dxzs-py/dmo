@@ -7,6 +7,7 @@ import { User, Lock, Phone, Upload, ChatDotRound, Document, DataAnalysis, Calend
 import { userAPI } from '@/api/user'
 import { logger } from '../utils/logger'
 import { extractErrorMessage } from '../utils/apiErrorHandler'
+import { validatePasswordComplexity } from '../utils/validation'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -122,8 +123,14 @@ async function handleChangePassword() {
     ElMessage.warning('请输入当前密码')
     return
   }
-  if (!passwordForm.value.newPassword || passwordForm.value.newPassword.length < 8) {
-    ElMessage.warning('新密码至少8个字符')
+  if (!passwordForm.value.newPassword) {
+    ElMessage.warning('请输入新密码')
+    return
+  }
+  // 复杂度与注册规则统一（utils/validation.js 单一权威源，规则同后端）
+  const complexityError = validatePasswordComplexity(passwordForm.value.newPassword)
+  if (complexityError) {
+    ElMessage.warning(complexityError)
     return
   }
   if (passwordForm.value.newPassword !== passwordForm.value.confirmPassword) {
@@ -381,7 +388,7 @@ async function handleDeleteAccount() {
           <el-input v-model="passwordForm.oldPassword" type="password" show-password />
         </el-form-item>
         <el-form-item label="新密码">
-          <el-input v-model="passwordForm.newPassword" type="password" show-password placeholder="至少8个字符" />
+          <el-input v-model="passwordForm.newPassword" type="password" show-password placeholder="至少8位，含大小写字母、数字和特殊字符" />
         </el-form-item>
         <el-form-item label="确认密码">
           <el-input v-model="passwordForm.confirmPassword" type="password" show-password />

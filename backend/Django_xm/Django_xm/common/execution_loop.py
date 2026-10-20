@@ -60,7 +60,8 @@ async def iter_stream_events_with_timeout(
 ) -> AsyncGenerator[dict, None]:
     """带超时检查和审批 pause/resume 的事件迭代（执行器骨架能力，函数化下沉）。
 
-    原 ``AgentExecutor._iter_with_timeout`` 方法体原样迁移（research 执行器不再继承 agent_hub 基类，chat/research 共用本函数）：
+    原 ``AgentExecutor._iter_with_timeout`` 方法体原样迁移
+    （research 执行器不再继承 agent_hub 基类，chat/research 共用本函数）：
 
     - hard timeout → 抛出 :class:`HardTimeoutSignaled`
     - soft timeout → 警告一次

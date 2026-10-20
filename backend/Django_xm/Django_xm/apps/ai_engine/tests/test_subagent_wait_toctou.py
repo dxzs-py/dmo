@@ -68,7 +68,7 @@ class SubagentWaitToctouTests(SimpleTestCase):
         )
         instance = _make_instance()
 
-        lm, awaiter, _adapter = self._run_suspend(runtime, instance, ["g1"])
+        lm, _awaiter, _adapter = self._run_suspend(runtime, instance, ["g1"])
 
         # 注册先行 + 补投经 awaiter → 恢复触发
         lm.register_parent_awaiter.assert_called_once()
@@ -84,7 +84,7 @@ class SubagentWaitToctouTests(SimpleTestCase):
         instance = _make_instance()
         inst = SimpleNamespace(status=SubAgentStatus.FAILED, result_preview="boom")
 
-        lm, awaiter, _adapter = self._run_suspend(
+        _lm, awaiter, _adapter = self._run_suspend(
             runtime, instance, ["g1"], terminal_side_effect=None
         )
         runtime.get_instance = mock.AsyncMock(return_value=inst)
@@ -104,7 +104,7 @@ class SubagentWaitToctouTests(SimpleTestCase):
         )
         instance = _make_instance()
 
-        lm, awaiter, _adapter = self._run_suspend(runtime, instance, ["g1", "g2"])
+        _lm, awaiter, _adapter = self._run_suspend(runtime, instance, ["g1", "g2"])
 
         errors: list[BaseException] = []
         barrier = threading.Barrier(2, timeout=10)
@@ -113,7 +113,7 @@ class SubagentWaitToctouTests(SimpleTestCase):
             try:
                 barrier.wait()
                 asyncio.run(awaiter(sid, SubAgentStatus.COMPLETED))
-            except BaseException as exc:  # noqa: BLE001 - 线程异常收集
+            except BaseException as exc:
                 errors.append(exc)
 
         threads = [

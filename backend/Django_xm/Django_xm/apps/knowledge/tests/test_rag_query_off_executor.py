@@ -150,7 +150,9 @@ class QueryViewOffExecutorTests(SimpleTestCase):
                 mock.patch(f"{_VIEWS_RAG}.QueryCacheService.get_cached_query", return_value=None),
                 mock.patch(f"{_VIEWS_RAG}.QueryCacheService.cache_query_result"),
                 mock.patch(f"{_VIEWS_RAG}.build_user_retriever", return_value=object()),
-                mock.patch(f"{_VIEWS_RAG}.query_strict_rag", return_value={"answer": "a", "sources": [], "success": True}),
+                mock.patch(
+                    f"{_VIEWS_RAG}.query_strict_rag", return_value={"answer": "a", "sources": [], "success": True}
+                ),
                 mock.patch(f"{_VIEWS_RAG}._run_strict_query_sync", side_effect=_blocking_query),
             ):
                 responses = await asyncio.gather(view(_query_request()), view(_query_request()))

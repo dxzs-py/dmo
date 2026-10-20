@@ -18,6 +18,7 @@
 """
 
 import asyncio
+import unittest
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest import mock
@@ -222,7 +223,9 @@ class FallbackStreamDegradationTests(SimpleTestCase):
         ):
             events = asyncio.run(
                 _collect_events(
-                    service.stream_without_tools(_StubModel(), data, create_usage_tracker(model_id="m1"), create_token_detail_tracker())
+                    service.stream_without_tools(
+                        _StubModel(), data, create_usage_tracker(model_id="m1"), create_token_detail_tracker()
+                    )
                 )
             )
 

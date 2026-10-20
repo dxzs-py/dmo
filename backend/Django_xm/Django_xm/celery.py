@@ -20,7 +20,8 @@ Celery 配置模块
     ├── chat_tasks.py         # 附件清理与 checkpointer 维护
     ├── rag_tasks.py          # RAG 索引操作
     ├── signals.py            # Celery 信号处理（须在下方 include 中显式注册才会加载）
-    └── approval_tasks.py     # 审批超时清理 + 发件箱补偿
+    ├── approval_tasks.py     # 审批超时清理 + 发件箱补偿
+    └── subagent_wait_tasks.py # 子代理业务等待超时清扫
 
 队列划分:
     celery    - 默认队列，轻量维护任务
@@ -48,6 +49,7 @@ app = Celery(
         "Django_xm.tasks.rag_tasks",
         "Django_xm.tasks.analytics_tasks",
         "Django_xm.tasks.approval_tasks",
+        "Django_xm.tasks.subagent_wait_tasks",
         # 信号处理：Celery 不会自动发现该模块，须在此显式 include 才会被导入并注册
         # @worker_ready/@task_* 处理器（否则 worker_ready 预热、任务失败追踪等永不触发）
         "Django_xm.tasks.signals",

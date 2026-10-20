@@ -299,7 +299,9 @@ class QueryIntentClassifier:
                 [HumanMessage(content=prompt)],
                 config={"timeout": 3, "callbacks": [], "tags": ["nostream"]},  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
             )
-            intent = self._parse_intent(content_to_str(response.content) if hasattr(response, "content") else str(response))
+            intent = self._parse_intent(
+                content_to_str(response.content) if hasattr(response, "content") else str(response)
+            )
             self._set_cache(query, intent)
             logger.info(f"意图分类: query='{query[:50]}...' -> {intent}")
             return intent
@@ -333,7 +335,9 @@ class QueryIntentClassifier:
                 llm.ainvoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]}),  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
                 timeout=3.0,
             )
-            intent = self._parse_intent(content_to_str(response.content) if hasattr(response, "content") else str(response))
+            intent = self._parse_intent(
+                content_to_str(response.content) if hasattr(response, "content") else str(response)
+            )
             self._set_cache(query, intent)
             logger.info(f"意图分类: query='{query[:50]}...' -> {intent}")
             return intent

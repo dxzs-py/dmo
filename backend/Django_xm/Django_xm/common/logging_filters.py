@@ -1,4 +1,4 @@
-﻿"""日志敏感信息脱敏过滤器。
+"""日志敏感信息脱敏过滤器。
 
 QueryParamTokenAuthentication（apps/core/authentication.py）允许用查询串传 JWT
 （SSE / 文件下载无法设置 Authorization 头所必需），代价是 JWT 会进入日志：
@@ -12,6 +12,7 @@ django.request 在 4xx/5xx 记录完整路径（含查询串），本项目多�
 
 import logging
 import re
+from contextlib import suppress
 
 MASK = "***"
 
@@ -33,13 +34,11 @@ class RedactSensitiveFilter(logging.Filter):
     """对日志记录的消息与参数做敏感值脱敏。脱敏失败绝不打断日志本身。"""
 
     def filter(self, record):
-        try:
+        with suppress(Exception):  # pragma: no cover
             try:
                 rendered = record.getMessage()
             except Exception:
                 rendered = str(record.msg)
             record.msg = redact_sensitive(rendered)
             record.args = ()  # 防止 formatter 二次拼接泄漏原值
-        except Exception:  # pragma: no cover
-            pass
         return True

@@ -29,9 +29,9 @@ from langchain_core.documents import Document
 
 from Django_xm.apps.knowledge.services.strict_rag_chain import (
     NO_RESULT_ANSWER,
-    _StreamingCitationFilter,
     _format_docs,
     _group_docs_by_source,
+    _StreamingCitationFilter,
     _strip_invalid_citations,
     astream_strict_rag,
     query_strict_rag,

@@ -36,8 +36,8 @@ django.setup()
 
 from langchain_core.documents import Document
 
-from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
 from Django_xm.apps.knowledge.services.keyword_fallback import is_embedding_error
+from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
 from Django_xm.apps.knowledge.services.strict_rag_chain import (
     KEYWORD_DEGRADATION_NOTICE,
     NO_RESULT_ANSWER,
@@ -190,7 +190,8 @@ class RaiseOnErrorContractTests(unittest.TestCase):
         """strict_rag_chain 两侧入口必须以 raise_on_error=True 调 Pipeline（接线锁定）。"""
         from Django_xm.apps.knowledge.services import strict_rag_chain as src
 
-        source = open(src.__file__, encoding="utf-8").read()
+        with open(src.__file__, encoding="utf-8") as fh:
+            source = fh.read()
         # 匹配实际调用形态（docstring 中的 raise_on_error=True 提及不计）
         self.assertEqual(
             source.count("vector_store=None, raise_on_error=True"),

@@ -34,7 +34,6 @@ from django.test import SimpleTestCase, TransactionTestCase
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from Django_xm.async_utils import run_async
 from Django_xm.apps.agent_hub.builders._common import _build_skill_metadata_section
 from Django_xm.apps.tools.skills.loader import SkillLoader
 from Django_xm.apps.tools.skills.provider import SkillProvider
@@ -50,6 +49,7 @@ from Django_xm.apps.tools.skills.tool import (
     create_skill_disclosure_tools,
     wrap_skill_instructions,
 )
+from Django_xm.async_utils import run_async
 
 # SKILL.md body 特征词：若出现在 system prompt 注入段即视为全量注入回归
 BODY_MARKER_V1 = "SECRET_BODY_MARKER_V1_XYZ"

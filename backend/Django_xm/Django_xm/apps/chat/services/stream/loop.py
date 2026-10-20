@@ -21,9 +21,9 @@ from typing import Any
 
 from langchain_core.messages import SystemMessage
 
-from Django_xm.apps.approvals.services.approval_batch import assert_non_empty_decision
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 from Django_xm.apps.ai_engine.services.usage_tracker import create_session_token_budget_guard
+from Django_xm.apps.approvals.services.approval_batch import assert_non_empty_decision
 from Django_xm.apps.chat.services.stream_helpers import (
     extract_interrupt_ids,
     process_stream_chunk,

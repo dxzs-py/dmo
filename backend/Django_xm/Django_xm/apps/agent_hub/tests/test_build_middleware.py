@@ -100,9 +100,8 @@ class SafetyMiddlewareFailClosedTests(unittest.TestCase):
         with mock.patch(
             "Django_xm.apps.agent_hub.builders.middleware_utils.ensure_approval_middleware",
             side_effect=RuntimeError("模拟 approval 注入失败"),
-        ):
-            with self.assertRaises(RuntimeError):
-                build_middleware(config)
+        ), self.assertRaises(RuntimeError):
+            build_middleware(config)
 
     def test_guardrails_capability_failure_raises(self):
         """guardrails 能力（安全类）构建失败 → 经 registry 向上抛。"""
@@ -110,9 +109,8 @@ class SafetyMiddlewareFailClosedTests(unittest.TestCase):
         with mock.patch(
             "Django_xm.apps.ai_engine.guardrails.build_middleware_stack",
             side_effect=RuntimeError("模拟 guardrails 构建失败"),
-        ):
-            with self.assertRaises(RuntimeError):
-                build_middleware(config)
+        ), self.assertRaises(RuntimeError):
+            build_middleware(config)
 
     def test_safe_rag_guardrails_stack_failure_raises(self):
         """SAFE_RAG 专属 guardrails 栈构建失败 → fail-closed 抛异常。"""
@@ -120,9 +118,8 @@ class SafetyMiddlewareFailClosedTests(unittest.TestCase):
         with mock.patch(
             "Django_xm.apps.ai_engine.guardrails.create_standard_guardrails",
             side_effect=RuntimeError("模拟 SAFE_RAG guardrails 构建失败"),
-        ):
-            with self.assertRaises(RuntimeError):
-                build_middleware(config)
+        ), self.assertRaises(RuntimeError):
+            build_middleware(config)
 
     def test_context_failure_still_degrades_non_safety(self):
         """对照：非安全类（context）失败维持降级，安全类（approval）正常注入。"""

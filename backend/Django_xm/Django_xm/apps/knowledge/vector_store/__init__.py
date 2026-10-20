@@ -114,11 +114,11 @@ __all__ = [
     "InMemoryBackend",
     "MilvusBackend",
     "PGVectorBackend",
-    # 公共工具
-    "dispose_vector_stores",
     # 新抽象层
     "VectorStoreBackend",
     "VectorStoreRegistry",
+    # 公共工具
+    "dispose_vector_stores",
     # PGVector 运行时（预热/缓存重置）
     "reset_pgvector_cache",
     "search_vector_store",

@@ -687,7 +687,7 @@ async def astream_strict_rag(
                     try:
                         retrieval_query = await asyncio.wait_for(asyncio.shield(rewrite_task), timeout=15.0)
                         break
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         yield {"type": "heartbeat", "message": "正在改写查询..."}
             finally:
                 if not rewrite_task.done():
@@ -705,7 +705,7 @@ async def astream_strict_rag(
                 try:
                     docs, degraded = await asyncio.wait_for(asyncio.shield(retrieve_task), timeout=15.0)
                     break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield {"type": "heartbeat", "message": "正在检索文档..."}
         finally:
             if not retrieve_task.done():

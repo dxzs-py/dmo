@@ -77,7 +77,7 @@ class BaseAgentBuilder:
                 logger.warning(f"子代理中间件注入失败(非致命): {e}")
 
         # 始终构建默认 system_prompt，再追加自定义内容（如研究上下文）
-        system_prompt = await self._build_system_prompt(config, tools=tools)
+        system_prompt = await self._build_system_prompt(config, tools=tools, middleware_stack=middleware_stack)
         if config.system_prompt:
             system_prompt = f"{system_prompt}\n\n---\n\n{config.system_prompt}"
 
@@ -103,16 +103,37 @@ class BaseAgentBuilder:
         )
         return graph
 
-    async def _build_system_prompt(self, config, tools=None) -> str:
+    async def _build_system_prompt(self, config, tools=None, middleware_stack=None) -> str:
+        """构建静态 system_prompt，并把易变分区装配到尾部注入通道。
+
+        P0-1 前缀缓存裁决：build_dynamic_context_prompt 返回
+        (static_prompt, volatile_text)——static_prompt 逐字节稳定进 system_prompt，
+        volatile_text（时间戳/文档上下文）经 attach_volatile_injection 装配
+        （栈中已有 MemoryInjectionMiddleware 时合并去重，否则新建），不在
+        system_prompt 保留任何易变内容。
+
+        Args:
+            config: AgentConfig 实例
+            tools: 工具列表（决定工具说明与文档上下文分区）
+            middleware_stack: 已构建的中间件栈（volatile 注入装配目标，可 None）
+
+        Returns:
+            静态 system_prompt 字符串
+        """
         prompt_mode = getattr(config, "prompt_mode", "default")
 
         # 动态上下文链路已提取到 _common.build_dynamic_context_prompt（与 deep_builder 共享），
         # 失败返回 None 时走下方静态回退（与原内联实现行为一致）
-        from Django_xm.apps.agent_hub.builders._common import build_dynamic_context_prompt
+        from Django_xm.apps.agent_hub.builders._common import (
+            attach_volatile_injection,
+            build_dynamic_context_prompt,
+        )
 
-        prompt = await build_dynamic_context_prompt(config, prompt_mode=prompt_mode, tools=tools)
-        if prompt is not None:
-            return prompt
+        result = await build_dynamic_context_prompt(config, prompt_mode=prompt_mode, tools=tools)
+        if result is not None:
+            static_prompt, volatile_text = result
+            attach_volatile_injection(middleware_stack, volatile_text)
+            return static_prompt
 
         try:
             from Django_xm.apps.ai_engine.prompts.system_prompts import get_system_prompt

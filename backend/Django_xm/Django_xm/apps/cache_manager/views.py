@@ -8,7 +8,6 @@ from Django_xm.apps.cache_manager.services.cache_service import (
     CACHE_PREFIX_LABELS,
     CacheHealthChecker,
     CacheService,
-    ModelResponseCacheService,
     RedisDirectClient,
     get_redis_client,
     get_redis_info,
@@ -124,7 +123,7 @@ class CacheClearView(APIView):
 
     权限按 scope 分派：
     - query：仅清除当前用户自己的 rag_query 缓存，普通用户可用；
-    - all / model / pattern：影响全局缓存，仅管理员可用。
+    - all / pattern：影响全局缓存，仅管理员可用。
     """
 
     def get_permissions(self):
@@ -148,12 +147,6 @@ class CacheClearView(APIView):
             # generate_query_cache_key 生成的键形如 rag_query:{index_name}:{hash}:k{k}，
             # 故本模式能匹配当前用户全部 RAG 查询缓存；索引命名规则变更时需同步此处
             cleared += CacheService.delete_pattern(f"rag_query:user_{user.id}_*")
-        elif scope == "model":
-            # 与唯一写入方 chat_service 同源：缓存键为 model_response:{get_model_string()}:...
-            # （修复前用 get_openai_config()["model"]，纯模型名无 provider 前缀，与实际键错配，清理永不命中）
-            from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
-
-            cleared += ModelResponseCacheService.invalidate_model_cache(get_model_string())
         elif scope == "all":
             client = get_redis_client()
             if client:
@@ -169,7 +162,7 @@ class CacheClearView(APIView):
             CacheService.reset_stats()
         else:
             raise BaseAppError(
-                "请指定有效的 scope (all/query/model/pattern)",
+                "请指定有效的 scope (all/query/pattern)",
                 business_code=ErrorCode.VALIDATION_FAILED,
             )
 

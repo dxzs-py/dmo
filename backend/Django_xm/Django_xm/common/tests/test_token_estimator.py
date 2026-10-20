@@ -99,7 +99,7 @@ class GetModelLimitTests(SimpleTestCase):
         TokenEstimator.set_custom_limits_loader(lambda: {"x": 1})
         self.assertEqual(TokenEstimator.get_model_limit("x-model"), 1)
         TokenEstimator._custom_limits_loaded_at = 0.0
-        TokenEstimator._custom_limits_loader = lambda: {}
+        TokenEstimator._custom_limits_loader = dict
         self.assertEqual(TokenEstimator.get_model_limit("gpt-4o"), 128000)
 
 

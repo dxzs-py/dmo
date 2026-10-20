@@ -23,7 +23,8 @@
 
 层次契约（统一降级链路）：
 - 本模块的 LazyFallbackChatModel 是全系统唯一的模型级韧性实现：
-  SDK 层重试（AI_LLM_MAX_RETRIES）→ 永久错误熔断（内联 Circuit Breaker 状态机）
+  SDK 层重试（AI_LLM_MAX_RETRIES）→ 分级熔断（内联 Circuit Breaker 状态机：
+  永久错误立即熔断，瞬时错误连续计数达标才熔断）
   → 候选模型切换。
 - AgentExecutor（agent_hub.services.agent_executor）仅负责 agent 级语义
   （执行循环重试、工具降级、无工具纯对话回退），不持有模型切换逻辑、不创建裸模型；
@@ -41,10 +42,12 @@ from contextlib import contextmanager
 from typing import Any
 
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_core.runnables import RunnableConfig
+from pydantic import ValidationError
 
 from Django_xm.apps.core.logging_utils import get_logger
 
@@ -161,11 +164,16 @@ class LazyFallbackChatModel(BaseChatModel):
     - 内置 fallback 状态追踪，通过 fallback_detected / actual_provider / actual_model 属性
       替代 FallbackDetectionCallback 的回调检测机制
 
-    Circuit Breaker 状态机：
-    - closed: 正常调用主模型
-    - open: 主模型连续失败 ≥ circuit_breaker_threshold 次（settings 配置，
-      默认 2），冷却期间直接使用 fallback
-    - half_open: 冷却期满后试探主模型，成功则回 closed，失败则回 open
+    Circuit Breaker 状态机（分级策略，常量集中于 ai_engine config，带理由说明）：
+    - closed: 正常调用主模型。永久错误（认证/权限/余额类，经 _is_permanent_error
+      单一分类）立即转 open；瞬时错误（429/超时/连接失败等可恢复错误）连续
+      ≥ circuit_breaker_transient_threshold 次才转 open，任一次成功清零计数
+      （防止单次 429/抖动把长任务静默打入弱模型降级）
+    - open: 冷却期（circuit_breaker_cooldown 秒）内直接使用 fallback，
+      冷却期满转 half_open
+    - half_open: 探测窗口最多 circuit_breaker_half_open_max_probes 次，连续
+      circuit_breaker_half_open_success_threshold 次成功才转 closed（防限流
+      抖动期侥幸恢复）；任一探测失败立即转 open 并重置冷却
 
     Args:
         primary: 主模型实例
@@ -182,9 +190,11 @@ class LazyFallbackChatModel(BaseChatModel):
     temperature: float | None = None
     max_tokens: int | None = None
     streaming: bool | None = None
-    # 熔断阈值/冷却（2.6）：默认值取自 ai_engine settings（原硬编码字面量
-    # 2 次 / 30.0s，行为不变，可运维调整）；实例化时仍可显式传参覆盖。
-    circuit_breaker_threshold: int = settings.llm_circuit_failure_threshold
+    # 熔断分级策略参数（2.6 → 熔断分级）：默认值取自 ai_engine settings
+    #（理由见 config.py 熔断分级配置块注释）；实例化时仍可显式传参覆盖。
+    circuit_breaker_transient_threshold: int = settings.llm_circuit_transient_threshold
+    circuit_breaker_half_open_max_probes: int = settings.llm_circuit_half_open_max_probes
+    circuit_breaker_half_open_success_threshold: int = settings.llm_circuit_half_open_success_threshold
     circuit_breaker_cooldown: float = settings.llm_circuit_breaker_cooldown
 
     class Config:
@@ -205,6 +215,11 @@ class LazyFallbackChatModel(BaseChatModel):
         self._circuit_state: str = "closed"  # closed / open / half_open
         self._circuit_opened_at: float = 0.0
         self._consecutive_failures: int = 0
+        # half_open 探测窗口：probes 为已用探测次数（上限 half_open_max_probes，
+        # 耗尽未恢复则重新熔断）；successes 为窗口内连续成功次数（达
+        # success_threshold 转 closed），进入/离开 half_open 时双双复位
+        self._half_open_probes: int = 0
+        self._half_open_successes: int = 0
 
     @property
     def _llm_type(self) -> str:
@@ -282,47 +297,106 @@ class LazyFallbackChatModel(BaseChatModel):
             return any(kw in error_str for kw in ("400", "invalid_request"))
 
     def _should_try_primary(self) -> bool:
-        """判断是否应该尝试主模型（Circuit Breaker 逻辑）"""
+        """判断是否应该尝试主模型（Circuit Breaker 门控）"""
         if self._circuit_state == "closed":
             return True
         if self._circuit_state == "open":
             if time.monotonic() - self._circuit_opened_at >= self.circuit_breaker_cooldown:
                 self._circuit_state = "half_open"
-                logger.info("Circuit Breaker: OPEN -> HALF_OPEN，试探主模型")
+                self._half_open_probes = 0
+                self._half_open_successes = 0
+                logger.info("Circuit Breaker: OPEN -> HALF_OPEN（冷却期满，开始探测主模型）")
                 return True
             return False
-        return self._circuit_state == "half_open"
+        # half_open：探测次数耗尽仍未达成连续成功 → 重新熔断（重置冷却）
+        if self._half_open_probes >= self.circuit_breaker_half_open_max_probes:
+            logger.info(
+                f"Circuit Breaker: HALF_OPEN -> OPEN（探测次数耗尽 "
+                f"{self._half_open_probes}/{self.circuit_breaker_half_open_max_probes}，"
+                f"重置冷却 {self.circuit_breaker_cooldown}s）"
+            )
+            self._circuit_state = "open"
+            self._circuit_opened_at = time.monotonic()
+            self._half_open_probes = 0
+            self._half_open_successes = 0
+            return False
+        return True
 
     def _on_primary_success(self):
-        """主模型调用成功"""
-        if self._circuit_state != "closed":
+        """主模型调用成功（closed 清零瞬时计数；half_open 连续成功达标才恢复）"""
+        if self._circuit_state == "half_open":
+            self._half_open_probes += 1
+            self._half_open_successes += 1
+            if self._half_open_successes >= self.circuit_breaker_half_open_success_threshold:
+                logger.info(
+                    f"Circuit Breaker: HALF_OPEN -> CLOSED（连续探测成功 "
+                    f"{self._half_open_successes}/{self.circuit_breaker_half_open_success_threshold}，"
+                    f"共探测 {self._half_open_probes} 次），主模型恢复"
+                )
+                self._circuit_state = "closed"
+                self._half_open_probes = 0
+                self._half_open_successes = 0
+            else:
+                logger.info(
+                    f"Circuit Breaker: HALF_OPEN 探测成功（连续 "
+                    f"{self._half_open_successes}/{self.circuit_breaker_half_open_success_threshold}，"
+                    f"已探测 {self._half_open_probes}/{self.circuit_breaker_half_open_max_probes} 次），"
+                    f"继续探测"
+                )
+        elif self._circuit_state != "closed":
+            # open 态主模型不应被调用，此分支为防御性复位
             logger.info("Circuit Breaker: -> CLOSED，主模型恢复")
-        self._circuit_state = "closed"
+            self._circuit_state = "closed"
         self._consecutive_failures = 0
         # E1c：主模型恢复正常后同步复位降级标记。长期存活的包装实例（消费方
         # 持有 LazyFallbackChatModel 跨多次调用，如 chat 主链内的 agent）此前
         # 首次降级后 fallback_detected 永久为 True，get_fallback_info() 会
-        # 持续报告过期的降级状态。
-        if self._fallback_detected:
+        # 持续报告过期的降级状态。half_open 探测未达标（尚未确认恢复）时
+        # 不复位，避免恢复窗口内报告自相矛盾的降级状态。
+        if self._fallback_detected and self._circuit_state == "closed":
             logger.info("LazyFallback: 主模型已恢复，复位 fallback_detected")
             self._fallback_detected = False
             self._actual_provider = None
             self._actual_model = None
 
     def _on_primary_failure(self, error: Exception):
-        """主模型调用失败"""
+        """主模型调用失败（分级计数：永久错误立即熔断，瞬时错误连续达标才熔断）"""
+        is_permanent = self._is_permanent_error(error)
+        error_class = "permanent" if is_permanent else "transient"
+        if self._circuit_state == "half_open":
+            # half_open 探测失败：立即重新熔断并重置冷却（探测窗口同步作废）
+            self._half_open_probes += 1
+            logger.info(
+                f"Circuit Breaker: HALF_OPEN -> OPEN（探测失败，错误分类={error_class}，"
+                f"已探测 {self._half_open_probes} 次，重置冷却 {self.circuit_breaker_cooldown}s）"
+            )
+            self._circuit_state = "open"
+            self._circuit_opened_at = time.monotonic()
+            self._half_open_probes = 0
+            self._half_open_successes = 0
+            return
         self._consecutive_failures += 1
-        if self._is_permanent_error(error) or self._consecutive_failures >= self.circuit_breaker_threshold:
+        if is_permanent:
             self._circuit_state = "open"
             self._circuit_opened_at = time.monotonic()
             logger.info(
-                f"Circuit Breaker: -> OPEN（连续失败 {self._consecutive_failures} 次，"
-                f"冷却 {self.circuit_breaker_cooldown}s）"
+                f"Circuit Breaker: -> OPEN（永久错误立即熔断，错误分类={error_class}，"
+                f"连续失败 {self._consecutive_failures} 次，冷却 {self.circuit_breaker_cooldown}s）"
             )
-        elif self._circuit_state == "half_open":
+        elif self._consecutive_failures >= self.circuit_breaker_transient_threshold:
             self._circuit_state = "open"
             self._circuit_opened_at = time.monotonic()
-            logger.info("Circuit Breaker: HALF_OPEN -> OPEN，主模型仍不可用")
+            logger.info(
+                f"Circuit Breaker: -> OPEN（瞬时错误连续失败 "
+                f"{self._consecutive_failures}/{self.circuit_breaker_transient_threshold} 次，"
+                f"错误分类={error_class}，冷却 {self.circuit_breaker_cooldown}s）"
+            )
+        else:
+            logger.info(
+                f"Circuit Breaker: 保持 CLOSED（瞬时错误连续失败 "
+                f"{self._consecutive_failures}/{self.circuit_breaker_transient_threshold}，"
+                f"错误分类={error_class}）"
+            )
 
     def _build_fallback_model(self, provider_id: str, model_name: str) -> BaseChatModel | None:
         """按需**新建** fallback 模型实例（经注入的 factory，即时构建）。
@@ -384,7 +458,9 @@ class LazyFallbackChatModel(BaseChatModel):
                     call_kwargs["tool_choice"] = raw_tool_choice
         return call_kwargs
 
-    def _call_with_fallback(self, call_primary: Callable[[], Any], call_candidate: Callable[[BaseChatModel], Any], op_name: str) -> Any:
+    def _call_with_fallback(
+        self, call_primary: Callable[[], Any], call_candidate: Callable[[BaseChatModel], Any], op_name: str
+    ) -> Any:
         """同步单值结果型降级骨架（invoke / _generate 共用）。
 
         Args:
@@ -429,7 +505,9 @@ class LazyFallbackChatModel(BaseChatModel):
                         continue
             raise
 
-    async def _acall_with_fallback(self, call_primary: Callable[[], Any], call_candidate: Callable[[BaseChatModel], Any], op_name: str) -> Any:
+    async def _acall_with_fallback(
+        self, call_primary: Callable[[], Any], call_candidate: Callable[[BaseChatModel], Any], op_name: str
+    ) -> Any:
         """异步单值结果型降级骨架（ainvoke / _agenerate 共用，结构同同步版）。"""
         if not self._should_try_primary():
             for pid, mname in self.fallback_candidates:
@@ -865,6 +943,74 @@ class StructuredModelWithFallback:
             return bool(result.strip())
         return True
 
+    _SELFHEAL_RETRYABLE_ERRORS = (ValidationError, OutputParserException)
+
+    @classmethod
+    def _build_selfheal_input(cls, input: Any, error: Exception) -> Any | None:
+        """构造自愈重试输入：在原输入基础上追加校验错误纠错提示
+
+        仅对可安全追加消息的输入类型生效（消息列表 / 纯字符串）；
+        无法识别的输入类型返回 None，跳过自愈直接抛出原异常。
+        """
+        hint = (
+            f"你上一次的输出未通过 schema 校验，错误：{str(error)[:500]}\n"
+            "请重新生成完整输出：严格包含 schema 定义的每一个必填字段，"
+            "不得省略任何字段（如解析说明类字段），并保持整体结构符合 schema。"
+        )
+        if isinstance(input, str):
+            return f"{input}\n\n{hint}"
+        if isinstance(input, list) and input and all(isinstance(m, (BaseMessage, dict)) for m in input):
+            healed = list(input)
+            healed.append({"role": "user", "content": hint})
+            return healed
+        return None
+
+    def _invoke_candidate(
+        self,
+        structured: Any,
+        input: Any,
+        config: Any,
+        provider: str,
+        model_name: str,
+        **kwargs: Any,
+    ) -> Any:
+        """调用单个结构化候选：校验类失败（字段缺失/解析错误）时注入纠错提示自愈重试 1 次
+
+        连接/认证类异常不做自愈，直接上抛由外层切换下一候选；
+        自愈重试仍失败同样上抛。
+        """
+        try:
+            return structured.invoke(input, config=config, **kwargs)
+        except self._SELFHEAL_RETRYABLE_ERRORS as e:
+            healed_input = self._build_selfheal_input(input, e)
+            if healed_input is None:
+                raise
+            logger.warning(
+                f"结构化输出校验失败 {provider}/{model_name}，注入纠错提示自愈重试 1 次: {e}"
+            )
+            return structured.invoke(healed_input, config=config, **kwargs)
+
+    async def _ainvoke_candidate(
+        self,
+        structured: Any,
+        input: Any,
+        config: Any,
+        provider: str,
+        model_name: str,
+        **kwargs: Any,
+    ) -> Any:
+        """_invoke_candidate 的异步版本"""
+        try:
+            return await structured.ainvoke(input, config=config, **kwargs)
+        except self._SELFHEAL_RETRYABLE_ERRORS as e:
+            healed_input = self._build_selfheal_input(input, e)
+            if healed_input is None:
+                raise
+            logger.warning(
+                f"结构化输出校验失败 {provider}/{model_name}，注入纠错提示自愈重试 1 次: {e}"
+            )
+            return await structured.ainvoke(healed_input, config=config, **kwargs)
+
     def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
         """调用结构化模型，失败时自动切换（含懒加载候选）
 
@@ -877,7 +1023,7 @@ class StructuredModelWithFallback:
         for provider, model_name, structured in self._models:
             try:
                 with suppress_pydantic_serialization_warning():
-                    result = structured.invoke(input, config=config, **kwargs)
+                    result = self._invoke_candidate(structured, input, config, provider, model_name, **kwargs)
                 if not self._is_valid_result(result):
                     error_msg = f"{provider}/{model_name}: 返回空结果(None/空对象)"
                     errors.append(error_msg)
@@ -897,7 +1043,7 @@ class StructuredModelWithFallback:
                 provider, model_name, structured = lazy_result
                 try:
                     with suppress_pydantic_serialization_warning():
-                        result = structured.invoke(input, config=config, **kwargs)
+                        result = self._invoke_candidate(structured, input, config, provider, model_name, **kwargs)
                     if not self._is_valid_result(result):
                         errors.append(f"{provider}/{model_name}: 返回空结果(None/空对象)")
                         logger.warning(f"懒加载结构化模型返回空结果 {provider}/{model_name}，尝试下一个")
@@ -926,7 +1072,7 @@ class StructuredModelWithFallback:
         for provider, model_name, structured in self._models:
             try:
                 with suppress_pydantic_serialization_warning():
-                    result = await structured.ainvoke(input, config=config, **kwargs)
+                    result = await self._ainvoke_candidate(structured, input, config, provider, model_name, **kwargs)
                 if not self._is_valid_result(result):
                     error_msg = f"{provider}/{model_name}: 返回空结果(None/空对象)"
                     errors.append(error_msg)
@@ -946,7 +1092,9 @@ class StructuredModelWithFallback:
                 provider, model_name, structured = lazy_result
                 try:
                     with suppress_pydantic_serialization_warning():
-                        result = await structured.ainvoke(input, config=config, **kwargs)
+                        result = await self._ainvoke_candidate(
+                            structured, input, config, provider, model_name, **kwargs
+                        )
                     if not self._is_valid_result(result):
                         errors.append(f"{provider}/{model_name}: 返回空结果(None/空对象)")
                         logger.warning(f"懒加载结构化模型异步返回空结果 {provider}/{model_name}，尝试下一个")

@@ -43,6 +43,18 @@ _CRITICAL_KEYWORDS = re.compile(r"(?:必须|禁止|不要|务必|严禁|绝不�
 
 
 class AttentionGuide:
+    """注意力引导器实现。
+
+    作用域说明（P0-1 prompt caching 裁决）：本类输出（highlight_critical /
+    reorder_sections）不参与 chat checkpointer 主链路的记忆注入文本构建
+    （ContextManager.get_injection_context 直接拼接 KG/跨会话段，不经本类），
+    注入位置由 MemoryInjectionMiddleware 管理；reorder_sections 的
+    structured_prompt 产物在 chat 侧仅被丢弃（apply_context_engineering 与
+    /compact 均只消费 metadata），不进任何模型 prompt。唯一实际产出链路是
+    build_prompt_context（含易变 KG/文档分区，消费方为 deep agent 动态
+    system_prompt，见 agent_hub/builders/_common.py）。
+    """
+
     def __init__(self) -> None:
         pass
 

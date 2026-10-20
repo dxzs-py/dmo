@@ -15,6 +15,7 @@
 
 import os
 import socket
+import sys
 import threading
 from unittest.mock import patch
 
@@ -26,12 +27,18 @@ django.setup()
 from django.test import SimpleTestCase
 
 # 注意：Django_xm.apps.tools.langchain 包内有同名单例属性 web_fetch（工具实例），
-# `from ...langchain import web_fetch` 拿到的是工具而非模块——直连模块路径导入
+# `from ...langchain import web_fetch` 拿到的是工具而非模块——直连模块路径导入。
+# _pinned_getaddrinfo 经模块对象属性访问（from-import 会拷贝 import 时刻的旧值，
+# _install_pinned_resolver 重装后模块级变量已指向新包装）；包属性遮蔽子模块名
+# （import as 亦被遮蔽），必须经 sys.modules 取子模块对象。
 from Django_xm.apps.tools.langchain.web_fetch import (
     _clear_pinned_resolution,
     _fetch_url,
+    _install_pinned_resolver,
     _pinned_resolver_state,
 )
+
+_web_fetch_module = sys.modules["Django_xm.apps.tools.langchain.web_fetch"]
 
 GUARDS_GETADDRINFO = "Django_xm.common.net.guards.socket.getaddrinfo"
 WEB_FETCH_GET = "Django_xm.apps.tools.langchain.web_fetch.requests.get"
@@ -188,3 +195,47 @@ class TestWebFetchDnsPinning(SimpleTestCase):
         t.start()
         t.join()
         assert "example.com" not in observed["other_thread"]
+
+    def test_resolver_reinstalls_after_external_override(self):
+        """幂等 = 在位判定（产品语义回归）：包装被外部（如 mock.patch）覆盖后，
+        再次安装必须重装——原实现进程级一次性标记（installed 永真）导致包装
+        被覆盖后永不恢复，建连解析脱离钉扎表（TOCTOU 防护整体失效）。"""
+        original_getaddrinfo = socket.getaddrinfo
+        try:
+            # 首次安装：包装在位
+            _install_pinned_resolver()
+            assert _web_fetch_module._pinned_getaddrinfo is not None
+            assert socket.getaddrinfo is _web_fetch_module._pinned_getaddrinfo
+
+            # 幂等：在位时重复安装不替换（同一对象）
+            _install_pinned_resolver()
+            assert socket.getaddrinfo is _web_fetch_module._pinned_getaddrinfo
+
+            # 模拟外部覆盖（mock.patch / 其他库临时替换）
+            def _external_override(host, *args, **kwargs):
+                raise AssertionError("外部覆盖实现不应被钉扎路径调用")
+
+            socket.getaddrinfo = _external_override
+
+            # 再次安装：不在位 → 重装（原实现在此处因 installed 永真而跳过）
+            _install_pinned_resolver()
+            assert socket.getaddrinfo is _web_fetch_module._pinned_getaddrinfo, (
+                "包装被外部覆盖后必须重装（幂等=在位判定）"
+            )
+        finally:
+            # 还原进入时的 socket.getaddrinfo（不污染其他测试）
+            socket.getaddrinfo = original_getaddrinfo
+
+    def test_pinned_wrapper_passthrough_miss(self):
+        """包装未命中钉扎表时透传底层解析（_socket.getaddrinfo），不抛异常。"""
+        original_getaddrinfo = socket.getaddrinfo
+        try:
+            _install_pinned_resolver()
+            _clear_pinned_resolution()
+            # 未注册主机：透传底层实现（IP 字面量不触 DNS，确定性返回）
+            entries = socket.getaddrinfo("127.0.0.1", 0)
+            assert entries, "未命中钉扎表应透传底层解析"
+            assert any(e[4][0] == "127.0.0.1" for e in entries)
+        finally:
+            socket.getaddrinfo = original_getaddrinfo
+            _clear_pinned_resolution()

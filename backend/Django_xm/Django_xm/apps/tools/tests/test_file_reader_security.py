@@ -48,9 +48,8 @@ class TestReadFileContentBoundary(TestCase):
         with tempfile.TemporaryDirectory() as outside, tempfile.TemporaryDirectory() as data_dir:
             secret = Path(outside) / "secret.txt"
             secret.write_text("top secret", encoding="utf-8")
-            with _mock_data_dir(data_dir):
-                with self.assertRaises(ValueError) as ctx:
-                    read_file_content(str(secret))
+            with _mock_data_dir(data_dir), self.assertRaises(ValueError) as ctx:
+                read_file_content(str(secret))
             self.assertIn("拒绝访问", str(ctx.exception))
             self.assertNotIn("top secret", str(ctx.exception))
 
@@ -58,15 +57,13 @@ class TestReadFileContentBoundary(TestCase):
         """DATA_DIR 内 .env / settings.py / *.pem 命中敏感清单 → 拒绝。"""
         cases = [".env", "settings.py", "server.pem", "id_rsa"]
         for name in cases:
-            with self.subTest(name=name):
-                with tempfile.TemporaryDirectory() as data_dir:
-                    target = Path(data_dir) / "media" / name
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text("SECRET_TOKEN=xxx", encoding="utf-8")
-                    with _mock_data_dir(data_dir):
-                        with self.assertRaises(ValueError) as ctx:
-                            read_file_content(str(target))
-                    self.assertIn("敏感文件保护清单", str(ctx.exception))
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as data_dir:
+                target = Path(data_dir) / "media" / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("SECRET_TOKEN=xxx", encoding="utf-8")
+                with _mock_data_dir(data_dir), self.assertRaises(ValueError) as ctx:
+                    read_file_content(str(target))
+                self.assertIn("敏感文件保护清单", str(ctx.exception))
 
     def test_inside_data_dir_normal_read(self):
         """DATA_DIR 内普通文本文件 → 正常读取（附件/深研产物链路不受影响）。"""
@@ -130,8 +127,8 @@ class TestAttachmentReaderToolOwnerCheck(TestCase):
         self.tool = AttachmentReaderTool()
         self.user_a = User.objects.create_user(username="tool_user_a", password="x")
         self.user_b = User.objects.create_user(username="tool_user_b", password="x")
-        from Django_xm.apps.chat.models import ChatSession
         from Django_xm.apps.attachments.models import ChatAttachment
+        from Django_xm.apps.chat.models import ChatSession
 
         self.session_a = ChatSession.objects.create(session_id="tool-sess-a", user=self.user_a)
         self.attachment_a = ChatAttachment.objects.create(

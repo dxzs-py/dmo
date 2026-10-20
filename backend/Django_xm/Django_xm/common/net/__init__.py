@@ -5,16 +5,16 @@
 """
 
 from Django_xm.common.net.guards import (
-    BlockedAddressError,
     SSRF_EXEMPT_SETTING,
+    BlockedAddressError,
     assert_url_not_private,
     is_blocked_ip,
     is_ssrf_exempt,
 )
 
 __all__ = [
-    "BlockedAddressError",
     "SSRF_EXEMPT_SETTING",
+    "BlockedAddressError",
     "assert_url_not_private",
     "is_blocked_ip",
     "is_ssrf_exempt",

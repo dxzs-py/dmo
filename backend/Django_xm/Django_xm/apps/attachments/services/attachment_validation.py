@@ -16,8 +16,9 @@ from django.core.paginator import Paginator
 from django.db import models
 from django.utils import timezone
 
-from ..models import AttachmentCleanupLog, AttachmentStatus, ChatAttachment, StorageAlert
 from Django_xm.common.pagination import ProjectPagination
+
+from ..models import AttachmentCleanupLog, AttachmentStatus, ChatAttachment, StorageAlert
 
 logger = logging.getLogger(__name__)
 

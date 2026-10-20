@@ -36,7 +36,6 @@ from Django_xm.apps.context_manager.services.compression import (
 )
 from Django_xm.apps.context_manager.services.context_builder import (
     BuildMode,
-    ContextBuilder,
     create_context_builder,
 )
 from Django_xm.apps.context_manager.services.context_pruner import ContextPruner
@@ -128,9 +127,9 @@ class ContextManager:
             except ValueError as exc:
                 # 存量配置含已删除策略（sliding_window）等非法值：明确报错并回退
                 # 默认策略，不留静默兼容（spec fix-review-round2 4.2）
-                logger.error(
+                logger.exception(
                     "压缩策略配置无效，已回退默认策略 'hybrid'（请修正 compression_strategy 配置）: %s",
-                    exc,
+                    exc,  # noqa: TRY401 -- 异常摘要保留在文案中
                 )
                 strategy = CompressionStrategy.HYBRID
             comp_config = CompressionConfig(
@@ -177,11 +176,52 @@ class ContextManager:
             marked.append(msg)
         return marked
 
+    def get_document_context(self) -> str:
+        """文档上下文（用户已上传文档记忆摘要）：注入通道易变分区来源。
+
+        P0-1 前缀缓存裁决：文档上下文属于逐请求可变的易变内容，只允许经
+        尾部注入通道（builder 链 volatile_text / chat_service 注入文本）到达
+        模型，不得进 system_prompt。原实现内嵌于 build_prompt_context 的
+        <memory> 分区（被 builder 链拼进动态 system_prompt，破坏前缀缓存），
+        现提取为独立来源方法供注入文本组装方调用。
+
+        Returns:
+            文档上下文文本（含参考提示尾注）；无用户/提供者未注册/获取失败
+            /无内容时返回空串（调用方按无文档处理，不向外抛异常）。
+        """
+        if not self.user_id:
+            return ""
+        try:
+            # 环 1 消边：原函数内 import attachments.document_memory_service
+            # （其内部依赖 ai_engine.llm_factory，构成传递违规），改经
+            # runtime_providers 注入（attachments apps.ready() 注册）。
+            document_context_provider = get_document_context_provider()
+            if document_context_provider is None:
+                logger.debug("文档上下文提供者未注册，跳过文档记忆注入")
+                return ""
+            doc_context = document_context_provider(self.user_id, self._store)
+            if not doc_context:
+                return ""
+            return f"{doc_context}\n请在回答时优先参考用户已上传的文档内容。"
+        except Exception as e:
+            logger.debug(f"动态注入文档上下文失败（不影响主流程）: {e}")
+            return ""
+
     def get_injection_context(
         self,
         query: str,
         session_id: str | None = None,
     ) -> str:
+        """注入通道文本（KG 实体上下文 + 跨会话记忆摘要）。
+
+        职责边界（P0-1 前缀缓存裁决）：本方法只承载 KG/跨会话两个分区，
+        供注入文本组装方调用（chat_service 主链注入文本、非 checkpointer
+        链路 _build_base_context 上下文工程 system 分区）。文档上下文经
+        :meth:`get_document_context` 独立获取，由组装方决定并入位置。
+
+        Returns:
+            注入文本；无内容返回空串（组装方按无记忆处理）。
+        """
         parts = []
 
         if self._knowledge_graph and self.user_id and self.config.knowledge_graph_enabled:
@@ -206,91 +246,6 @@ class ContextManager:
                 logger.debug(f"跨会话上下文加载失败: {e}")
 
         return "\n\n".join(parts) if parts else ""
-
-    def build_prompt_context(
-        self,
-        mode: str = "default",
-        session_id: str | None = None,
-        include_document_context: bool = True,
-        include_knowledge_graph: bool = True,
-        query: str | None = None,
-        model_name: str | None = None,
-        tools_description: str | None = None,
-    ) -> str:
-        _AGENT_MODES = {"agent"}
-        _FULL_MODES = {"deep-research"}
-
-        if mode in _AGENT_MODES:
-            build_mode = BuildMode.AGENT
-        elif mode in _FULL_MODES:
-            build_mode = BuildMode.FULL
-        else:
-            build_mode = BuildMode.CHAT
-
-        builder = ContextBuilder(mode=build_mode)
-
-        if tools_description:
-            builder.add_tools(tools_description)
-
-        memory_parts: list[str] = []
-
-        if include_document_context and self.user_id:
-            try:
-                # 环 1 消边：原函数内 import attachments.document_memory_service
-                # （其内部依赖 ai_engine.llm_factory，构成传递违规），改经
-                # runtime_providers 注入（attachments apps.ready() 注册）。
-                document_context_provider = get_document_context_provider()
-                if document_context_provider is None:
-                    logger.debug("文档上下文提供者未注册，跳过文档记忆注入")
-                else:
-                    doc_context = document_context_provider(self.user_id, self._store)
-                    if doc_context:
-                        memory_parts.append(f"{doc_context}\n请在回答时优先参考用户已上传的文档内容。")
-                        builder.add_memory(memory_parts[-1])
-            except Exception as e:
-                logger.debug(f"动态注入文档上下文失败（不影响主流程）: {e}")
-
-        if include_knowledge_graph and self.user_id and query:
-            try:
-                kg_context = self.get_injection_context(query, session_id=session_id)
-                if kg_context:
-                    memory_parts.append(kg_context)
-                    builder.add_memory(kg_context)
-            except Exception as e:
-                logger.debug(f"动态注入知识图谱上下文失败（不影响主流程）: {e}")
-
-        result = builder.build()
-        result = self._attention_guide.highlight_critical(result)
-
-        if model_name:
-            try:
-                self._token_budget_manager.allocate(model_name)
-
-                if tools_description:
-                    tools_tokens = TokenEstimator.estimate(tools_description)
-                    check = self._token_budget_manager.record_usage("tools", tools_tokens)
-                    if not check.within_budget:
-                        logger.warning(
-                            "上下文分区 'tools' 超出 Token 预算: "
-                            "used=%d, budget=%d, over_by=%d",
-                            check.used,
-                            check.budget,
-                            check.over_by,
-                        )
-
-                memory_content = "\n".join(memory_parts)
-                if memory_content:
-                    memory_tokens = TokenEstimator.estimate(memory_content)
-                    check = self._token_budget_manager.record_usage("memory", memory_tokens)
-                    if not check.within_budget:
-                        logger.warning(
-                            f"上下文分区 'memory' 超出 Token 预算: "
-                            f"used={check.used}, budget={check.budget}, over_by={check.over_by}"
-                        )
-            except Exception as e:
-                logger.debug(f"Token 预算检查失败（不影响主流程）: {e}")
-
-        return result
 
     def build_structured_context(
         self,
@@ -427,7 +382,8 @@ class ContextManager:
             self._token_budget_manager.record_usage("history", TokenEstimator.estimate(history_text))
 
         if system_content:
-            self._token_budget_manager.record_usage("system", TokenEstimator.estimate(system_content))
+            # system_content = get_injection_context（KG + 跨会话摘要）→ 动态记忆注入段
+            self._token_budget_manager.record_usage("system_dynamic", TokenEstimator.estimate(system_content))
 
         sanitized_query = self._circuit_breaker.sanitize_user_input(query)
         builder.add_query(sanitized_query)
@@ -479,7 +435,8 @@ class ContextManager:
 
         self._token_budget_manager.reset_usage()
         if system_content:
-            self._token_budget_manager.record_usage("system", TokenEstimator.estimate(system_content))
+            # 动态记忆注入段（原 "system" 键，语义见 token_budget.BUDGET_TEMPLATES 注释）
+            self._token_budget_manager.record_usage("system_dynamic", TokenEstimator.estimate(system_content))
         if tools_description and build_mode in (BuildMode.FULL, BuildMode.AGENT):
             self._token_budget_manager.record_usage("tools", TokenEstimator.estimate(tools_description))
         self._token_budget_manager.record_usage("history", TokenEstimator.estimate(history_text))

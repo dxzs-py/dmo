@@ -22,16 +22,16 @@ import django
 
 django.setup()
 
-from Django_xm.apps.context_manager.services.context_pruner import ContextPruner
 from Django_xm.apps.context_manager.services.compression import (
     CompressionConfig,
     CompressionStrategy,
     ContextCompressionEngine,
 )
+from Django_xm.apps.context_manager.services.context_pruner import ContextPruner
 from Django_xm.apps.context_manager.services.knowledge_graph import (
+    _KG_ENTITY_KEY_PREFIX,
     Entity,
     KnowledgeGraphStore,
-    _KG_ENTITY_KEY_PREFIX,
     clear_graph_cache,
 )
 from Django_xm.apps.context_manager.services.manager import ContextManager
@@ -77,7 +77,7 @@ class PruneByRelevanceOrderTests(unittest.TestCase):
             {"role": "user", "content": "普通消息乙", "pinned": True},
             {"role": "user", "content": "faiss 向量检索讨论"},
         ]
-        result, removed = pruner.prune_by_relevance(messages, "python 机器学习", keep_count=3)
+        result, _removed = pruner.prune_by_relevance(messages, "python 机器学习", keep_count=3)
 
         self.assertIn(messages[0], result)  # system 受保护
         self.assertIn(messages[3], result)  # pinned 受保护

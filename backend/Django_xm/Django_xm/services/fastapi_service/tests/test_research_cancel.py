@@ -208,7 +208,7 @@ class TestResearchCancelFinalization(unittest.TestCase):
 
             ex = _make_executor()
             with ExitStack() as stack:
-                abandon, runtime, lifecycle = _patch_cascade(stack, cancel_return=False)
+                abandon, runtime, _lifecycle = _patch_cascade(stack, cancel_return=False)
                 publish = stack.enter_context(
                     mock.patch.object(SessionExecutor, "_publish_status_change", new_callable=mock.AsyncMock)
                 )
@@ -235,7 +235,7 @@ class TestResearchCancelFinalization(unittest.TestCase):
 
             ex = _make_executor()
             with ExitStack() as stack:
-                abandon, runtime, lifecycle = _patch_cascade(stack)
+                abandon, runtime, _lifecycle = _patch_cascade(stack)
                 ex.stop(finalize_cancel=False)
                 await asyncio.sleep(0.02)
 
@@ -256,7 +256,7 @@ class TestResearchCancelFinalization(unittest.TestCase):
 
             ex = _make_executor(session_type="chat")
             with ExitStack() as stack:
-                abandon, runtime, lifecycle = _patch_cascade(stack)
+                abandon, _runtime, _lifecycle = _patch_cascade(stack)
                 cancel = stack.enter_context(
                     mock.patch(f"{_TM_MODULE}.cancel_task_if_active")
                 )
@@ -287,7 +287,7 @@ class TestResearchCancelFinalization(unittest.TestCase):
             ex = _make_executor()
             ex._suspended = True  # 协程已退出（挂起态）
             with ExitStack() as stack:
-                abandon, runtime, lifecycle = _patch_cascade(stack)
+                _abandon, runtime, lifecycle = _patch_cascade(stack)
                 publish = stack.enter_context(
                     mock.patch.object(SessionExecutor, "_publish_status_change", new_callable=mock.AsyncMock)
                 )
@@ -355,8 +355,12 @@ class TestStopSessionFallbackAndGuard(unittest.TestCase):
         """兜底条件终态化退让（任务已终态/不存在）：不广播。"""
         async def _case():
             manager = self._make_manager()
-            with mock.patch(f"{_TM_MODULE}.cancel_task_if_active", return_value=False) as cancel, \
-                 mock.patch("Django_xm.common.realtime_sync.publish_task_status", new_callable=mock.AsyncMock) as publish:
+            with (
+                mock.patch(f"{_TM_MODULE}.cancel_task_if_active", return_value=False) as cancel,
+                mock.patch(
+                    "Django_xm.common.realtime_sync.publish_task_status", new_callable=mock.AsyncMock
+                ) as publish,
+            ):
                 await manager.stop_session("t-done")
             cancel.assert_called_once_with("t-done")
             publish.assert_not_awaited()

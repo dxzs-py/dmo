@@ -22,12 +22,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from django.db import transaction
+from django.db.models import Q
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
-
-from django.db import transaction
-from django.db.models import Q
 
 from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.knowledge.config import settings
@@ -442,7 +441,7 @@ class IndexManager:
                         # 前置流程状态未按机演进，如构建崩溃残留 building）。仍回退直写
                         # 保持本方法尽力而为契约（状态字段为诊断元数据，调用方不做控制流），
                         # 但违规必须可被日志追查
-                        logger.error(
+                        logger.exception(
                             f"IndexMetadata 非法状态转换（回退直写）: index={name}, "
                             f"{record.status} -> {status}，"
                             f"允许的转换见 IndexMetadata.transition_to"
@@ -1051,9 +1050,9 @@ class IndexManager:
             vector_store.delete(stable_ids)
             logger.warning(f"add_documents 元数据失败，已补偿删除本批向量: index={name}, count={len(stable_ids)}")
         except Exception as comp_err:
-            logger.error(
+            logger.exception(
                 f"add_documents 向量补偿删除失败（残留向量需重建索引收敛）: "
-                f"index={name}, count={len(stable_ids)}, error={comp_err}"
+                f"index={name}, count={len(stable_ids)}, error={comp_err}"  # noqa: TRY401 -- 异常摘要保留在文案中
             )
 
     def remove_documents(

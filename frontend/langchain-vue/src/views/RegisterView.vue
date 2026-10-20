@@ -41,7 +41,7 @@
           <el-input
             v-model="formData.password"
             type="password"
-            placeholder="请输入密码（至少6位）"
+            placeholder="请输入密码（至少8位，含大小写字母、数字和特殊字符）"
             size="large"
             show-password
           />
@@ -121,6 +121,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { userAPI } from '@/api/user'
+import { validatePasswordComplexity } from '@/utils/validation'
 import { ElMessage } from 'element-plus'
 
 const router = useRouter()
@@ -153,12 +154,18 @@ const validateUsername = (rule, value, callback) => {
   }
 }
 
+// 密码复杂度规则与后端保持一致，权威定义在 utils/validation.js
 const validatePassword = (rule, value, callback) => {
   if (!value) {
     callback(new Error('请输入密码'))
-  } else if (value.length < 6 || value.length > 128) {
-    callback(new Error('密码长度为6-128个字符'))
+  } else if (value.length > 128) {
+    callback(new Error('密码长度不能超过128个字符'))
   } else {
+    const complexityError = validatePasswordComplexity(value)
+    if (complexityError) {
+      callback(new Error(complexityError))
+      return
+    }
     if (formData.passwordConfirm) {
       formRef.value?.validateField('passwordConfirm')
     }

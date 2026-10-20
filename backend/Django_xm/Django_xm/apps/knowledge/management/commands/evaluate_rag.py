@@ -150,8 +150,8 @@ class Command(BaseCommand):
             raise CommandError(f"评测集不存在: {path}")
         cases: list[dict] = []
         with open(path, encoding="utf-8") as fh:
-            for lineno, line in enumerate(fh, 1):
-                line = line.strip()
+            for lineno, raw_line in enumerate(fh, 1):
+                line = raw_line.strip()
                 if not line or line.startswith("//"):
                     continue
                 try:
@@ -328,7 +328,10 @@ class Command(BaseCommand):
             "",
             f"- 索引：`{kb}`",
             f"- Top-K：{top_k}",
-            f"- 评测集：{results[0]['case_count'] if results else 0} 题（标注口径：章节级 ground truth，按源文件名匹配）",
+            (
+                f"- 评测集：{results[0]['case_count'] if results else 0} 题"
+                f"（标注口径：章节级 ground truth，按源文件名匹配）"
+            ),
         ]
         if corpus_stats:
             lines += [

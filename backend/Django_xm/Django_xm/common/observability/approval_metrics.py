@@ -247,7 +247,7 @@ class ApprovalMetrics:
                 try:
                     client.zremrangebyscore(key, 0, now - HIGH_RISK_WINDOW_SECONDS)
                     count = client.zcard(key)
-                except Exception:
+                except Exception:  # noqa: S112 -- 单 key 失败静默跳过继续聚合（指标尽力而为语义）
                     continue
                 result["active_sessions"] += 1
                 result["total_high_risk_ops"] += count

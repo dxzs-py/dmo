@@ -28,8 +28,7 @@
   原因：多 loop 架构（chat 主链 uvicorn 常驻 loop + 每子代理独立线程独立
   loop）下，async 模型实例的 httpx/openai 异步客户端连接池绑定"首次使用
   时的 loop"，缓存实例跨 loop 复用必报 "Event loop is closed"（2026-10-05
-  实测）。实例构建成本微秒-毫秒级 ≪ LLM 网络调用；LLM 响应级缓存
-  （cache_manager.ModelResponseCacheService）不受影响。
+  实测）。实例构建成本微秒-毫秒级 ≪ LLM 网络调用。
 
 调用图（收敛后）：
   业务 30 处 ──► get_chat_model(model_name, model_provider, ...)

@@ -1,3 +1,4 @@
+import _socket
 import asyncio
 import ipaddress
 import logging
@@ -46,40 +47,59 @@ READ_CHUNK_SIZE = 64 * 1024
 # 线程同步执行，钉扎表生命周期与本次请求同线程同请求，finally 清理；
 # 并发请求各自线程独立，互不串扰。
 _pinned_resolver_state = threading.local()
-_pinned_resolver_installed = False
-_pinned_install_lock = threading.Lock()
-_original_getaddrinfo = None
+# 包装函数的模块级持有引用：幂等判定依据为"包装当前在位"（socket.getaddrinfo
+# is 本包装），而非"曾经安装过"——任何外部代码（测试 mock.patch、其他库）临时
+# 替换 socket.getaddrinfo 后，下次安装会重装（在位判定失败即重装）。
+_pinned_getaddrinfo = None
+
+
+def _build_pinned_getaddrinfo():
+    """构建钉扎解析包装：命中线程级钉扎表时返回预校验的解析结果（端口按调用方
+    请求改写），未命中透传 _socket.getaddrinfo（C 底层权威实现）。
+
+    未命中路径直连 _socket.getaddrinfo（CPython 中 socket.getaddrinfo 即来自
+    _socket），不捕获"安装时刻的 socket.getaddrinfo"——原实现经闭包捕获当前值，
+    安装落在外部 mock.patch 活跃期内时会捕获 mock 作为 original（闭包污染），
+    且 patch 退出后包装丢失、幂等标记永真导致永不重装，钉扎机制整体失效。
+    """
+
+    def _pinned_getaddrinfo(host, port, *args, **kwargs):
+        pinned_map = getattr(_pinned_resolver_state, "map", None) or {}
+        entries = pinned_map.get(host)
+        if not entries:
+            return _socket.getaddrinfo(host, port, *args, **kwargs)
+        if port is None:
+            return list(entries)
+        # 请求方（socket.create_connection）把端口编进 sockaddr；
+        # 钉扎表预解析时端口为占位 0，按调用端口改写（IPv6 含 flowinfo/scope_id 后缀）
+        rewritten = []
+        for family, type_, proto, canonname, raw_sa in entries:
+            sa = raw_sa
+            if isinstance(sa, tuple) and len(sa) >= 2:
+                sa = (sa[0], port, *tuple(sa[2:]))
+            rewritten.append((family, type_, proto, canonname, sa))
+        return rewritten
+
+    return _pinned_getaddrinfo
 
 
 def _install_pinned_resolver() -> None:
-    """安装一次性 socket.getaddrinfo 包装（幂等）：命中线程级钉扎表时返回
-    预校验的解析结果（端口按调用方请求改写），未命中透传原始解析。"""
-    global _pinned_resolver_installed, _original_getaddrinfo
-    if _pinned_resolver_installed:
+    """安装 socket.getaddrinfo 钉扎包装（幂等 = 在位判定，而非一次性标记）。
+
+    原实现缺陷（test_pinned_resolution_used_at_connect_time 失败根因）：
+    幂等标记为进程级一次性 dict（"installed" 永真后不再安装）——前序请求在
+    外部 patch 活跃期内触发首次安装时，包装捕获 mock 作为 original；patch
+    退出后 socket.getaddrinfo 恢复为原生实现，包装被覆盖丢失，但标记永真
+    导致后续所有请求不再重装 → 建连解析不再命中钉扎表，TOCTOU 防护整体
+    失效（产品逻辑问题，非测试问题）。现改为模块级持有包装引用 + 身份在位
+    判定：``socket.getaddrinfo is 包装`` 不成立（含被覆盖场景）即重装。
+    """
+    global _pinned_getaddrinfo  # noqa: PLW0603 - 进程级包装注册点（先例 runtime_providers._store_provider）
+    if _pinned_getaddrinfo is not None and socket.getaddrinfo is _pinned_getaddrinfo:
         return
-    with _pinned_install_lock:
-        if _pinned_resolver_installed:
-            return
-        _original_getaddrinfo = socket.getaddrinfo
-
-        def _pinned_getaddrinfo(host, port, *args, **kwargs):
-            pinned_map = getattr(_pinned_resolver_state, "map", None) or {}
-            entries = pinned_map.get(host)
-            if not entries:
-                return _original_getaddrinfo(host, port, *args, **kwargs)
-            if port is None:
-                return list(entries)
-            # 请求方（socket.create_connection）把端口编进 sockaddr；
-            # 钉扎表预解析时端口为占位 0，按调用端口改写（IPv6 含 flowinfo/scope_id 后缀）
-            rewritten = []
-            for family, type_, proto, canonname, sa in entries:
-                if isinstance(sa, tuple) and len(sa) >= 2:
-                    sa = (sa[0], port) + tuple(sa[2:])
-                rewritten.append((family, type_, proto, canonname, sa))
-            return rewritten
-
-        socket.getaddrinfo = _pinned_getaddrinfo
-        _pinned_resolver_installed = True
+    if _pinned_getaddrinfo is None:
+        _pinned_getaddrinfo = _build_pinned_getaddrinfo()
+    socket.getaddrinfo = _pinned_getaddrinfo
 
 
 def _pin_url_resolution(current_url: str) -> None:

@@ -137,7 +137,7 @@ class EncryptedCharField(models.TextField):
         try:
             fernet = _get_fernet()
         except RuntimeError as exc:
-            logger.error(
+            logger.exception(
                 "EncryptedCharField.get_prep_value: FIELD_ENCRYPTION_KEY 未配置，"
                 "拒绝将敏感字段以明文写入数据库"
             )

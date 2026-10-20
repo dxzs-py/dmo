@@ -183,7 +183,8 @@ def merge_subagent_content(
         return True
 
     seen = seen_keys.setdefault(subagent_thread_id, set())
-    # `seen` 和 `seen_keys[subagent_thread_id]` 指向**同一个集合对象**，后续对 `seen.add(xxx)` 的修改，会直接体现在字典里。
+    # `seen` 和 `seen_keys[subagent_thread_id]` 指向**同一个集合对象**，
+    # 后续对 `seen.add(xxx)` 的修改，会直接体现在字典里。
     if msg_id and msg_id in seen:
         return True
     if msg_id:

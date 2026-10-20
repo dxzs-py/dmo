@@ -51,3 +51,6 @@ performance_benchmark.py
 .codebuddy/
 docs/
 .trae/
+.github/
+submission/
+stubs/

@@ -26,6 +26,7 @@ from typing import Any
 # extract_thinking_content 单源于 ai_engine/services/thinking.py（G1 合并），
 # 本模块保留重导出契约（外部模块经此导入，__all__ 防止 F401 误删）。
 from Django_xm.apps.ai_engine.services.thinking import extract_thinking_content
+
 from .stream_chunk_processors import (
     _sync_pending_to_stream_state,
     process_stream_chunk,

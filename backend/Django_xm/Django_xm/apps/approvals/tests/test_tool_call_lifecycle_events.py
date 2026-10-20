@@ -9,7 +9,8 @@ G2 合并后为 _publish_tool_call_lifecycle_event 单实现 + 4 薄壳委托）
   其余异常静默吞掉（非致命，不阻断审批流程）
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
-    python manage.py test Django_xm.apps.approvals.tests.test_tool_call_lifecycle_events --settings=Django_xm.settings.test --noinput
+    python manage.py test Django_xm.apps.approvals.tests.test_tool_call_lifecycle_events \
+        --settings=Django_xm.settings.test --noinput
 """
 
 import os
@@ -134,9 +135,8 @@ class ToolCallLifecycleEventErrorHandlingTests(TestCase):
             approval_service.service,
             "register",
             side_effect=PayloadValidationError("bad payload"),
-        ):
-            with self.assertRaises(PayloadValidationError):
-                publish_tool_call_timeout_event(approval)
+        ), self.assertRaises(PayloadValidationError):
+            publish_tool_call_timeout_event(approval)
 
     def test_unexpected_error_is_swallowed(self) -> None:
         """其他异常：静默吞掉不阻断审批流程（logger.warning 分支）。"""

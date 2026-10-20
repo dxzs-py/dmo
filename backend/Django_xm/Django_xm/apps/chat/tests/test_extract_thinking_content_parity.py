@@ -14,7 +14,8 @@ chat 版多一个未使用的 provider_id 参数），对同一批边界输入�
   不覆盖"属性存在但为 None"）
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
-    python manage.py test Django_xm.apps.chat.tests.test_extract_thinking_content_parity --settings=Django_xm.settings.test --noinput
+    python manage.py test Django_xm.apps.chat.tests.test_extract_thinking_content_parity \
+        --settings=Django_xm.settings.test --noinput
 """
 
 import os
@@ -54,7 +55,7 @@ def _outcome(func, chunk):
     """捕获 (状态, 结果/异常类型)，使"两版同样抛错"也可判定一致。"""
     try:
         return ("ok", func(chunk))
-    except Exception as e:  # noqa: BLE001 — 表征测试需覆盖任意异常路径
+    except Exception as e:
         return ("err", type(e))
 
 
@@ -67,10 +68,16 @@ def _edge_chunks():
         ("reasoning None", _Chunk(additional_kwargs={"reasoning_content": None})),
         ("Anthropic dict thinking 块", _Chunk(content=[{"type": "thinking", "text": "claude 思考"}])),
         ("Anthropic 对象 thinking 块", _Chunk(content=[_Block("thinking", "对象思考")])),
-        ("dict 块空 text 回落后续块", _Chunk(content=[{"type": "thinking", "text": ""}, {"type": "thinking", "text": "第二段"}])),
+        (
+            "dict 块空 text 回落后续块",
+            _Chunk(content=[{"type": "thinking", "text": ""}, {"type": "thinking", "text": "第二段"}]),
+        ),
         ("对象块空 text 回落后续块", _Chunk(content=[_Block("thinking"), _Block("thinking", "后段")])),
         ("无 thinking 块", _Chunk(content=[{"type": "text", "text": "正文"}])),
-        ("多段混合首个命中", _Chunk(content=[{"type": "text"}, {"type": "thinking", "text": "首段"}, _Block("thinking", "次段")])),
+        (
+            "多段混合首个命中",
+            _Chunk(content=[{"type": "text"}, {"type": "thinking", "text": "首段"}, _Block("thinking", "次段")]),
+        ),
         ("content 空列表", _Chunk(content=[])),
         ("content 普通字符串（含 <think> 标签）", _Chunk(content="<think>abc</think>")),
         ("content 空串", _Chunk(content="")),

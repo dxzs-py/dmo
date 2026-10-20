@@ -21,9 +21,9 @@ Pipeline 流程:
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Callable
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings

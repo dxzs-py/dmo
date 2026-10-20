@@ -3,11 +3,11 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from Django_xm.apps.chat.models import ChatMessage, ChatSession
-from django.test import TestCase
 
 USAGE_URL = "/api/v1/users/usage-stats/"
 User = get_user_model()

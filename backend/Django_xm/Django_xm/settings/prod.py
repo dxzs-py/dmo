@@ -8,7 +8,7 @@ Django settings for Django_xm project - 生产环境配置
 import copy
 import sys
 
-from .base import *  # noqa: F401,F403 — prod 继承 base 全量配置，仅覆盖差异项
+from .base import *
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

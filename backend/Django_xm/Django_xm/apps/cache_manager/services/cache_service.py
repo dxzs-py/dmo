@@ -3,10 +3,9 @@ Redis 缓存服务 - 通用缓存增强模块
 
 提供以下缓存策略：
 1. 热点查询缓存：缓存 RAG 检索结果、常用问答
-2. 模型响应缓存：缓存相同输入的 AI 回复（ModelResponseCacheService，唯一缓存轨道）
-3. 向量检索缓存：缓存 embedding 和相似度搜索结果
-4. 会话缓存：由独立的 SecureSessionCacheService 承担（见 secure_session_cache.py）
-5. 缓存运维：失效策略、Redis 直连统计
+2. 向量检索缓存：缓存 embedding 和相似度搜索结果
+3. 会话缓存：由独立的 SecureSessionCacheService 承担（见 secure_session_cache.py）
+4. 缓存运维：失效策略、Redis 直连统计
 
 设计原则：
 - 使用前缀命名空间避免 key 冲突
@@ -33,7 +32,6 @@ logger = logging.getLogger(__name__)
 # ==================== 缓存前缀常量 ====================
 
 CACHE_PREFIX_QUERY = "rag_query"
-CACHE_PREFIX_MODEL = "model_response"
 CACHE_PREFIX_EMBEDDING = "embedding"
 CACHE_PREFIX_VECTOR = "vector_search"
 
@@ -47,14 +45,19 @@ CACHE_PREFIX_SUGGESTIONS = "suggestions"
 # 历史注记：曾存在 user_mcp_servers（tools/mcp/discovery）——把 MCP 配置当缓存存
 # （ttl=None、含 auth_token），与其 DB 体系（McpServerConfig）重复且零调用方，
 # 已于 2026-10-01 随死路径删除。教训：配置数据绝不存缓存层。
-# 历史注记：曾存在 langchain 框架级 LLM 缓存前缀——
-# 与 ModelResponseCacheService 功能重叠、双轨失效不联动
-# （审计 5-1.5），已于 2026-10-03 下线，模型响应缓存由 ModelResponseCacheService
-# 全权承担。教训：同一能力域只保留一条缓存轨道，失效才有单一权威。
+# 历史注记：模型响应缓存已整体移除（2026-10-18）。曾先后存在两条轨道——
+# langchain 框架级 LLM 缓存（2026-10-03 下线，审计 5-1.5）与业务级
+# ModelResponseCacheService（键为整条 prompt 的 SHA256，含用户命名空间）；
+# 后者经静态排查与运行时探针双重确认在生产代码零写入方（仅 tests 覆盖），
+# 彻底删除而非接入，原因：agent 的 prompt 每轮都被 MemoryInjectionMiddleware /
+# 上下文压缩 / AttentionGuide 重排动态改写，整条 prompt SHA 键的命中率结构性
+# 趋近 0，且重放响应会绕过 LazyFallbackChatModel 的熔断与降级判定、有重放
+# 过期上下文的风险。若未来要缓存模型调用，先在「无状态、可重复」的调用点
+# （如压缩/摘要模型）量化命中率，再决定是否引入。
+# 教训：同一能力域只保留一条缓存轨道，失效才有单一权威——但"单轨"必须先有写入方。
 
 CACHE_PREFIX_LABELS = {
     CACHE_PREFIX_QUERY: "RAG 查询缓存",
-    CACHE_PREFIX_MODEL: "模型响应缓存",
     CACHE_PREFIX_EMBEDDING: "Embedding 缓存",
     CACHE_PREFIX_VECTOR: "向量检索缓存",
     CACHE_PREFIX_DASHBOARD: "分析看板缓存",
@@ -90,7 +93,6 @@ class CacheTTL:
     QUERY_SHORT = 300
     QUERY_MEDIUM = 1800
     QUERY_LONG = 86400
-    MODEL_MEDIUM = 3600
     EMBEDDING = 604800
     CONFIG_LONG = 86400  # chat 配置类缓存（命令列表/模式列表），历史上误名 TOOL_LONG
     VECTOR_SEARCH = 3600
@@ -306,41 +308,6 @@ def generate_query_cache_key(
     return f"{CACHE_PREFIX_QUERY}:{index_name}:{query_hash}:k{k}:m{model_name}:r{rag_mode}"
 
 
-def generate_model_cache_key(
-    prompt: str,
-    model_name: str,
-    mode: str = "default",
-    tools_hash: str | None = None,
-    user_id: int | str | None = None,
-) -> str:
-    """生成模型响应缓存键（含用户命名空间，消除跨用户串缓存）
-
-    键结构（2026-10-02 起）::
-
-        model_response:{model_name}:{mode}:u{user_id}:{prompt_hash}[:t{tools_hash}]
-        model_response:{model_name}:{mode}:system:{prompt_hash}[:t{tools_hash}]   # user_id=None
-
-    兼容性说明：旧键无用户段（`model_response:{model}:{mode}:{hash}`），
-    key 结构变化后旧缓存自然失配（永不命中），随 3600s TTL 自然过期，无需迁移。
-    无 user 上下文的调用点（系统级任务）必须落入 "system" 固定命名空间，
-    禁止回退到旧的无 user 键结构。
-
-    Args:
-        prompt: 提示词
-        model_name: 模型名称
-        mode: 模式
-        tools_hash: 工具列表哈希
-        user_id: 用户 ID；None 时使用 "system" 命名空间
-
-    Returns:
-        缓存键
-    """
-    prompt_hash = hashlib.sha256(prompt.encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
-    tools_part = f":t{tools_hash}" if tools_hash else ""
-    user_part = f"u{user_id}" if user_id is not None else "system"
-    return f"{CACHE_PREFIX_MODEL}:{model_name}:{mode}:{user_part}:{prompt_hash}{tools_part}"
-
-
 def generate_embedding_cache_key(text: str, model: str = "default") -> str:
     """生成 embedding 缓存键"""
     text_hash = hashlib.sha256(text.encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
@@ -405,61 +372,6 @@ class QueryCacheService:
         pattern = f"{CACHE_PREFIX_QUERY}:{index_name}:*"
         count = CacheService.delete_pattern(pattern)
         logger.info(f"索引查询缓存已失效: {index_name}, 清除 {count} 个键")
-        return count
-
-
-class ModelResponseCacheService:
-    """
-    模型响应缓存服务（业务级权威缓存，唯一缓存轨道）
-
-    缓存相同输入的 AI 回复，减少 API 调用。
-
-    职责边界：本服务为模型响应缓存的唯一轨道——键含模型名、业务 mode 与
-    用户命名空间（跨用户串缓存修复），写入方感知用户/模型配置，带独立
-    失效策略（invalidate_model_cache 按模型失效）。连接与失效基建
-    （CacheService / delete_pattern）统一复用，禁止各建一套。
-    """
-
-    @classmethod
-    def get_cached_response(
-        cls, prompt: str, model_name: str, mode: str = "default", user_id: int | str | None = None
-    ) -> dict | None:
-        """获取缓存的模型响应（user_id 须与写入时一致，否则未命中）"""
-        key = generate_model_cache_key(prompt, model_name, mode, user_id=user_id)
-        return CacheService.get(key)
-
-    @classmethod
-    def cache_model_response(
-        cls,
-        prompt: str,
-        response: dict,
-        model_name: str,
-        mode: str = "default",
-        ttl: int = CacheTTL.MODEL_MEDIUM,
-        user_id: int | str | None = None,
-    ) -> bool:
-        """缓存模型响应"""
-        key = generate_model_cache_key(prompt, model_name, mode, user_id=user_id)
-
-        cache_data = {
-            "prompt": prompt,
-            "response": response,
-            "model": model_name,
-            "mode": mode,
-            "cached_at": timezone.now().isoformat(),
-        }
-
-        return CacheService.set(key, cache_data, ttl)
-
-    @classmethod
-    def invalidate_model_cache(cls, model_name: str) -> int:
-        """使某个模型的所有缓存失效
-
-        失效范围：业务级 ``model_response:{model_name}:*``（本服务全部用户的键）。
-        """
-        pattern = f"{CACHE_PREFIX_MODEL}:{model_name}:*"
-        count = CacheService.delete_pattern(pattern)
-        logger.info(f"模型缓存已失效: {model_name}, 清除 {count} 个键")
         return count
 
 
@@ -619,8 +531,9 @@ class RedisDirectClient:
 
 # ==================== LangChain LLM Cache 层 ====================
 # 历史注记：本节曾承载 langchain 框架级 LLM 缓存（BaseCache 实现，经 langchain
-# 全局缓存 API 接线）——与 ModelResponseCacheService 功能重叠、
-# 双轨失效不联动（审计 5-1.5），已于 2026-10-03 整体下线。
+# 全局缓存 API 接线）——与业务级模型响应缓存功能重叠、双轨失效不联动
+# （审计 5-1.5），已于 2026-10-03 整体下线；模型响应缓存轨道已于 2026-10-18
+# 整体移除（见文件头历史注记）。
 
 
 # ==================== 业务级统一缓存失效接口 ====================

@@ -165,7 +165,7 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
             try:
                 return future.result(timeout=_SKILL_EXEC_TIMEOUT)
             except concurrent.futures.TimeoutError:
-                logger.error(
+                logger.exception(
                     f"技能 '{self.spec.name}' 执行超时（{_SKILL_EXEC_TIMEOUT:.0f}秒），"
                     "已向调用方返回超时错误；后台任务被放弃（线程不可强杀，自然结束后由 atexit 回收）"
                 )

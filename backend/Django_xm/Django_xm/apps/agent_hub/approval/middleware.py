@@ -47,7 +47,9 @@ from Django_xm.common.approval_utils import derive_cross_module_id_from_source
 from Django_xm.common.observability.approval_metrics import approval_metrics
 from Django_xm.common.risk_levels import RiskLevel
 
-from .policies import UnregisteredToolApprovalPolicy  # noqa: F401  # 测试 patch 锚点；生产解析统一走 step_gate.resolve_tool_policy
+from .policies import (
+    UnregisteredToolApprovalPolicy,  # noqa: F401  # 测试 patch 锚点；生产解析统一走 step_gate.resolve_tool_policy
+)
 from .step_gate import resolve_tool_policy
 
 logger = logging.getLogger(__name__)
@@ -88,6 +90,7 @@ class ApprovalMiddleware(AgentMiddleware):
     @staticmethod
     def _default_policies() -> list[Any]:
         from .policies import (
+            READ_ONLY_TOOL_WHITELIST,
             AttachmentRagSearchApprovalPolicy,
             AttachmentReaderApprovalPolicy,
             EditFileApprovalPolicy,
@@ -101,9 +104,8 @@ class ApprovalMiddleware(AgentMiddleware):
             GlobApprovalPolicy,
             GrepApprovalPolicy,
             LsApprovalPolicy,
-            READ_ONLY_TOOL_WHITELIST,
-            ReadOnlyApprovalPolicy,
             ReadFileApprovalPolicy,
+            ReadOnlyApprovalPolicy,
             ShellExecApprovalPolicy,
             SpawnApprovalPolicy,
             TodoWriteApprovalPolicy,

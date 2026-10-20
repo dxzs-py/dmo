@@ -49,6 +49,15 @@ const BIZ_ERROR_CODES = {
 export function extractErrorMessage(error) {
   if (error.response?.data) {
     const data = error.response.data
+    // DRF ValidationError 的统一封装（common/exceptions.py _handle_validation_error）：
+    // 字段错误放在 data 中，message 仅为通用文案"数据验证失败"。
+    // 优先展平字段错误消息，把真实失败原因透出给用户（code=40002 对应 VALIDATION_FAILED）。
+    if (data.code === 40002 && data.data && typeof data.data === 'object') {
+      const fieldMessages = Object.values(data.data).flatMap((item) =>
+        Array.isArray(item) ? item.map(String) : item != null ? [String(item)] : []
+      )
+      if (fieldMessages.length > 0) return fieldMessages.join('；')
+    }
     if (data.message) return data.message
     if (data.code && BIZ_ERROR_CODES[data.code]) return BIZ_ERROR_CODES[data.code]
     if (data.error) return data.error

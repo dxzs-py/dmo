@@ -104,6 +104,12 @@ plugins = ["mypy_django_plugin.main"]
 follow_imports = "silent"
 ignore_missing_imports = true
 show_error_codes = true
+# 本地存根包（stubs/deepagents、stubs/langchain/agents/middleware）：安装源曾触发
+# mypy 内部错误，旧方案为 per-module follow_imports=skip（一方代码拿到的符号全是
+# Any）；现改为按需精确存根遮蔽安装包，一方核心代码获得类型保护。
+# 相对路径以 mypy 工作目录为基准（本地与 CI 均在 backend/Django_xm 下运行 mypy）。
+# 存根覆盖面与有意偏差说明见各 .pyi 模块头注释。
+mypy_path = "stubs"
 exclude = [
     "/migrations/",
     "/__pycache__/",
@@ -116,19 +122,25 @@ exclude = [
 django_settings_module = "Django_xm.settings.dev"
 strict_settings = false
 
-# Third-party packages that trigger mypy internal errors during import following
-# are skipped to keep type checking of first-party code stable.
-# (Not a type:ignore workaround — this only affects how mypy follows imports
-# into these installed packages, treating them as untyped/Any.)
+# 存根精确化后的残余豁免（均为禁改域内既有松散用法，修复责任在文件属主，见
+# .trae/memory/2026-10-18.md 与对应 .pyi 模块头偏差说明）：
+# - guardrails.middleware [misc]：awrap_* 中 await 一个标注为同步 Callable 的
+#   handler（Any 时代口径，运行时实际传入异步 handler）；存根精确化后暴露。
+# - guardrails [arg-type]：__init__ 把 Sequence[AgentMiddleware] 塞进
+#   list[GuardrailsMiddleware]（协议返回类型宽于实际收集类型）。
+# - ai_engine.tests.test_rate_limit_middleware [arg-type]：测试以 SimpleNamespace
+#   /异步闭包鸭子类型调用钩子（基线在该文件即已有 6 个 arg-type 错误）。
 [[tool.mypy.overrides]]
-module = "deepagents.*"
-follow_imports = "skip"
-ignore_missing_imports = true
+module = "Django_xm.apps.ai_engine.guardrails.middleware"
+disable_error_code = ["misc"]
 
 [[tool.mypy.overrides]]
-module = "langchain.agents.middleware.*"
-follow_imports = "skip"
-ignore_missing_imports = true
+module = "Django_xm.apps.ai_engine.guardrails"
+disable_error_code = ["arg-type"]
+
+[[tool.mypy.overrides]]
+module = "Django_xm.apps.ai_engine.tests.test_rate_limit_middleware"
+disable_error_code = ["arg-type"]
 
 [tool.pytest.ini_options]
 # ARCH-20：pytest 入口（与 manage.py test 双轨并存，共用同一份测试配置）

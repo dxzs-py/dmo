@@ -7,8 +7,11 @@
 - 模型实例缓存（cached_model_creation + model_cache.py 的 LRU）已退役：
   多 loop 架构下 async 模型实例跨事件循环复用不安全，实例构建即时化
   （不变量：async 模型实例及其异步客户端永不跨 loop 复用）。
-- 全局 LLM 请求缓存轨道（原 langchain 全局缓存接线入口）已下线，
-  模型响应缓存由 cache_manager.ModelResponseCacheService 唯一承担。
+- 全局 LLM 请求缓存轨道（原 langchain 全局缓存接线入口）已下线。
+  原承接方 ModelResponseCacheService 经 2026-10-18 harness 审计裁决为
+  生产零写入方的死设施，已随 cache_manager 一并删除（agent 模型边界
+  prompt 每轮动态改写，响应级缓存命中率结构性趋近 0，接入无意义）；
+  本模块仅剩速率限制职责。
 
 依赖关系：
 - 本模块是底层基础设施，不依赖 llm_factory / llm_fallback

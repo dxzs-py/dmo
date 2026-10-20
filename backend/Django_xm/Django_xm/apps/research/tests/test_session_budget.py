@@ -35,7 +35,6 @@ django.setup()
 from langchain_core.messages import AIMessageChunk
 
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
-from Django_xm.apps.ai_engine.services.usage_tracker import SessionTokenBudgetGuard
 from Django_xm.apps.research.services.adapter import OfficialDeepAgentAdapter
 from Django_xm.common.event_schema import EventType, validate_payload
 

@@ -420,7 +420,7 @@ def process_uploaded_documents(
         try:
             docs = load_document(str(file_path))
             if not docs:
-                raise ValueError("未能提取到任何内容")
+                raise ValueError("未能提取到任何内容")  # noqa: TRY301 -- 与 load_document 异常共用同一失败出口
         except Exception as e:
             logger.warning(f"文件加载失败，跳过: {name} - {e}")
             failed_files.append({"name": name, "reason": str(e)})

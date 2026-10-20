@@ -26,6 +26,7 @@ from Django_xm.apps.context_manager.services.compression import (
     messages_to_dicts,
 )
 
+
 def _fake_llm(content: str):
     response = mock.MagicMock()
     response.content = content
@@ -69,9 +70,11 @@ class SummarizeLongTextTests(unittest.TestCase):
     def test_exception_propagates(self) -> None:
         """异常向上抛出（由调用方决定降级，保持原旁路 None 语义）。"""
         engine = ContextCompressionEngine()
-        with mock.patch.object(engine, "_get_compression_model", side_effect=RuntimeError("llm down")):
-            with self.assertRaises(RuntimeError):
-                engine.summarize_long_text("文本", "请总结：")
+        with (
+            mock.patch.object(engine, "_get_compression_model", side_effect=RuntimeError("llm down")),
+            self.assertRaises(RuntimeError),
+        ):
+            engine.summarize_long_text("文本", "请总结：")
 
 
 if __name__ == "__main__":

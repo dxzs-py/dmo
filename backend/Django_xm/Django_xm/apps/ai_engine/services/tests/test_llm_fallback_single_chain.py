@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from typing import ClassVar
 from unittest import mock
 
 import httpx
@@ -288,7 +289,7 @@ class FallbackDetectionCallbackBoundaryTests(unittest.TestCase):
     修复批次对照。
     """
 
-    _REGISTRY = {
+    _REGISTRY: ClassVar[dict] = {
         "openai": {"models": [{"name": "gpt-4o", "capabilities": []}], "default_model": "gpt-4o"},
         "ollama": {"models": [{"name": "qwen3:8b", "capabilities": []}], "default_model": "qwen3:8b"},
     }

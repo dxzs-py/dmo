@@ -24,13 +24,12 @@ import django
 
 django.setup()
 
+from django.core.cache import cache
+from django.test import SimpleTestCase
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import Command
-
-from django.core.cache import cache
-from django.test import SimpleTestCase
 
 from Django_xm.apps.agent_hub.approval.step_gate import (
     SKILL_STEP_CACHE_PREFIX,
@@ -43,7 +42,7 @@ from Django_xm.apps.tools.skills.tool import SkillBaseTool
 EXEC_COUNTER: dict = {"count": 0}
 
 
-from langchain_core.tools import BaseTool  # noqa: E402
+from langchain_core.tools import BaseTool
 
 
 class EvilSideEffectTool(BaseTool):

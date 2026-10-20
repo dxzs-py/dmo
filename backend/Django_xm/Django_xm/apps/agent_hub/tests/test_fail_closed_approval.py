@@ -25,8 +25,8 @@ import django
 django.setup()
 
 from django.test import SimpleTestCase
+from langchain_core.messages import AIMessage
 
-from Django_xm.async_utils import run_async
 from Django_xm.apps.agent_hub.approval.middleware import (
     SYSTEM_ORCHESTRATION_TOOLS,
     ApprovalMiddleware,
@@ -38,8 +38,8 @@ from Django_xm.apps.agent_hub.approval.policies import (
     TodoWriteFileApprovalPolicy,
     UnregisteredToolApprovalPolicy,
 )
+from Django_xm.async_utils import run_async
 from Django_xm.common.risk_levels import RiskLevel
-from langchain_core.messages import AIMessage
 
 
 def _state_with_tool_calls(*tool_calls: dict) -> dict:
@@ -230,15 +230,13 @@ class TestIdempotencyFailureFailClosed(SimpleTestCase):
         with patch(
             "Django_xm.apps.agent_hub.approval.middleware.sync_to_async",
             side_effect=RuntimeError("db unavailable"),
-        ):
-            with patch.object(
-                mw, "_audit_auto_approved_tools", new=AsyncMock()
-            ) as audit_mock:
-                with patch(
-                    "Django_xm.apps.agent_hub.approval.middleware.interrupt",
-                    return_value=False,
-                ) as interrupt_mock:
-                    run_async(mw.aafter_model(_state_with_tool_calls(tool_call), None))
+        ), patch.object(
+            mw, "_audit_auto_approved_tools", new=AsyncMock()
+        ) as audit_mock, patch(
+            "Django_xm.apps.agent_hub.approval.middleware.interrupt",
+            return_value=False,
+        ) as interrupt_mock:
+            run_async(mw.aafter_model(_state_with_tool_calls(tool_call), None))
 
         interrupt_mock.assert_called_once()
         requests = interrupt_mock.call_args.args[0]["requests"]

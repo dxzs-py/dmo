@@ -416,7 +416,6 @@ async def get_async_checkpointer(
         loop = asyncio.get_running_loop()
     except RuntimeError:
         loop = None
-    loop_id = id(loop) if loop is not None else 0
 
     loop_token = _loop_cache_token(loop)
     cache_key = f"async:{backend}:{db_path or ''}:{connection_string or ''}:{loop_token}"

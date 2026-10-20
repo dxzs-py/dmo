@@ -200,7 +200,7 @@ class TestChatStopCleanup(unittest.TestCase):
 
             ex._run_task = asyncio.create_task(_exit_suspended_after_stop(), name="chat-exec-race")
             with ExitStack() as stack:
-                abandon, runtime, lifecycle, release, cleanup, publish = _patch_cascade(stack)
+                abandon, runtime, _lifecycle, release, cleanup, _publish = _patch_cascade(stack)
                 ex.stop()
                 await _wait_background(ex)
 
@@ -223,7 +223,7 @@ class TestChatStopCleanup(unittest.TestCase):
             ex = _make_executor()
             ex._suspended = True
             with ExitStack() as stack:
-                abandon, runtime, lifecycle, release, cleanup, publish = _patch_cascade(stack)
+                abandon, runtime, _lifecycle, release, cleanup, _publish = _patch_cascade(stack)
                 ex.stop(finalize_cancel=False)
                 await asyncio.sleep(0.02)
 
@@ -243,7 +243,7 @@ class TestChatStopCleanup(unittest.TestCase):
             ex = _make_executor()
             ex._suspended = True
             with ExitStack() as stack:
-                abandon, runtime, lifecycle, release, cleanup, publish = _patch_cascade(stack)
+                abandon, runtime, _lifecycle, _release, cleanup, _publish = _patch_cascade(stack)
                 runtime.terminate = mock.AsyncMock(side_effect=RuntimeError("terminate boom"))
                 ex.stop()
                 await _wait_background(ex)
@@ -261,7 +261,7 @@ class TestChatStopCleanup(unittest.TestCase):
 
             ex = _make_executor()
             with ExitStack() as stack:
-                abandon, runtime, lifecycle, release, cleanup, publish = _patch_cascade(stack)
+                _abandon, runtime, lifecycle, _release, cleanup, _publish = _patch_cascade(stack)
                 ex.stop()
                 ex.stop()
                 await _wait_background(ex)

@@ -295,9 +295,10 @@ def save_cross_session_memory(self, user_id: int, session_id: str, user_message:
             tracker.mark_success(result={"skipped": "empty_content"})
             return {"status": "success", "skipped": "empty_content"}
 
+        from django.db import transaction
+
         from Django_xm.apps.chat.models import ChatSession
         from Django_xm.apps.context_manager.services.manager import create_context_manager
-        from django.db import transaction
 
         manager = create_context_manager(user_id=user_id)
 

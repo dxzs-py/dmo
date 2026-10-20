@@ -7,8 +7,9 @@
 - 注册成功 / 重复用户名 400
 - getUserInfo：已认证返回用户结构 / 未认证 401
 
-环境事实（2026-08-20 实测）：
-- 验证码为可选：CaptchaMixin.verify_captcha 在未传 captcha_key/captcha 时直接放行
+环境事实（2026-10-17 更新）：
+- 验证码强制：CaptchaMixin.verify_captcha 未携带 captcha_key/captcha 时拒绝
+  （400 CAPTCHA_ERROR）；登录/注册请求须携带 make_captcha_payload() 生成的字段
 - 登录失败锁定基于 cache（test.py LocMemCache，用例间自动隔离）；密码需满足复杂度
   正则（大写+小写+数字+特殊字符，≥8 位）
 
@@ -17,6 +18,7 @@
 """
 
 import os
+import uuid
 from unittest import mock
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.test")
@@ -41,6 +43,18 @@ CAPTCHA_URL = "/api/v1/users/captcha/"
 VALID_PASSWORD = "Abcdef1!@#"
 
 
+def make_captcha_payload():
+    """生成一组有效验证码字段（captcha_key + captcha）。
+
+    验证码一次性（校验通过即销毁），因此每个请求现生成而非复用。
+    """
+    from Django_xm.apps.users.captcha import CaptchaGenerator
+
+    key = str(uuid.uuid4())
+    code, _ = CaptchaGenerator().generate(key)
+    return {"captcha_key": key, "captcha": code}
+
+
 class LoginViewTests(TestCase):
     """登录主流程与 is_staff 契约。"""
 
@@ -55,7 +69,11 @@ class LoginViewTests(TestCase):
 
     def test_login_success_returns_tokens_and_is_staff(self):
         """登录成功：响应含 access/refresh 与 is_staff 字段（前端 isAdmin 源头契约）。"""
-        resp = self.client.post(LOGIN_URL, {"username": "loginuser", "password": VALID_PASSWORD}, format="json")
+        resp = self.client.post(
+            LOGIN_URL,
+            {"username": "loginuser", "password": VALID_PASSWORD, **make_captcha_payload()},
+            format="json",
+        )
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertEqual(body["code"], 200)
@@ -68,18 +86,36 @@ class LoginViewTests(TestCase):
 
     def test_login_wrong_password_rejected(self):
         """错误密码 → 401 认证失败语义（不泄漏账号状态）。"""
-        resp = self.client.post(LOGIN_URL, {"username": "loginuser", "password": "WrongPass!23"}, format="json")
+        resp = self.client.post(
+            LOGIN_URL,
+            {"username": "loginuser", "password": "WrongPass!23", **make_captcha_payload()},
+            format="json",
+        )
         self.assertEqual(resp.status_code, 401)
 
     def test_login_unknown_user_rejected(self):
         """未知用户名 → 401。"""
-        resp = self.client.post(LOGIN_URL, {"username": "ghost", "password": VALID_PASSWORD}, format="json")
+        resp = self.client.post(
+            LOGIN_URL,
+            {"username": "ghost", "password": VALID_PASSWORD, **make_captcha_payload()},
+            format="json",
+        )
         self.assertEqual(resp.status_code, 401)
 
     def test_login_no_credentials_rejected(self):
-        """缺失凭据 → 401。"""
-        resp = self.client.post(LOGIN_URL, {}, format="json")
+        """携带验证码但缺失凭据 → 401。"""
+        resp = self.client.post(LOGIN_URL, {**make_captcha_payload()}, format="json")
         self.assertEqual(resp.status_code, 401)
+
+    def test_login_missing_captcha_rejected(self):
+        """未携带验证码 → 400 CAPTCHA_ERROR（缺失即拒绝，不给绕过 UI 的脚本留门）。"""
+        resp = self.client.post(
+            LOGIN_URL,
+            {"username": "loginuser", "password": VALID_PASSWORD},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["code"], int(ErrorCode.CAPTCHA_ERROR))
 
 
 class RegisterViewTests(TestCase):
@@ -95,6 +131,7 @@ class RegisterViewTests(TestCase):
             "password": VALID_PASSWORD,
             "password_confirm": VALID_PASSWORD,
             "email": "new@example.com",
+            **make_captcha_payload(),
         }
         resp = self.client.post(REGISTER_URL, payload, format="json")
         self.assertEqual(resp.status_code, 201)
@@ -107,6 +144,7 @@ class RegisterViewTests(TestCase):
             "username": "dupuser",
             "password": VALID_PASSWORD,
             "password_confirm": VALID_PASSWORD,
+            **make_captcha_payload(),
         }
         resp = self.client.post(REGISTER_URL, payload, format="json")
         self.assertEqual(resp.status_code, 400)
@@ -117,9 +155,21 @@ class RegisterViewTests(TestCase):
             "username": "mismatch",
             "password": VALID_PASSWORD,
             "password_confirm": "Different!23",
+            **make_captcha_payload(),
         }
         resp = self.client.post(REGISTER_URL, payload, format="json")
         self.assertEqual(resp.status_code, 400)
+
+    def test_register_missing_captcha_rejected(self):
+        """未携带验证码 → 400 CAPTCHA_ERROR。"""
+        payload = {
+            "username": "nocaptcha",
+            "password": VALID_PASSWORD,
+            "password_confirm": VALID_PASSWORD,
+        }
+        resp = self.client.post(REGISTER_URL, payload, format="json")
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["code"], int(ErrorCode.CAPTCHA_ERROR))
 
 
 class UserInfoViewTests(TestCase):

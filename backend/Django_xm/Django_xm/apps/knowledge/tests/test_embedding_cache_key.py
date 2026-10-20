@@ -213,7 +213,7 @@ class GetEmbeddingsWiringTests(SimpleTestCase):
             mock.patch(f"{_KB_CONFIG}.settings") as _settings,
         ):
             _settings.embedding_batch_size = 16
-            wrapper = es.get_embeddings(required_dimension=1024)
+            _ = es.get_embeddings(required_dimension=1024)
 
         self.assertIsInstance(captured["wrapper"], es.CachedEmbeddings)
         self.assertEqual(captured["wrapper"]._dimension, 1024)

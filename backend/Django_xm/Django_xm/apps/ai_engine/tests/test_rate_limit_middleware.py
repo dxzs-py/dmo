@@ -14,7 +14,6 @@
 """
 
 import asyncio
-import threading
 from types import SimpleNamespace
 
 from django.test import SimpleTestCase
@@ -136,13 +135,13 @@ class _LoopJudgeFixture(SimpleTestCase):
     """
 
     def _make_middleware(self, **overrides) -> RateLimitMiddleware:
-        params = dict(
-            max_calls_per_second=1e9,
-            max_total_calls=100000,
-            consecutive_same_tool_limit=2,
-            min_calls_before_check=1,
-            graceful_degradation=True,
-        )
+        params = {
+            "max_calls_per_second": 1e9,
+            "max_total_calls": 100000,
+            "consecutive_same_tool_limit": 2,
+            "min_calls_before_check": 1,
+            "graceful_degradation": True,
+        }
         params.update(overrides)
         return RateLimitMiddleware(**params)
 
@@ -171,7 +170,7 @@ class LoopJudgeLockAndEventLoopTests(_LoopJudgeFixture):
                 probe["lock_was_free"] = acquired
                 return SimpleNamespace(content="progress")
 
-        mw._get_helper_model = lambda: _LockProbeModel()
+        mw._get_helper_model = lambda: _LockProbeModel()  # noqa: PLW0108 -- 惰性构造实例，保留 lambda
         self._two_calls(mw, _ok_handler)
         self.assertTrue(probe["lock_was_free"])
 
@@ -220,7 +219,7 @@ class LoopJudgeBehaviorPreservationTests(_LoopJudgeFixture):
                 raise RuntimeError("helper api down")
 
         mw = self._make_middleware()
-        mw._get_helper_model = lambda: _BoomModel()
+        mw._get_helper_model = lambda: _BoomModel()  # noqa: PLW0108 -- 惰性构造实例，保留 lambda
         results = []
         for i in range(2):
             results.append(mw.wrap_tool_call(_tool_request("web_search", {"query": f"q{i}"}, f"call-{i}"), _ok_handler))
@@ -239,7 +238,7 @@ class LoopJudgeBehaviorPreservationTests(_LoopJudgeFixture):
                 return SimpleNamespace(content="loop")
 
         mw = self._make_middleware()
-        mw._get_helper_model = lambda: _LoopModel()
+        mw._get_helper_model = lambda: _LoopModel()  # noqa: PLW0108 -- 惰性构造实例，保留 lambda
         handler_called = []
 
         def handler(request):
@@ -281,7 +280,7 @@ class LoopJudgeBehaviorPreservationTests(_LoopJudgeFixture):
                 return SimpleNamespace(content="progress")
 
         mw = self._make_middleware(llm_judge_max_calls=1)
-        mw._get_helper_model = lambda: _ProgressModel()
+        mw._get_helper_model = lambda: _ProgressModel()  # noqa: PLW0108 -- 惰性构造实例，保留 lambda
         self._two_calls(mw, _ok_handler)  # 消耗 1 次预算并进入冷却
         mw._llm_judge_skip_until = 0.0  # 手动越过冷却，直击预算判定
         result = mw.wrap_tool_call(_tool_request("web_search", {"query": "q9"}, "call-9"), _ok_handler)

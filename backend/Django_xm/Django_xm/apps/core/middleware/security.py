@@ -79,7 +79,8 @@ class SessionSecurityMiddleware:
             )
 
             logout(request)
-            # 若已绑定且不一致 → 说明"这个 session 属于 A 用户,但当前登录的是 B 用户",疑似会话固定/会话被盗,logout + 返回 403。
+            # 若已绑定且不一致 → 说明"这个 session 属于 A 用户,但当前登录的是 B 用户",
+            # 疑似会话固定/会话被盗,logout + 返回 403。
             return JsonResponse(
                 {"code": 403, "message": "会话验证失败，请重新登录", "error": "SESSION_MISMATCH"}, status=403
             )

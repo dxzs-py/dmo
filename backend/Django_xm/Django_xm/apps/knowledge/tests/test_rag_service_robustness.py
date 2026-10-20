@@ -312,9 +312,8 @@ class UploadPartialSuccessTests(TestCase):
         def fake_load(path: str):
             raise ValueError(f"解析失败: {Path(path).name}")
 
-        with mock.patch(f"{_KB_SERVICE}.load_document", side_effect=fake_load):
-            with self.assertRaises(ValueError) as ctx:
-                kb_service.process_uploaded_documents(self.user, "kb-b6", ["bad1.txt", "bad2.txt"])
+        with mock.patch(f"{_KB_SERVICE}.load_document", side_effect=fake_load), self.assertRaises(ValueError) as ctx:
+            kb_service.process_uploaded_documents(self.user, "kb-b6", ["bad1.txt", "bad2.txt"])
 
         self.assertIn("所有上传文件均处理失败", str(ctx.exception))
         self.assertIn("bad1.txt", str(ctx.exception))

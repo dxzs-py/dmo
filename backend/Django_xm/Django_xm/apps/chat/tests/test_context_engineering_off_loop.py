@@ -164,7 +164,7 @@ class BuildStreamAgentInputOffLoopWiringTests(SimpleTestCase):
         def _spy_apply(self, chat_history, query, mode="agent", model_name=None):
             timeline["work_thread"] = threading.current_thread()
             release.set()
-            processed = list(chat_history) + [{"role": "assistant", "content": "ctx"}]
+            processed = [*chat_history, {"role": "assistant", "content": "ctx"}]
             return processed, {"pruned": True}
 
         def _fake_convert(history):
@@ -198,7 +198,7 @@ class BuildStreamAgentInputOffLoopWiringTests(SimpleTestCase):
         with ExitStack() as stack:
             for p in patches:
                 stack.enter_context(p)
-            agent, graph_input, config, agent_config = asyncio.run(scenario())
+            _agent, graph_input, config, _agent_config = asyncio.run(scenario())
 
         self.assertIsNot(timeline["work_thread"], timeline["loop_thread"])
         self.assertEqual(

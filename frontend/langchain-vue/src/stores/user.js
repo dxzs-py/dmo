@@ -81,18 +81,8 @@ export const useUserStore = defineStore('user', () => {
       return { success: false, message: data.message || '注册失败' }
     } catch (error) {
       logger.error('注册失败:', error)
-      const resolved = extractErrorMessage(error)
-      if (resolved) return { success: false, message: resolved }
-      const errors = error.response?.data
-      let message = '注册失败'
-      if (typeof errors === 'object' && errors !== null && errors.data) {
-        const firstField = Object.keys(errors.data)[0]
-        message = Array.isArray(errors.data[firstField]) ? errors.data[firstField][0] : firstField
-      } else if (typeof errors === 'object' && errors !== null) {
-        const firstError = Object.values(errors)[0]
-        message = Array.isArray(firstError) ? firstError[0] : firstError
-      }
-      return { success: false, message }
+      // extractErrorMessage 恒返回非空文案（含 40002 字段错误展平），无需重复解析
+      return { success: false, message: extractErrorMessage(error) }
     }
   }
 

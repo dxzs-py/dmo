@@ -101,7 +101,9 @@ class ConfidenceDecayTests(unittest.TestCase):
     def test_merge_decays_stale_entity_instead_of_increment(self):
         store = KnowledgeGraphStore(store=InMemoryStore())
         now = time.time()
-        stale = Entity(name="python", entity_type="technology", confidence=0.9, first_seen=1.0, last_seen=now - 30 * 86400)
+        stale = Entity(
+            name="python", entity_type="technology", confidence=0.9, first_seen=1.0, last_seen=now - 30 * 86400
+        )
         store.save_graph(11, [stale], [])
 
         fresh = Entity(name="python", entity_type="technology", confidence=0.9, first_seen=now, last_seen=now)
@@ -128,7 +130,15 @@ class ConfidenceDecayTests(unittest.TestCase):
         now = time.time()
         store.save_graph(
             13,
-            [Entity(name="项目X", entity_type="concept", confidence=_KG_MIN_INJECTION_CONFIDENCE - 0.01, first_seen=1.0, last_seen=now)],
+            [
+                Entity(
+                    name="项目X",
+                    entity_type="concept",
+                    confidence=_KG_MIN_INJECTION_CONFIDENCE - 0.01,
+                    first_seen=1.0,
+                    last_seen=now,
+                )
+            ],
             [],
         )
         self.assertEqual(store.get_related_context(13, "项目X 的进度"), "")
@@ -181,7 +191,9 @@ class InjectionMarkerAndLengthCapTests(unittest.TestCase):
 
     def test_format_context_truncated_at_limit(self):
         entities = [
-            Entity(name=f"实体名称{i:04d}", entity_type="concept", confidence=0.9, first_seen=1.0, last_seen=time.time())
+            Entity(
+                name=f"实体名称{i:04d}", entity_type="concept", confidence=0.9, first_seen=1.0, last_seen=time.time()
+            )
             for i in range(500)
         ]
         text = KnowledgeGraphStore._format_context(entities, [])
@@ -214,8 +226,23 @@ class MergePropertyConflictTests(unittest.TestCase):
     def test_plain_value_new_overwrites(self):
         store = KnowledgeGraphStore(store=InMemoryStore())
         now = time.time()
-        store.save_graph(32, [Entity(name="Y", entity_type="concept", confidence=0.9, first_seen=1.0, last_seen=now - 60, properties={"k": "旧"})], [])
-        fresh = Entity(name="Y", entity_type="concept", confidence=0.9, first_seen=now, last_seen=now, properties={"k": "新"})
+        store.save_graph(
+            32,
+            [
+                Entity(
+                    name="Y",
+                    entity_type="concept",
+                    confidence=0.9,
+                    first_seen=1.0,
+                    last_seen=now - 60,
+                    properties={"k": "旧"},
+                )
+            ],
+            [],
+        )
+        fresh = Entity(
+            name="Y", entity_type="concept", confidence=0.9, first_seen=now, last_seen=now, properties={"k": "新"}
+        )
         merged_entities, _ = store.merge_graph(32, [fresh], [])
         merged = next(e for e in merged_entities if e.name == "Y")
         self.assertEqual(merged.properties["k"], "新")
@@ -230,7 +257,11 @@ class GraphCacheTests(unittest.TestCase):
     def test_cache_reused_across_instances(self):
         counting = _CountingStore()
         store1 = KnowledgeGraphStore(store=counting)
-        store1.merge_graph(41, [Entity(name="python", entity_type="technology", confidence=0.9, first_seen=1.0, last_seen=1.0)], [])
+        store1.merge_graph(
+            41,
+            [Entity(name="python", entity_type="technology", confidence=0.9, first_seen=1.0, last_seen=1.0)],
+            [],
+        )
         self.assertEqual(counting.search_calls, 1)  # 仅合并冷加载回源一次
 
         store2 = KnowledgeGraphStore(store=counting)
@@ -263,7 +294,11 @@ class GraphCacheTests(unittest.TestCase):
     def test_clear_invalidates_cache(self):
         counting = _CountingStore()
         store = KnowledgeGraphStore(store=counting)
-        store.merge_graph(44, [Entity(name="python", entity_type="technology", confidence=0.9, first_seen=1.0, last_seen=1.0)], [])
+        store.merge_graph(
+            44,
+            [Entity(name="python", entity_type="technology", confidence=0.9, first_seen=1.0, last_seen=1.0)],
+            [],
+        )
         store.clear(44)
 
         entities, _ = KnowledgeGraphStore(store=counting).load_graph(44)
@@ -284,7 +319,11 @@ class GdprClearGraphWiringTests(unittest.TestCase):
     def test_clear_removes_store_entries_and_cache(self):
         fake = InMemoryStore()
         store = KnowledgeGraphStore(store=fake)
-        store.merge_graph(51, [Entity(name="python", entity_type="technology", confidence=0.9, first_seen=1.0, last_seen=1.0)], [])
+        store.merge_graph(
+            51,
+            [Entity(name="python", entity_type="technology", confidence=0.9, first_seen=1.0, last_seen=1.0)],
+            [],
+        )
         namespace = (str(51), "knowledge_graph")
         self.assertTrue(len(fake.search(namespace, limit=100)) > 0)
 

@@ -35,11 +35,11 @@ from django.test import SimpleTestCase, TestCase
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from Django_xm.async_utils import run_async
 from Django_xm.apps.tools.skills.loader import SkillLoader
 from Django_xm.apps.tools.skills.provider import SkillProvider
 from Django_xm.apps.tools.skills.registry import SkillSpec, SkillStep
 from Django_xm.apps.tools.skills.tool import SkillBaseTool
+from Django_xm.async_utils import run_async
 
 _TOOL_MODULE = "Django_xm.apps.tools.skills.tool"
 _GLOBAL_POOL = "Django_xm.apps.tools.get_all_tools"
@@ -279,7 +279,7 @@ class SkillInstallRollbackTests(TestCase):
 
     def test_install_success_creates_record_and_dir(self):
         zip_path = self._make_zip("roll-skill", "v1 指令")
-        ok, msg, meta = self.loader.install_skill_package(zip_path, self.user)
+        ok, msg, _meta = self.loader.install_skill_package(zip_path, self.user)
         self.assertTrue(ok, msg)
 
         from Django_xm.apps.tools.models import SkillPackage
@@ -422,7 +422,7 @@ class SkillZipSlipTests(TestCase):
             "multi-a",
             {
                 "multi-a/scripts/run.py": b"print('hi')",
-                "multi-a/references/guide.md": "指南".encode("utf-8"),
+                "multi-a/references/guide.md": "指南".encode(),
                 "multi-a/sub/../ok.txt": b"stay-inside",  # 归一化后落在 dest 根，合法
             },
         )

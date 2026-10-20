@@ -86,9 +86,12 @@ class AgentService:
         # 1.2 运行时动态注入：仅 checkpointer 链路装配 MemoryInjectionMiddleware
         # （注入文本由 chat_service 经 asyncio.to_thread 获取后写入
         # data["_memory_injection_context"]，主 agent 与预创建降级 agent 同源）。
-        # 注入经 wrap_model_call request.override 前插到送达模型的消息列表，
-        # 不写回 checkpoint state；非 checkpointer 链路的注入走
-        # _build_base_context 上下文工程语义，不在此装配（避免双注入）。
+        # 注入经 wrap_model_call request.override 合并进最后一条 user message
+        # （尾部易变区，保前缀可缓存），不写回 checkpoint state；非 checkpointer
+        # 链路的注入走 _build_base_context 上下文工程语义，不在此装配（避免双注入）。
+        # 文档上下文/当前时间不经本通道：builder 链（_common.build_dynamic_context_prompt
+        # → attach_volatile_injection）产出易变分区，栈中已有本中间件时按段落
+        # 去重合并进同一注入块，无重复注入。
         middleware_stack: list = []
         if use_checkpointer:
             injection_text = str(data.get("_memory_injection_context") or "").strip()

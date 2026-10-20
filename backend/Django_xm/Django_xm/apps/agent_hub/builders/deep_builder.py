@@ -200,7 +200,12 @@ class DeepAgentBuilder:
         model, tools = await self._resolve_deep_tools(config)
         middleware_stack, tools = self._build_deep_middleware(config, tools)
         backend_type, work_dir, backend, skills = self._resolve_deep_runtime(config)
-        system_prompt = await self._resolve_deep_system_prompt(config)
+        system_prompt, volatile_text = await self._resolve_deep_system_prompt(config)
+        # P0-1 前缀缓存裁决：易变分区（时间戳/文档上下文）装配到尾部注入通道，
+        # system_prompt 只保留静态段（同一任务生命周期内逐字节稳定）。
+        from Django_xm.apps.agent_hub.builders._common import attach_volatile_injection
+
+        attach_volatile_injection(middleware_stack, volatile_text)
         agent_kwargs = self._build_deep_agent_kwargs(
             config, model, tools, middleware_stack, backend, system_prompt, skills
         )
@@ -305,24 +310,49 @@ class DeepAgentBuilder:
         skills = self._resolve_skills(config, backend_type, work_dir)
         return backend_type, work_dir, backend, skills
 
-    async def _resolve_deep_system_prompt(self, config) -> str:
-        """解析深度研究 system_prompt（含文档分析引导拼接）。
+    async def _resolve_deep_system_prompt(self, config) -> tuple[str, str]:
+        """解析深度研究 system_prompt（静态段）与易变注入文本（volatile 段）。
 
         职责：config.system_prompt 为 None 时构建默认 prompt（自定义时输出
         续研上下文日志）；启用文档分析（enable_doc_analysis）时追加
         doc_analysis_prompt_suffix 注入值（知识库检索引导，业务文案由
         research 组装方提供）。
 
+        P0-1 前缀缓存裁决：动态上下文 opt-in（deep_dynamic_context_enabled）
+        开启时经 _common.build_dynamic_context_prompt 取得
+        (static_prompt, volatile_text)——static_prompt 只含静态段（同一任务
+        生命周期内逐字节稳定，Celery 恢复路径重建 agent 也不会使前缀缓存
+        失效），volatile_text（时间戳等）由调用方经 attach_volatile_injection
+        装配进尾部注入通道；构建失败或开关关闭时 volatile_text 为空串
+        （回退 prompt 均为静态内容，无易变分区需要注入）。
+
         Args:
             config: AgentConfig 实例。
 
         Returns:
-            最终 system_prompt 字符串。
+            (system_prompt, volatile_text) 元组。
         """
+        volatile_text = ""
         system_prompt = config.system_prompt
         if system_prompt is None:
-            system_prompt = await self._build_system_prompt(config)
-            logger.info(f"DeepAgent 使用默认 system_prompt ({len(system_prompt)} 字符)")
+            # C5（审计 arch §1.3）：跨 app 读取 context_manager 公开配置单例
+            # （context_manager/config.py 模块级 context_settings）的动态上下文 opt-in
+            # 开关；agent_hub → context_manager 为既定分层方向（非 .importlinter 禁止边，
+            # 禁止的是 ai_engine → agent_hub / research 等反向），开关语义与回退策略见 docstring。
+            from Django_xm.apps.context_manager.config import context_settings
+
+            if context_settings.deep_dynamic_context_enabled:
+                from Django_xm.apps.agent_hub.builders._common import build_dynamic_context_prompt
+
+                dynamic_result = await build_dynamic_context_prompt(config, prompt_mode="deep-research")
+                if dynamic_result is not None:
+                    system_prompt, volatile_text = dynamic_result
+                    logger.info(f"DeepAgent 使用动态 system_prompt ({len(system_prompt)} 字符)")
+                else:
+                    logger.warning("DeepAgent 动态提示词构建失败，回退静态 deep-research prompt")
+                    system_prompt = self._build_fallback_static_prompt(config)
+            else:
+                system_prompt = self._build_fallback_static_prompt(config)
         else:
             has_research_context = "先前研究" in system_prompt
             logger.info(
@@ -344,7 +374,24 @@ class DeepAgentBuilder:
         if _enable_doc_analysis and doc_suffix and doc_suffix not in system_prompt:
             system_prompt += doc_suffix
             logger.info(f"DeepAgent system_prompt 已追加知识库文档分析引导 ({len(system_prompt)} 字符)")
-        return system_prompt
+        return system_prompt, volatile_text
+
+    def _build_fallback_static_prompt(self, config) -> str:
+        """业务默认静态 prompt（deep_dynamic_context_enabled 关闭/动态构建失败时回退）。
+
+        业务默认 prompt 经 AgentConfig.prompt_factory 注入（环 3 破除：
+        业务组装方 research.services.agent_assembly 提供权威值，builder 不再
+        import research.prompts）。未注入时仅剩通用兜底（组装方漏注入的显性信号）。
+        """
+        prompt_factory = getattr(config, "prompt_factory", None)
+        if prompt_factory is not None:
+            try:
+                return prompt_factory()
+            except Exception:
+                logger.exception("注入的 deep_research 默认 prompt 提供失败，使用兜底 prompt")
+                return _DEEP_RESEARCH_FALLBACK_PROMPT
+        logger.warning("AgentConfig 未注入 prompt_factory，deep_research 使用通用兜底 prompt")
+        return _DEEP_RESEARCH_FALLBACK_PROMPT
 
     def _build_deep_agent_kwargs(
         self,
@@ -603,41 +650,3 @@ class DeepAgentBuilder:
             sandbox_skills.append(dest)
         logger.info(f"Skill 已链接到沙箱: {skills_work_dir}")
         return sandbox_skills
-
-    async def _build_system_prompt(self, config) -> str:
-        """构建 deep_research 默认 system_prompt（仅 config.system_prompt 为 None 时调用）。
-
-        动态上下文 opt-in（context_settings.deep_dynamic_context_enabled，默认 False）：
-        开启时优先走 _common.build_dynamic_context_prompt（mode="deep-research"，FULL
-        上下文分区），构建失败（返回 None）自动回退下方静态逻辑；关闭时代码路径与
-        现状完全一致。opt-in 原因：深研 prompt 现为业务侧注入的静态默认 prompt，
-        动态上下文会改变 prompt 基底（prompts.yaml 的 deep-research 模板）与注入内容，
-        需实测验证研究质量后再决定是否默认开启。
-        """
-        # C5（审计 arch §1.3）：跨 app 读取 context_manager 公开配置单例
-        # （context_manager/config.py 模块级 context_settings）的动态上下文 opt-in
-        # 开关；agent_hub → context_manager 为既定分层方向（非 .importlinter 禁止边，
-        # 禁止的是 ai_engine → agent_hub / research 等反向），开关语义与回退策略见 docstring。
-        from Django_xm.apps.context_manager.config import context_settings
-
-        if context_settings.deep_dynamic_context_enabled:
-            from Django_xm.apps.agent_hub.builders._common import build_dynamic_context_prompt
-
-            dynamic_prompt = await build_dynamic_context_prompt(config, prompt_mode="deep-research")
-            if dynamic_prompt is not None:
-                logger.info(f"DeepAgent 使用动态 system_prompt ({len(dynamic_prompt)} 字符)")
-                return dynamic_prompt
-            logger.warning("DeepAgent 动态提示词构建失败，回退静态 deep-research prompt")
-
-        # 业务默认 prompt 经 AgentConfig.prompt_factory 注入（环 3 破除：
-        # 业务组装方 research.services.agent_assembly 提供权威值，builder 不再
-        # import research.prompts）。未注入时仅剩通用兜底（组装方漏注入的显性信号）。
-        prompt_factory = getattr(config, "prompt_factory", None)
-        if prompt_factory is not None:
-            try:
-                return prompt_factory()
-            except Exception:
-                logger.exception("注入的 deep_research 默认 prompt 提供失败，使用兜底 prompt")
-                return _DEEP_RESEARCH_FALLBACK_PROMPT
-        logger.warning("AgentConfig 未注入 prompt_factory，deep_research 使用通用兜底 prompt")
-        return _DEEP_RESEARCH_FALLBACK_PROMPT

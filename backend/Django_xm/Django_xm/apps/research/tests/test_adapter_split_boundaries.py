@@ -14,6 +14,7 @@ import asyncio
 import os
 import tempfile
 import unittest
+from typing import ClassVar
 from unittest import mock
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.test")
@@ -24,7 +25,6 @@ django.setup()
 from langchain_core.messages import AIMessageChunk
 
 from Django_xm.apps.research.services.adapter import OfficialDeepAgentAdapter
-from Django_xm.apps.research.services.event_publishing import DeepResearchEventPublisher
 from Django_xm.apps.research.services.result_extraction import (
     apply_short_report_disk_fallback,
     extract_files_info,
@@ -108,7 +108,7 @@ class ResultExtractionTests(unittest.TestCase):
 
     def test_extract_files_info_from_write_file_tool_calls(self):
         class _Msg:
-            tool_calls = [
+            tool_calls: ClassVar[list] = [
                 {"name": "write_file", "args": {"path": "reports/final.md", "content": "12345"}},
                 {"name": "web_search", "args": {"query": "x"}},
             ]

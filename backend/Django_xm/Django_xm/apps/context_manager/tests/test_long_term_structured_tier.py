@@ -14,7 +14,6 @@
 """
 
 import os
-from unittest import mock
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.test")
 import django
@@ -66,7 +65,7 @@ class MarkLongTermStructuredOnlyTests(SimpleTestCase):
 
     @staticmethod
     def _make_manager():
-        from Django_xm.apps.context_manager.services.manager import ContextManager, ContextManagementConfig
+        from Django_xm.apps.context_manager.services.manager import ContextManagementConfig, ContextManager
 
         config = ContextManagementConfig(
             compression_enabled=False,
@@ -122,7 +121,13 @@ class ContextPrunerProtectionTests(SimpleTestCase):
     def test_dedup_tool_outputs_keeps_long_term_pair(self):
         pruner = self._make_pruner()
         messages = [
-            {"role": "tool", "name": "search", "content": "结果A", "tool_call_id": "call-1", "memory_tier": "long_term"},
+            {
+                "role": "tool",
+                "name": "search",
+                "content": "结果A",
+                "tool_call_id": "call-1",
+                "memory_tier": "long_term",
+            },
             {"role": "tool", "name": "search", "content": "结果B", "tool_call_id": "call-1"},
         ]
         deduped, removed = pruner.dedup_tool_outputs(messages)

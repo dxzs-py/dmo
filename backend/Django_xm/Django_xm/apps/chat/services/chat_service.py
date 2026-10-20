@@ -460,7 +460,11 @@ class ChatService(ChatModeOrchestrationMixin, AgentStreamMixin, SubagentStreamMi
         # AgentService.create_agent_with_memory 的 use_checkpointer 同源
         # （CHECKPOINTER_ENABLED and session_id）。注入文本经 data 传递（主 agent 与
         # 预创建降级 agent 同源接线），由 MemoryInjectionMiddleware 在每次模型调用前
-        # request.override 动态前插——注入内容不进 graph_input/checkpoint state。
+        # request.override 合并进最后一条 user message（注入不进
+        # graph_input/checkpoint state，且位于尾部易变区不破坏缓存前缀）。
+        # 文档上下文/当前时间不经本通道：由 builder 链易变分区
+        # （_common.build_dynamic_context_prompt → attach_volatile_injection）
+        # 经 merge_injection_text 并入同一注入块（去重），避免双注入。
         memory_injection_context = ""
         if AgentService.CHECKPOINTER_ENABLED and data.get("session_id"):
             try:
@@ -474,7 +478,8 @@ class ChatService(ChatModeOrchestrationMixin, AgentStreamMixin, SubagentStreamMi
             if memory_injection_context:
                 memory_injection_context = (
                     f"{memory_injection_context.strip()}\n\n"
-                    "（以上为历史会话与知识图谱记忆，供回答时参考；与当前问题无关的内容可忽略。）"
+                    "（以上为系统注入的参考信息（历史会话、知识图谱记忆、当前时间、"
+                    "已上传文档摘要等），供回答时参考；与当前问题无关的内容可忽略。）"
                 )
         data["_memory_injection_context"] = memory_injection_context
 

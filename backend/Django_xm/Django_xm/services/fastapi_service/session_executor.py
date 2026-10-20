@@ -40,7 +40,6 @@ from typing import Any
 from asgiref.sync import sync_to_async
 
 from Django_xm.apps.approvals.models import Approval
-from Django_xm.apps.research.models import ResearchTaskStatus
 from Django_xm.apps.approvals.services.approval_batch import (
     abandon_session_pending_approvals,
     await_wait_for_batch_decision,
@@ -49,6 +48,7 @@ from Django_xm.apps.approvals.services.approval_batch import (
     finalize_batch_approvals,
     self_heal_expired_approvals,
 )
+from Django_xm.apps.research.models import ResearchTaskStatus
 from Django_xm.apps.research.services.research_runner import (
     cleanup_research_sandbox,
     execute_research_async,

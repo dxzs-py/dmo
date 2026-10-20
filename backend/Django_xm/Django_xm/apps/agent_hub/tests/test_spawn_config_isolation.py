@@ -99,7 +99,7 @@ class SpawnConfigIsolationTests(SimpleTestCase):
             self.assertIn("子代理已启动", content)
         self.assertEqual(self.fake_runtime.spawn.await_count, len(configs))
 
-        for call, cfg in zip(self.fake_runtime.spawn.await_args_list, configs):
+        for call, cfg in zip(self.fake_runtime.spawn.await_args_list, configs, strict=True):
             expected = cfg["configurable"]
             passed = call.kwargs["configurable"]
             for key, value in expected.items():

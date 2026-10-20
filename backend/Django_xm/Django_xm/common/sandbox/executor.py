@@ -439,12 +439,13 @@ class SandboxExecutor:
             容器状态字符串（running/exited/...）；容器不存在或查询失败返回 None。
         """
         try:
-            result = subprocess.run(
-                ["docker", "inspect", "-f", "{{.State.Status}}", container],
+            result = subprocess.run(  # noqa: S603 -- 沙箱管控路径：docker 固定命令 + 内部受控容器名（非用户输入）
+                ["docker", "inspect", "-f", "{{.State.Status}}", container],  # noqa: S607 -- docker 依赖 PATH 解析，固定绝对路径反而在跨环境部署下更脆
                 capture_output=True,
                 text=True,
                 timeout=DOCKER_LIFECYCLE_TIMEOUT,
                 shell=(platform.system() == "Windows"),
+                check=False,
             )
         except (subprocess.TimeoutExpired, OSError):
             return None
@@ -538,7 +539,9 @@ class SandboxExecutor:
         if registered:
             logger.info(f"[SandboxExecutor] 已清理沙箱容器: container={container}, thread_id={thread_id}")
         else:
-            logger.debug(f"[SandboxExecutor] 容器未在本进程登记，跳过清理日志: container={container}, thread_id={thread_id}")
+            logger.debug(
+                f"[SandboxExecutor] 容器未在本进程登记，跳过清理日志: container={container}, thread_id={thread_id}"
+            )
 
     # ------------------------------------------------------------------
     # fail-closed 错误与本机执行

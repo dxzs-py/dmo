@@ -22,6 +22,7 @@ import django
 django.setup()
 
 import unittest
+from typing import ClassVar
 
 from rest_framework.exceptions import ValidationError
 
@@ -31,7 +32,7 @@ from Django_xm.apps.knowledge.serializers import RagResponseSerializer
 class RagResponseSerializerSourcesTests(unittest.TestCase):
     """C-4：REST sources 结构化契约（与流式 sources 事件同构）。"""
 
-    _STRUCTURED_SOURCE = {
+    _STRUCTURED_SOURCE: ClassVar[dict] = {
         "content": "LangChain 是一个框架",
         "source": "intro.md",
         "metadata": {"file_name": "intro.md", "page": 3},

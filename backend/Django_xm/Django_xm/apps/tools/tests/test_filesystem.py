@@ -19,6 +19,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
 from unittest import mock
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.test")
@@ -118,8 +119,12 @@ class TestResolveFilesystemContext(_ClearFsCacheMixin):
         """两次不同 config 的 _run 互不串目录（单例工具无实例字段缓存）。"""
         write_tool = FsWriteFileTool()
         with tempfile.TemporaryDirectory() as tmp, _mock_data_dir(tmp):
-            result_a = write_tool._run("notes/a.md", "A", "sess-a", _ctx(thread_id="sess-a", user_id=7, session_id="sess-a"))
-            result_b = write_tool._run("notes/b.md", "B", "sess-b", _ctx(thread_id="sess-b", user_id=8, session_id="sess-b"))
+            result_a = write_tool._run(
+                "notes/a.md", "A", "sess-a", _ctx(thread_id="sess-a", user_id=7, session_id="sess-a")
+            )
+            result_b = write_tool._run(
+                "notes/b.md", "B", "sess-b", _ctx(thread_id="sess-b", user_id=8, session_id="sess-b")
+            )
             self.assertIn("成功", result_a)
             self.assertIn("成功", result_b)
             self.assertTrue((Path(tmp) / "chat" / "7" / "sess-a" / "notes" / "a.md").exists())
@@ -169,7 +174,7 @@ class TestAbsolutePathWriteNotAffected(_ClearFsCacheMixin):
 class TestSensitiveFileProtection(_ClearFsCacheMixin):
     """敏感文件保护清单：命中即硬拒绝（即使路径在 DATA_DIR 内、审批通过）。"""
 
-    _SENSITIVE_CASES = [
+    _SENSITIVE_CASES: ClassVar[list] = [
         ".env",
         ".env.local",
         "settings.py",
@@ -217,10 +222,9 @@ class TestSensitiveFileProtection(_ClearFsCacheMixin):
         """非敏感文件正常读写（清单不误伤普通业务文件）。"""
         write_tool = FsWriteFileTool()
         read_tool = FsReadFileTool()
-        with tempfile.TemporaryDirectory() as data_dir:
-            with _mock_data_dir(data_dir):
-                write_result = write_tool._run("notes/report.md", "hello", "sess-1", _ctx(thread_id="sess-1"))
-                read_result = read_tool._run("notes/report.md", "sess-1", _ctx(thread_id="sess-1"))
+        with tempfile.TemporaryDirectory() as data_dir, _mock_data_dir(data_dir):
+            write_result = write_tool._run("notes/report.md", "hello", "sess-1", _ctx(thread_id="sess-1"))
+            read_result = read_tool._run("notes/report.md", "sess-1", _ctx(thread_id="sess-1"))
         self.assertIn("成功", write_result)
         self.assertEqual(read_result, "hello")
 

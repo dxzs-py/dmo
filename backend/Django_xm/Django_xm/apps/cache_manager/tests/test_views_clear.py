@@ -1,7 +1,7 @@
 """cache_manager 视图测试（dj-01 权限收紧 + dj-03 异常文案回归）。
 
 覆盖：
-- CacheClearView 权限矩阵：普通用户 scope=all/model/pattern → 403；
+- CacheClearView 权限矩阵：普通用户 scope=all/pattern → 403；
   普通用户 scope=query → 200 且仅删除自身 rag_query 前缀；管理员 scope=all → 200
 - scope 非法值 → 400（VALIDATION_FAILED）
 - 异常路径经全局 handler 返回统一通用文案，不泄漏 str(e) 细节
@@ -41,11 +41,6 @@ class CacheClearPermissionMatrixTests(TestCase):
         """普通用户全量清缓存 → 403（修复前：一键清空全站缓存）。"""
         self.client.force_authenticate(user=self.user)
         resp = self.client.post(CLEAR_URL, {"scope": "all"}, format="json")
-        self.assertEqual(resp.status_code, 403)
-
-    def test_normal_user_scope_model_forbidden(self):
-        self.client.force_authenticate(user=self.user)
-        resp = self.client.post(CLEAR_URL, {"scope": "model"}, format="json")
         self.assertEqual(resp.status_code, 403)
 
     def test_normal_user_scope_pattern_forbidden(self):
@@ -90,24 +85,6 @@ class CacheClearPermissionMatrixTests(TestCase):
         self.client.force_authenticate(user=self.admin)
         resp = self.client.post(CLEAR_URL, {"scope": "pattern"}, format="json")
         self.assertEqual(resp.status_code, 400)
-
-    def test_admin_model_scope_pattern_matches_writer(self):
-        """A1 回归：scope=model 的删除模式必须与唯一写入方 get_model_string() 同源。
-
-        修复前用 get_openai_config()["model"]（纯模型名，无 provider 前缀），
-        与实际键 model_response:{get_model_string()}:... 错配，清理永不命中。
-        D9 起单轨：模型响应缓存由 ModelResponseCacheService 唯一承担，单次调用。
-        """
-        from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
-
-        expected_prefix = f"model_response:{get_model_string()}"
-        self.client.force_authenticate(user=self.admin)
-        with mock.patch.object(cache_views.CacheService, "delete_pattern", return_value=1) as mock_dp:
-            resp = self.client.post(CLEAR_URL, {"scope": "model"}, format="json")
-        self.assertEqual(resp.status_code, 200)
-        mock_dp.assert_called_once()
-        pattern = mock_dp.call_args.args[0]
-        self.assertTrue(pattern.startswith(expected_prefix), f"pattern={pattern}, expected prefix={expected_prefix}")
 
     def test_admin_scope_all_allowed(self):
         """管理员全量清缓存 → 200（Redis 客户端不可用时跳过删除，仍成功）。"""

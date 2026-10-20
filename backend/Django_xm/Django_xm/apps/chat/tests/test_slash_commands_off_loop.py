@@ -43,6 +43,7 @@ import asyncio
 import threading
 import time
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest import mock
 
 from django.test import SimpleTestCase
@@ -195,7 +196,7 @@ class CommandBehaviorParityTests(SimpleTestCase):
     其余命令均为纯 CPU 路径。
     """
 
-    _REGISTRY = {
+    _REGISTRY: ClassVar[dict] = {
         "p1": {"models": [{"name": "m1"}, {"name": "m2"}], "default_model": "m1"},
         "p2": {"model_names": ["m3"], "default_model": "m3"},
     }
@@ -282,7 +283,7 @@ class CommandBehaviorParityTests(SimpleTestCase):
 class _CaptureFbCallback:
     """记录构造参数的 FallbackDetectionCallback 替身"""
 
-    instances: list = []
+    instances: ClassVar[list] = []
 
     def __init__(self, expected_provider="", expected_model=""):
         self.expected_provider = expected_provider

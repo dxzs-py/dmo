@@ -142,10 +142,9 @@ class UnconditionalSaveTests(unittest.TestCase):
             mock.patch.object(IndexManager, "get_backend", return_value=backend),
             mock.patch.object(IndexManager, "_save_metadata"),
             mock.patch.object(IndexManager, "_set_index_status"),
-            mock.patch.object(IndexManager, "_cache"),
+            mock.patch.object(IndexManager, "_cache"),self.assertRaises(RuntimeError)
         ):
-            with self.assertRaises(RuntimeError):
-                manager.create_index("user_1_kb", documents=[mock.MagicMock()], embeddings=mock.MagicMock())
+            manager.create_index("user_1_kb", documents=[mock.MagicMock()], embeddings=mock.MagicMock())
 
     def test_no_store_type_hardcode_in_write_paths(self):
         """源代码级锁定：index_service 不再含 `!= "pgvector"` 持久化硬判。"""

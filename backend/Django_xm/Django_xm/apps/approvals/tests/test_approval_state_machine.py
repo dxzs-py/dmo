@@ -447,7 +447,7 @@ class _FakeRedis:
     def __init__(self) -> None:
         self.store: dict[str, str] = {}
 
-    def set(self, key, value, nx=False, ex=None):  # noqa: A002 - 对齐 redis-py 签名
+    def set(self, key, value, nx=False, ex=None):
         if nx and key in self.store:
             return None
         self.store[key] = value
@@ -512,7 +512,7 @@ class TimeoutApprovalLockLifecycleTests(TestCase):
 
     def test_timeout_internal_error_still_releases_lock(self) -> None:
         """处理中途异常：锁必须仍被释放（try/finally 保护，不残留至 TTL）。"""
-        approval = _make_approval("call_tl3", graph_interrupt_id="gid-tl3")
+        _ = _make_approval("call_tl3", graph_interrupt_id="gid-tl3")
 
         with mock.patch.object(
             approval_service, "persist_and_broadcast", side_effect=RuntimeError("boom")

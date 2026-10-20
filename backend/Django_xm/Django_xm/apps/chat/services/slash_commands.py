@@ -336,7 +336,7 @@ def execute_command(
         context["all_commands"] = COMMANDS
         result = command.handler(context)
         return result
-    except Exception as e:
+    except Exception:
         # A1.4（审计 F1-4）：固定可行动文案，异常原文仅进日志（此前 f"{e!s}"
         # 裸透出；F1-1 修复后 error 事件会直达用户，需一并收敛）
         logger.exception(f"执行命令 /{command_name} 失败")

@@ -88,7 +88,12 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
    - 简答题：每题20-30分
    - 总分控制在100分左右
 
-请确保题目清晰、答案准确、解析详细。"""
+请确保题目清晰、答案准确、解析详细。
+
+输出完整性要求（重要）：
+- 每道题必须包含全部字段：id、type、question、answer、explanation、points
+- explanation（答案解析）为必填字段，任何题型都不得省略；简答题的 explanation 写评分要点
+- 选择题必须提供 options（4 个选项），其他题型 options 为 null"""
 
         user_prompt = f"""学习计划：
 主题：{learning_plan["topic"]}

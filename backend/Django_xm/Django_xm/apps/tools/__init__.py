@@ -282,7 +282,7 @@ async def _load_mcp_tools_async(
             return_exceptions=True,
         )
         all_mcp_tools: list[BaseTool] = []
-        for srv, result in zip(servers, _results):
+        for srv, result in zip(servers, _results, strict=True):
             srv_name = srv.get("name", "unknown")
             if isinstance(result, BaseException):
                 logger.warning(
@@ -797,9 +797,9 @@ __all__ = [
     "TOOL_VERSION",
     "TRANSLATION_TOOLS",
     "WEATHER_TOOLS",
-    "ResearchFileSystem",
     "ActivateSkillTool",
     "ReadSkillResourceTool",
+    "ResearchFileSystem",
     "SkillAdapter",
     "SkillBaseTool",
     "SkillLoader",

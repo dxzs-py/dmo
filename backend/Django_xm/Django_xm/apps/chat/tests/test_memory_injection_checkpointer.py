@@ -20,7 +20,8 @@
    获取在工作线程执行，失败/无记忆降级空串，无 session_id 不触发获取；
 2. AgentService 装配：use_checkpointer 且注入文本非空 → AgentConfig.middleware
    含 MemoryInjectionMiddleware；文本为空或非 checkpointer → 不装配；
-3. 中间件语义：wrap/awrap_model_call 前插 SystemMessage（request.override），
+3. 中间件语义：wrap/awrap_model_call 把注入块合并进最后一条 user message
+   的 content（request.override，P0-1 注入位置：尾部易变区保缓存前缀），
    空/空白文本透传，不改写原请求消息列表；
 4. 验收（spec 1.2）：连续 3 轮带注入对话后，checkpoint state messages 中无任何
    【知识图谱上下文】/【跨会话上下文】SystemMessage。
@@ -47,7 +48,13 @@ from Django_xm.apps.chat.services.chat_service import ChatService
 from Django_xm.apps.context_manager.middleware import MemoryInjectionMiddleware
 
 _MEMORY_CONTEXT = "【跨会话上下文】\n用户此前决定使用 LangGraph 构建多智能体。"
-_INJECTION_NOTE = "（以上为历史会话与知识图谱记忆，供回答时参考；与当前问题无关的内容可忽略。）"
+# P0-1 分区裁决：builder 链易变分区（当前时间/文档上下文）经 merge_injection_text
+# 前插并入同一注入块，尾注以"以上"指代其前文的全部注入内容（文案与
+# chat_service._build_stream_agent_and_input 组装处保持一致）。
+_INJECTION_NOTE = (
+    "（以上为系统注入的参考信息（历史会话、知识图谱记忆、当前时间、"
+    "已上传文档摘要等），供回答时参考；与当前问题无关的内容可忽略。）"
+)
 _INJECTION_TEXT = f"{_MEMORY_CONTEXT}\n\n{_INJECTION_NOTE}"
 
 _THREAD_CONFIG = {"configurable": {"thread_id": "t1"}}
@@ -280,7 +287,7 @@ class AgentServiceMiddlewareWiringTests(SimpleTestCase):
 
 
 class MemoryInjectionMiddlewareTests(SimpleTestCase):
-    """MemoryInjectionMiddleware 语义单测（request.override 前插，不写 state）。"""
+    """MemoryInjectionMiddleware 语义单测（request.override 合并注入，不写 state）。"""
 
     @staticmethod
     def _make_request(messages):
@@ -295,7 +302,8 @@ class MemoryInjectionMiddlewareTests(SimpleTestCase):
             runtime=None,
         )
 
-    def test_wrap_model_call_prepends_system_message(self):
+    def test_wrap_model_call_merges_into_last_user_message(self):
+        """注入块合并进最后一条 user message content（注入在前，原文紧随）"""
         request = self._make_request([HumanMessage(content="hi")])
         captured = {}
 
@@ -308,14 +316,20 @@ class MemoryInjectionMiddlewareTests(SimpleTestCase):
 
         self.assertEqual(result, "ok")
         overridden_messages = captured["request"].messages
-        self.assertEqual(len(overridden_messages), 2)
-        self.assertIsInstance(overridden_messages[0], SystemMessage)
-        self.assertEqual(overridden_messages[0].content, _INJECTION_TEXT)
-        self.assertIs(overridden_messages[1], request.messages[0])
+        self.assertEqual(len(overridden_messages), 1)
+        merged = overridden_messages[0]
+        self.assertIsInstance(merged, HumanMessage)
+        self.assertIn(MemoryInjectionMiddleware._INJECTION_BEGIN_MARK, merged.content)
+        self.assertIn(_INJECTION_TEXT, merged.content)
+        self.assertTrue(merged.content.endswith("hi"))
+        self.assertLess(
+            merged.content.index(_INJECTION_TEXT), merged.content.index("hi")
+        )
         # 原请求消息列表不被改写（override 返回新请求）
         self.assertEqual(len(request.messages), 1)
+        self.assertEqual(request.messages[0].content, "hi")
 
-    def test_awrap_model_call_prepends_system_message(self):
+    def test_awrap_model_call_merges_into_last_user_message(self):
         request = self._make_request([HumanMessage(content="hi")])
         captured = {}
 
@@ -328,8 +342,8 @@ class MemoryInjectionMiddlewareTests(SimpleTestCase):
 
         self.assertEqual(result, "ok-async")
         overridden_messages = captured["request"].messages
-        self.assertIsInstance(overridden_messages[0], SystemMessage)
-        self.assertEqual(overridden_messages[0].content, _INJECTION_TEXT)
+        self.assertIsInstance(overridden_messages[0], HumanMessage)
+        self.assertIn(_INJECTION_TEXT, overridden_messages[0].content)
 
     def test_empty_text_passthrough(self):
         """空/空白注入文本：完全透传（handler 收到原请求对象，零开销）"""
@@ -338,7 +352,7 @@ class MemoryInjectionMiddlewareTests(SimpleTestCase):
             captured = {}
 
             def handler(req):
-                captured["request"] = req
+                captured["request"] = req  # noqa: B023 -- captured 每轮重建且当轮同步消费，无 late-binding 风险
                 return "ok"
 
             middleware = MemoryInjectionMiddleware(injection_text=text)

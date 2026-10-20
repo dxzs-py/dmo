@@ -177,8 +177,8 @@ class CaptchaMixin:
     验证码校验 Mixin
 
     在视图的 post() 方法中调用 verify_captcha() 进行验证码校验。
-    校验成功或未提供验证码（验证码为可选）时静默返回；
-    校验失败抛出 BaseAppError，冒泡至全局异常处理器。
+    校验通过时静默返回；校验失败（含未携带验证码字段，缺失即拒绝）抛出
+    BaseAppError，冒泡至全局异常处理器。
     """
 
     @staticmethod
@@ -193,13 +193,16 @@ class CaptchaMixin:
             request_data: 请求数据（dict 或 QueryDict）
 
         Raises:
-            BaseAppError: 验证码已过期或错误（code=CAPTCHA_ERROR，HTTP 400）
+            BaseAppError: 未携带验证码，或验证码已过期/错误
+                          （code=CAPTCHA_ERROR，HTTP 400）
         """
         captcha_key = request_data.get("captcha_key")
         captcha_code = request_data.get("captcha", "").lower()
 
+        # 缺失即拒绝：验证码是防自动化请求的后端防线，前端表单只是触发方；
+        # 若缺失时静默放行，绕过 UI 的脚本请求省略字段即可跳过整个验证码机制
         if not captcha_key or not captcha_code:
-            return
+            raise BaseAppError("请输入验证码", business_code=ErrorCode.CAPTCHA_ERROR)
 
         stored_code = cache.get(_cache_key(captcha_key))
 

@@ -29,8 +29,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.test import SimpleTestCase
 
-from Django_xm.async_utils import run_async
 from Django_xm.apps.research.services import writeback
+from Django_xm.async_utils import run_async
 from Django_xm.common.event_schema import EventType
 from Django_xm.common.realtime_events import _publish_to_task_async
 

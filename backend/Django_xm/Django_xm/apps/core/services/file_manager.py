@@ -27,9 +27,7 @@ def is_safe_relative_filename(filename: str | None) -> bool:
     if candidate.is_absolute() or candidate.drive or candidate.root:
         # 绝对路径 / 盘符形态（含 "D:file"）/ 根锚定（Windows 下 "/x" 非 absolute 但有 root）
         return False
-    if ".." in candidate.parts:
-        return False
-    return True
+    return ".." not in candidate.parts
 
 
 class FileType:

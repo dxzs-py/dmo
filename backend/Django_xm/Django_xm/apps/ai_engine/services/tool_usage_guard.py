@@ -324,7 +324,8 @@ class ToolUsageGuard:
     按 thread_id 隔离状态：
     - _file_cache: (thread, path) -> (content_hash, timestamp)         [fs_write_file 专用]
     - _resource_cache: (thread, tool, resource_key) -> (payload_hash, ts)  [通用]
-    - _resource_recent: (thread, tool, resource_key) -> Deque[(ts, payload_hash)]  [通用 loop，尝试历史：含 DEDUP/BLOCK 被拦调用，支撑 BLOCK 升级链]
+    - _resource_recent: (thread, tool, resource_key) -> Deque[(ts, payload_hash)]
+      [通用 loop，尝试历史：含 DEDUP/BLOCK 被拦调用，支撑 BLOCK 升级链]
     - _path_recent_contents: (thread, path) -> Deque[(ts, content)]    [fs_write_file diff，只记真实执行的写入（E1b）]
     - _consecutive_blocked: thread -> int
 
@@ -615,7 +616,7 @@ class ToolUsageGuard:
         prev_contents = [c for _, c in list(recent)[-2:]]
         if len(prev_contents) < 1:
             return None
-        contents = prev_contents + [content]
+        contents = [*prev_contents, content]
         diffs = []
         for i in range(1, len(contents)):
             d = self._text_diff_ratio(contents[i - 1], contents[i])

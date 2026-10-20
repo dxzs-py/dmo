@@ -112,7 +112,7 @@ class SearchKnowledgeBaseTests(unittest.TestCase):
         store.similarity_search_with_score.assert_not_called()
 
     def test_normal_path_returns_flat_items_and_caches(self):
-        manager, store, cache_svc, _, _ = self._patch_common()
+        _manager, _store, cache_svc, _, _ = self._patch_common()
 
         results = search_knowledge_base(_FakeUser(), "kb1", "查询", top_k=3)
 

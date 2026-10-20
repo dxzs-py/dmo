@@ -13,9 +13,9 @@ from pydantic import BaseModel, Field
 
 from Django_xm.apps.core.logging_utils import get_logger
 
+from ..models import WorkflowStep
 from ..services._model_helper import get_structured_model_from_state
 from ..services.state import StudyFlowState
-from ..models import WorkflowStep
 from .stream_events import emit_step
 
 logger = get_logger(__name__)

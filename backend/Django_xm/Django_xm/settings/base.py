@@ -387,6 +387,7 @@ CELERY_TASK_ROUTES = {
     "analytics.track_event": {"queue": "celery"},
     "approvals.cleanup_expired_approvals": {"queue": "celery"},
     "approvals.process_outbox": {"queue": "celery"},
+    "subagent_wait.cleanup_expired_waits": {"queue": "celery"},
 }
 
 # 附件治理配置：真相源为 ProjectSettings（apps/core/config.py，env 键名一致映射），
@@ -430,6 +431,12 @@ CELERY_BEAT_SCHEDULE = {
     },
     "cleanup-expired-approvals-every-minute": {
         "task": "approvals.cleanup_expired_approvals",
+        "schedule": 60.0,
+    },
+    # 子代理业务等待（wait_for_subagent）超时清扫：仅覆盖父=子代理的挂起
+    # （主图挂起由 FastAPI 进程内 watchdog 兜底，见 tasks/subagent_wait_tasks.py）。
+    "cleanup-expired-subagent-waits-every-minute": {
+        "task": "subagent_wait.cleanup_expired_waits",
         "schedule": 60.0,
     },
     "process-approval-outbox-every-5s": {
@@ -536,6 +543,30 @@ AGENT_SUBAGENT_CONCURRENCY = 8
 # fan-in 等待者立即收到失败，不悬挂到 watchdog 7200s）。
 # 代码级兜底同值：concurrency.py DEFAULT_SUBAGENT_ACQUIRE_TIMEOUT。
 AGENT_SUBAGENT_ACQUIRE_TIMEOUT = 30.0
+
+# wait_for_subagent 显式超时（秒）。默认 7200 对齐 SessionExecutor 挂起
+# watchdog（B6 超时矩阵）：父图挂起在 _subagent_wait 时 interrupt payload 与
+# SubAgentInstance.pending_interrupt_info 携带 deadline（epoch 秒），超时由
+# Celery beat 清扫任务（subagent_wait_tasks.cleanup_expired_subagent_waits）
+# 经 SubAgentRuntime.resume 唤醒父图走失败路径。覆盖范围边界：beat 仅清扫
+# 父=子代理的挂起（可持久化、可跨进程 resume）；主图（chat/research 会话）
+# 的等待不在 SubAgentInstance 表内，仍由 FastAPI 进程内 watchdog
+# （_finalize_suspended_timeout）兜底。
+# 代码级兜底同值：agent_hub/subagent_tools/wait.py DEFAULT_WAIT_TIMEOUT_SECONDS。
+AGENT_SUBAGENT_WAIT_TIMEOUT = 7200
+
+# wait_for_subagent fan-in 汇总预算（字符）。
+# - 单条上限 5000：对齐 result_preview 提取上限（langgraph_adapter._extract_result
+#   截 5000 字符），正常路径单条结果天然在限内，兜底防御未来上限调整；
+# - 总预算 48000 的换算依据：按 128k token 父上下文、目标汇总 ≤ 25%
+#   （≈32k token）、中文约 1.5-2 char/token 折算 → 48k-64k 字符，取保守值
+#   48000（≈24k-32k token）。8 路并发满载（8×5000=40000 字符）在预算内，
+#   超载由总预算按优先级收敛（failed 优先保留，completed 依次压缩）。
+# 消费方：wait.py format_subagent_results_text（超预算时在汇总尾部标注
+# "已截断，完整结果见子代理详情"）。
+# 代码级兜底同值：wait.py DEFAULT_RESULT_MAX_CHARS / DEFAULT_TOTAL_BUDGET_CHARS。
+AGENT_SUBAGENT_RESULT_MAX_CHARS = 5000
+AGENT_SUBAGENT_RESULTS_TOTAL_BUDGET = 48000
 
 # ── Shell Exec 安全配置 ──────────────────────────────────────────
 # 白名单命令：单一真相源在 Django_xm.apps.tools.langchain.shell.DEFAULT_WHITELIST_COMMANDS，

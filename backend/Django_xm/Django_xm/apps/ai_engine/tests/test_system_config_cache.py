@@ -23,7 +23,6 @@ from django.core.cache import cache
 from django.test import TestCase, TransactionTestCase
 
 from Django_xm.apps.ai_engine.models import (
-    SYSTEM_CONFIG_CACHE_TTL,
     SystemConfig,
     _cache_key,
     warmup_system_config_cache,

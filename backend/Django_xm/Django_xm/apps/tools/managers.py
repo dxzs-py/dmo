@@ -60,7 +60,7 @@ def _drf_validation_message(exc) -> str:
 
 
 # auth_token 掩码回显前缀：以该前缀开头的值识别为掩码（非真实凭证）
-MASKED_AUTH_TOKEN_PREFIX = "******"
+MASKED_AUTH_TOKEN_PREFIX = "******"  # noqa: S105 -- 掩码标记字面量，非凭证
 
 
 def mask_auth_token(token: str) -> str:
@@ -368,9 +368,10 @@ class McpToolManager(BaseToolManager):
     # ---- MCP 专属方法 ----
 
     def add_server(self, user, config_dict: dict[str, Any]) -> dict[str, Any]:
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+
         from Django_xm.apps.tools.models import McpServerConfig, ToolCategory
         from Django_xm.apps.tools.serializers import is_mcp_admin, validate_mcp_server_url
-        from rest_framework.exceptions import ValidationError as DRFValidationError
 
         name = config_dict.get("name", "")
         transport = config_dict.get("transport", "sse")
@@ -434,9 +435,10 @@ class McpToolManager(BaseToolManager):
             return {"success": False, "error_code": "UNKNOWN", "message": f"添加失败: {e}"}
 
     def update_server(self, user, config_dict: dict[str, Any]) -> dict[str, Any]:
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+
         from Django_xm.apps.tools.models import McpServerConfig, ToolCategory
         from Django_xm.apps.tools.serializers import is_mcp_admin, validate_mcp_server_url
-        from rest_framework.exceptions import ValidationError as DRFValidationError
 
         name = config_dict.get("name", "")
         if not name:

@@ -22,8 +22,8 @@ django.setup()
 
 from django.test import SimpleTestCase
 
-from Django_xm.async_utils import run_async
 from Django_xm.apps.tools.mcp import get_mcp_tools
+from Django_xm.async_utils import run_async
 
 MCP_URL = "https://mcp.example-public.com/mcp"
 

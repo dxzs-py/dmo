@@ -16,16 +16,15 @@ logger = logging.getLogger(__name__)
 
 # WorkflowStep 的完整合法取值集合（延迟构建，避免模块级导入 models 触发 app 加载顺序问题）。
 # 用于区分"已登记的步骤"与"未知/拼写错误的步骤"，后者会打 warning 而非静默降级。
-_KNOWN_STEPS: frozenset[str] | None = None
+_KNOWN_STEPS_HOLDER: list[frozenset[str]] = []
 
 
 def _known_steps() -> frozenset[str]:
-    global _KNOWN_STEPS
-    if _KNOWN_STEPS is None:
+    if not _KNOWN_STEPS_HOLDER:
         from Django_xm.apps.learning.models import WorkflowStep
 
-        _KNOWN_STEPS = frozenset(WorkflowStep.values)
-    return _KNOWN_STEPS
+        _KNOWN_STEPS_HOLDER.append(frozenset(WorkflowStep.values))
+    return _KNOWN_STEPS_HOLDER[0]
 file_manager = get_file_manager()
 
 
@@ -188,7 +187,7 @@ class WorkflowPersistenceService:
         显式提供时覆盖——避免图状态缺失该键时，把预创建 session 的继承配置
         覆盖为空/None（首次启动的 root_thread_id、继续练习继承的知识库等）。
         """
-        from Django_xm.apps.learning.models import WorkflowStep, WorkflowSessionStatus
+        from Django_xm.apps.learning.models import WorkflowSessionStatus, WorkflowStep
 
         raw_step = state.get("current_step", "")
         current_step = raw_step or WorkflowStep.START
@@ -196,7 +195,9 @@ class WorkflowPersistenceService:
         # current_step（节点级）→ status（会话级）映射。
         # 未知取值不再**静默**落到 running：拼写错误或前端/后端新增步骤时，
         # 静默兜底会让任务永远显示"运行中"，且无任何痕迹可查。
-        if current_step in (WorkflowStep.COMPLETED, WorkflowStep.FAILED, WorkflowStep.END, WorkflowStep.FEEDBACK_COMPLETED):
+        if current_step in (
+            WorkflowStep.COMPLETED, WorkflowStep.FAILED, WorkflowStep.END, WorkflowStep.FEEDBACK_COMPLETED
+        ):
             status = (
                 WorkflowSessionStatus.COMPLETED
                 if current_step != WorkflowStep.FAILED

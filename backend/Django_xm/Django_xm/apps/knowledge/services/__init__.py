@@ -42,17 +42,17 @@ from .kb_service import (
     update_knowledge_base,
     upload_documents,
 )
-from .rag_evaluation import (
-    GenerationMetrics,
-    RAGEvaluationResult,
-    RAGEvaluator,
-    RetrievalMetrics,
-)
 from .keyword_fallback import (
     build_retrieval_grams,
     is_embedding_error,
     keyword_search_fallback,
     record_degradation_metric,
+)
+from .rag_evaluation import (
+    GenerationMetrics,
+    RAGEvaluationResult,
+    RAGEvaluator,
+    RetrievalMetrics,
 )
 from .retrieval_service import (
     SearchType,

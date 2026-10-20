@@ -13,7 +13,6 @@ finalize_batch_approvals / execute_research_async 等外部依赖全部 mock，�
 """
 
 import asyncio
-import contextlib
 import os
 import time
 import unittest
@@ -1066,7 +1065,9 @@ class TestRecoverChatApprovals(unittest.TestCase):
                     user_id=1,
                     extra={"subagent_thread_id": "sub-1", "graph_interrupt_id": "g0", "message_id": "1"},
                 ),
-                SimpleNamespace(source_id="sess-live", user_id=1, extra={"graph_interrupt_id": "g1", "message_id": "2"}),
+                SimpleNamespace(
+                    source_id="sess-live", user_id=1, extra={"graph_interrupt_id": "g1", "message_id": "2"}
+                ),
                 SimpleNamespace(source_id="sess-empty", user_id=1, extra={"message_id": "3"}),
             ]
             qs = mock.Mock()

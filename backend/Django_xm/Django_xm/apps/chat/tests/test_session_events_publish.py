@@ -49,13 +49,12 @@ class SessionUpdatedPublishTests(TestCase):
 
     def test_patch_publishes_session_updated_with_changed_fields(self):
         """改标题 → 发布 SESSION_UPDATED，fields 仅含 title + updated_at。"""
-        with mock.patch(_PATCH_PUBLISH_TARGET) as publish_mock:
-            with self.captureOnCommitCallbacks(execute=True):
-                response = self.client.patch(
-                    "/api/v1/chat/sessions/sess-d6-pub/",
-                    data={"title": "新标题"},
-                    format="json",
-                )
+        with mock.patch(_PATCH_PUBLISH_TARGET) as publish_mock, self.captureOnCommitCallbacks(execute=True):
+            response = self.client.patch(
+                "/api/v1/chat/sessions/sess-d6-pub/",
+                data={"title": "新标题"},
+                format="json",
+            )
 
         self.assertEqual(response.status_code, 200)
         publish_mock.assert_called_once()

@@ -99,7 +99,9 @@ class EventType(StrEnum):
     # 数据，不参与转换）；其余字段均为前端 camelCase（data.agentName/depth/
     # content/reasoningContent）。
     STREAM_SUBAGENT_CONTENT = "stream_subagent_content"
-    STREAM_EVENT = "stream_event"  # 流式通用事件（approval/deep_research/research_task_id/model_fallback/error/retry/timeout_warning，桥经 event_subtype 注入原始子类型）
+    # 流式通用事件（approval/deep_research/research_task_id/model_fallback/error/
+    # retry/timeout_warning，桥经 event_subtype 注入原始子类型）
+    STREAM_EVENT = "stream_event"
 
     # === 预算事件（WebSocket 推送，COST-01）===
     # 会话级 Token 硬预算耗尽：执行循环终止本轮生成前发布。

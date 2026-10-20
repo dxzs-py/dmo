@@ -27,7 +27,6 @@ from Django_xm.apps.core.config import (
     ProjectSettings,
 )
 
-
 # ==================== Agent 递归深度常量（3A-P2-1）====================
 # LangGraph graph invoke/astream 的 recursion_limit 三档取值（代码级常量，
 # 不进 settings：取值为执行拓扑的工程判断而非运维可调项，避免配置面扩大）。
@@ -288,14 +287,39 @@ class Settings(ProjectSettings):
         "判定为无进展循环并 BLOCK。适用于所有工具（按 tool_fingerprint 注册表）。",
     )
 
-    # ==================== LLM 熔断配置（安全修复 2.6）====================
-    # 原 llm_fallback.py.LazyFallbackChatModel 的硬编码字面量提为配置项，
-    # 默认值与原字面量一致（行为不变，仅可运维调整）。
-    llm_circuit_failure_threshold: int = Field(
+    # ==================== LLM 熔断分级配置（安全修复 2.6 → 熔断分级策略）====================
+    # 原 llm_fallback.py.LazyFallbackChatModel 的硬编码字面量提为配置项。
+    # 分级策略设计理由（替代旧"任意错误连续 2 次即熔断"的单档策略）：
+    # 1. agent 长任务场景下单次 429/超时（瞬时错误）很常见，旧策略单次即熔断，
+    #    导致冷却期内全部请求静默降级到更弱的 fallback 模型，任务质量中途跳水
+    #    且用户无感知——瞬时错误须连续多次确认（默认 5 次）才熔断，期间任一次
+    #    成功即清零计数；
+    # 2. 永久错误（认证/权限/余额类，复用 LazyFallbackChatModel._is_permanent_error
+    #    的单一分类来源）重试无意义，仍立即熔断，避免反复撞墙拖慢失败终态；
+    # 3. half_open 单次探测成功即恢复过脆（限流抖动期侥幸成功会立刻再被打回）——
+    #    要求连续 2 次探测成功才恢复，探测总次数封顶 3 次，探测期任一失败
+    #    立即重新熔断并重置冷却。
+    llm_circuit_transient_threshold: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        description=(
+            "主模型瞬时错误（429/超时/连接失败等可恢复错误）连续失败多少次后熔断（转 OPEN）；任一次成功清零计数"
+        ),
+    )
+
+    llm_circuit_half_open_max_probes: int = Field(
+        default=3,
+        ge=1,
+        le=100,
+        description="half_open 态最多允许的主模型探测次数，耗尽仍未达成连续成功则重新熔断（转 OPEN 并重置冷却）",
+    )
+
+    llm_circuit_half_open_success_threshold: int = Field(
         default=2,
         ge=1,
         le=100,
-        description="主模型连续失败多少次后熔断（Circuit Breaker 转 OPEN，永久性错误立即熔断）",
+        description="half_open 态连续探测成功多少次后恢复（转 CLOSED）",
     )
 
     llm_circuit_breaker_cooldown: float = Field(

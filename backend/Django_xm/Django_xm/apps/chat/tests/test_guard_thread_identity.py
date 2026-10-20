@@ -21,6 +21,7 @@
 """
 
 import uuid
+from typing import ClassVar
 from unittest import mock
 
 from django.test import SimpleTestCase
@@ -49,7 +50,7 @@ def _unique_session() -> str:
 class GuardThreadIdResolutionTests(SimpleTestCase):
     """guard 身份键解析规则（与 judge 侧 _resolve_handoff_thread_id 同源）。"""
 
-    CASES = [
+    CASES: ClassVar[list] = [
         # (config, session_id, expected) —— configurable.thread_id 优先
         ({"configurable": {"thread_id": "sess-A"}}, "ignored", "sess-A"),
         ({"configurable": {}}, "sess-B", "sess-B"),
@@ -68,7 +69,7 @@ class GuardThreadIdResolutionTests(SimpleTestCase):
 class GuardSessionIsolationTests(SimpleTestCase):
     """guard.check 层：两个不同 thread_id 互不影响（表驱动会话对）。"""
 
-    SESSION_PAIRS = [
+    SESSION_PAIRS: ClassVar[list] = [
         ("sess-A", "sess-B"),
         ("chat-20261005-1", "chat-20261005-2"),
         ("u42-abc", "u42-xyz"),
@@ -211,7 +212,7 @@ class TerminationJudgeHandoffIdentityTests(SimpleTestCase):
     """hard-stop 交接身份一致（N-2）：guard 在会话 X hard-stop 后，
     只有 X 的 judge 触发 tool_usage_guard_handoff TERMINATE。"""
 
-    SESSION_PAIRS = [
+    SESSION_PAIRS: ClassVar[list] = [
         ("sess-A", "sess-B"),
         ("chat-20261005-1", "chat-20261005-2"),
     ]

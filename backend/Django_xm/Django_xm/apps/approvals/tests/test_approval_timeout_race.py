@@ -62,7 +62,7 @@ class TimeoutApprovalRaceTests(TestCase):
     def test_lock_inner_approved_not_overridden(self):
         """锁外读 PENDING → 拿锁瞬间被 resume 置 APPROVED → 锁内重读放弃覆盖。"""
         self._patch_side_effects()
-        approval = _make_approval("call-race", "gid-race")
+        _ = _make_approval("call-race", "gid-race")
 
         def acquire_lock_then_resume_wins(lock_key):
             # 模拟竞态：锁外读已过（PENDING），resume_approval 抢先落库 APPROVED

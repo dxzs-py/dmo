@@ -30,6 +30,7 @@ import asyncio
 import threading
 import time
 import unittest
+from contextlib import suppress
 from types import SimpleNamespace
 from unittest import mock
 
@@ -65,14 +66,11 @@ class SaveCrossSessionMemoryCloseExecutorMixin:
 
     @classmethod
     def tearDownClass(cls):
-        try:
+        with suppress(Exception):
             from asgiref.sync import SyncToAsync
-
             from django.db import connections as _connections
 
             SyncToAsync.single_thread_executor.submit(_connections.close_all).result(timeout=10)
-        except Exception:
-            pass
         super().tearDownClass()
 
 
@@ -287,14 +285,11 @@ class SaveTurnSummaryConcurrencyTests(TransactionTestCase):
         # asgiref 共享单线程执行器线程上的残留连接（前序任何测试经
         # sync_to_async(thread_sensitive=True) 触库的连接都落在该常驻线程），
         # 避免测试库销毁时报 "being accessed by other users"。
-        try:
+        with suppress(Exception):
             from asgiref.sync import SyncToAsync
-
             from django.db import connections as _connections
 
             SyncToAsync.single_thread_executor.submit(_connections.close_all).result(timeout=10)
-        except Exception:
-            pass
         super().tearDownClass()
 
     def test_concurrent_turn_summary_merges_not_overwrites(self):
@@ -364,15 +359,13 @@ class SaveTurnSummaryConcurrencyTests(TransactionTestCase):
                             False,
                         )
                     )
-                except BaseException as exc:  # noqa: BLE001 - 测试收集线程异常
+                except BaseException as exc:
                     errors.append(exc)
                 finally:
                     AsyncToSync.loop_thread_executors.pop(loop, None)
-                    try:
+                    with suppress(Exception):
                         # 在 worker 执行器线程内关闭其 Django 连接（确定性强于依赖 GC）
                         executor.submit(connections.close_all).result(timeout=10)
-                    except Exception:
-                        pass
                     executor.shutdown(wait=True)
                     loop.close()
                     connections.close_all()

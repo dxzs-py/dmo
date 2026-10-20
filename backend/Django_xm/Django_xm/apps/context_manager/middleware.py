@@ -513,40 +513,156 @@ class ContextManagerMiddleware(AgentMiddleware):
 
 
 class MemoryInjectionMiddleware(AgentMiddleware):
-    """运行时记忆注入中间件（fix-review-round2 1.2）：模型调用前动态前插注入 SystemMessage。
+    """运行时记忆注入中间件（fix-review-round2 1.2；P0-1 重构注入位置）。
+
+    注入位置（P0-1 prompt caching 修复）：把注入文本（KG/跨会话记忆，chat 侧
+    每请求经 ContextManager.get_injection_context 获取后构造本中间件）以清晰
+    分隔标记**合并进最后一条 user message 的 content**——注入块位于消息序列
+    尾部易变区，``[静态 system prompt + 全部历史消息]`` 成为逐字节稳定的
+    可缓存前缀（旧实现把注入 SystemMessage 前插到消息列表头部，注入内容随
+    对话推进变化，缓存前缀永远在第 2 条消息处断裂，命中率结构性趋近 0）。
+
+    Provider 兼容性决策（为什么合并进 user message 而非中置 SystemMessage）：
+    - langchain factory（langchain/agents/factory.py:1447-1448）最终以
+      ``[request.system_message, *messages]`` 组装模型输入——中置注入
+      SystemMessage 会产生"静态 system + 中部 system"两个非连续 system 消息；
+    - 本环境已安装 langchain-anthropic 1.5.5，且 ai_engine 注册表含可选的
+      "anthropic" provider（config.py:465-499，前端可经 provider_id 选中），
+      chat 路径可能实际运行 ChatAnthropic；其 ``_format_messages``
+      （chat_models.py:512-516）对第二个非连续 system 消息抛
+      ``ValueError("Received multiple non-consecutive system messages.")``；
+    - 合并进 user message content（文本块形态）对 OpenAI 兼容 API
+      （deepseek/groq/ollama，默认 provider=deepseek）与 Anthropic 均合法，
+      同样满足缓存前缀要求，故统一采用合并方案，不做按 provider 分叉。
 
     注入语义（与旧 graph_input 前置注入的本质区别）：
-    - 注入文本（KG/跨会话记忆，chat 侧每请求经 ContextManager.get_injection_context
-      获取后构造本中间件）仅经 ``wrap_model_call`` 的 ``request.override`` 前插到
-      **送达模型**的消息列表，**不写回图 state**——checkpoint state messages 不残留
-      注入消息（旧实现把注入 SystemMessage 放进 graph_input，随 checkpoint 持久化
-      且逐轮堆积）；
-    - 每次模型调用（含工具循环内的多轮调用）都重新前插，注入内容始终新鲜；
+    - 注入仅经 ``wrap_model_call`` 的 ``request.override`` 修改**送达模型**的
+      消息视图，**不写回图 state**——checkpoint state messages 不残留注入内容
+      （旧 graph_input 实现随 checkpoint 持久化且逐轮堆积）；
+    - 工具循环内每次模型调用的 request.messages 均来自干净 state（override
+      不回写），每次都从原始最后一条 user message 重新合并，注入块位置与
+      内容天然一致，无需"未变化则跳过"逻辑（跳过反而会在消息布局变化时
+      丢失注入位置）；
     - 注入文本为空（无 KG/跨会话记忆或获取失败降级）时完全透传，零开销。
 
     system prompt（含研究上下文，经 AgentConfig.system_prompt 注入）由 langchain
-    factory 在模型调用时单独拼接，不在 request.messages 内，本中间件的前插不会
-    挤占或重复 system prompt。
+    factory 在模型调用时单独拼接，不在 request.messages 内，本中间件的合并
+    不会挤占或重复 system prompt。
 
     装配点：仅 chat agent（AgentService.create_agent_with_memory，use_checkpointer
     分支）经 AgentConfig.middleware 显式栈接线；deep_research/子代理等其他
     builder 链路不受影响。
     """
 
+    # 分隔标记：清晰界定"系统注入的记忆"与"用户原始消息"，防止模型把记忆
+    # 内容误认为用户发言（也便于测试与排查时识别注入块边界）
+    _INJECTION_BEGIN_MARK = "〔系统记忆注入开始 · 非用户输入〕"
+    _INJECTION_END_MARK = "〔系统记忆注入结束 · 以下为用户原始消息〕"
+
     def __init__(self, injection_text: str):
         super().__init__()
         self._injection_text = (injection_text or "").strip()
+        self._injection_block = (
+            f"{self._INJECTION_BEGIN_MARK}\n{self._injection_text}\n{self._INJECTION_END_MARK}"
+            if self._injection_text
+            else ""
+        )
+
+    def merge_injection_text(self, extra_text: str | None) -> None:
+        """把另一组装方产出的注入文本并入本实例（前插 + 段落去重，单一注入块）。
+
+        P0-1 前缀缓存裁决（避免双注入）：同一 agent 可能同时存在两个注入
+        文本来源——调用方通道（如 chat 主链 AgentService 按 chat_service 注入
+        文本装配，文本尾部带参考提示尾注）与 builder 链易变分区
+        （attach_volatile_injection：时间戳/文档上下文）。合并进同一实例保证
+        注入内容在单次注入块内出现且只出现一次（按 ``\\n\\n`` 段落 strip 后
+        完全相等去重，时间戳等重叠段落保留先到者）。
+
+        前插语义：extra 段落插到现有文本**之前**——builder 易变分区（当前
+        时间/文档上下文）置于块首，调用方文本与其尾注（"以上为……"指代
+        前文）保持在其所述内容之后，语义自洽。
+
+        Args:
+            extra_text: 待并入的注入文本（空/空白时no-op）
+        """
+        extra = (extra_text or "").strip()
+        if not extra:
+            return
+
+        parts: list[str] = (
+            [p.strip() for p in self._injection_text.split("\n\n") if p.strip()]
+            if self._injection_text
+            else []
+        )
+        existing_keys = set(parts)
+        extra_parts: list[str] = []
+        for part in (p.strip() for p in extra.split("\n\n")):
+            if not part or part in existing_keys:
+                continue
+            extra_parts.append(part)
+            existing_keys.add(part)
+
+        if not extra_parts:
+            return
+        self._injection_text = "\n\n".join([*extra_parts, *parts])
+        self._injection_block = (
+            f"{self._INJECTION_BEGIN_MARK}\n{self._injection_text}\n{self._INJECTION_END_MARK}"
+            if self._injection_text
+            else ""
+        )
 
     def wrap_model_call(self, request: ModelRequest, handler):
-        """模型调用前把注入文本前插到送达模型的消息列表（request.override，不写 state）"""
+        """模型调用前把注入块合并进最后一条 user message（request.override，不写 state）"""
         if not self._injection_text:
             return handler(request)
-        injected = [SystemMessage(content=self._injection_text), *request.messages]
-        return handler(request.override(messages=injected))
+        return handler(request.override(messages=self._build_injected_messages(list(request.messages))))
 
     async def awrap_model_call(self, request: ModelRequest, handler):
         """异步版本：语义同 wrap_model_call"""
         if not self._injection_text:
             return await handler(request)
-        injected = [SystemMessage(content=self._injection_text), *request.messages]
-        return await handler(request.override(messages=injected))
+        return await handler(request.override(messages=self._build_injected_messages(list(request.messages))))
+
+    def _build_injected_messages(self, messages: list[BaseMessage]) -> list[BaseMessage]:
+        """构造注入后的消息视图：注入块合并进最后一条 user message 的 content
+
+        布局不变量：最后一条 user message 之前的所有消息原样保留（含对象
+        身份），保证 ``[静态 system + 全部历史]`` 前缀跨模型调用逐字节稳定。
+        """
+        last_user_idx = self._find_last_user_message_index(messages)
+        if last_user_idx is None:
+            # 消息列表无 user message（chat 链路实际不可达：每轮 graph_input
+            # 必含本轮 human_msg，Command(resume) 续跑分支也有历史 human 消息），
+            # 此分支为防御性兜底：注入文本不能静默丢弃（等价于记忆静默降级），
+            # 也不能伪造 user 消息改变对话语义，故以 SystemMessage 追加到列表
+            # 末尾——保持既有消息时序不动，注入内容仍送达模型。
+            return [*messages, SystemMessage(content=self._injection_block)]
+
+        result = list(messages)
+        result[last_user_idx] = self._merge_injection_into_user_message(messages[last_user_idx])
+        return result
+
+    @staticmethod
+    def _find_last_user_message_index(messages: list[BaseMessage]) -> int | None:
+        """定位最后一条 user message（langchain 中 HumanMessage.type == "human"）"""
+        for i in range(len(messages) - 1, -1, -1):
+            if isinstance(messages[i], HumanMessage):
+                return i
+        return None
+
+    def _merge_injection_into_user_message(self, message: HumanMessage) -> HumanMessage:
+        """把注入块合并进单条 user message 的 content（注入块在前，原文紧随）
+
+        content 为 str 时拼接为 ``注入块\\n\\n原文``；content 为多模态块列表时
+        在首部插入独立 text 块（OpenAI 与 Anthropic 均接受该形态）。保留原
+        消息 id 与 additional_kwargs，维持消息身份与附件提示等元数据。
+        """
+        if isinstance(message.content, str):
+            merged_content: str | list = f"{self._injection_block}\n\n{message.content}"
+        else:
+            merged_content = [{"type": "text", "text": self._injection_block}, *message.content]
+        return HumanMessage(
+            content=merged_content,
+            id=message.id,
+            additional_kwargs=message.additional_kwargs,
+        )

@@ -148,7 +148,9 @@ class AgentFactory:
             # fail_fast_on_preflight=True，预检内部异常也不阻止，仅预检结果
             # 未通过才阻止）。D-10：debug→exception——生产日志级别常为 INFO，
             # debug 会吞掉预检异常堆栈，"agent 预检从未生效"将无痕
-            logger.exception(f"[AgentFactory] 预检异常（忽略，不阻止创建）: {e}")
+            logger.exception(
+                f"[AgentFactory] 预检异常（忽略，不阻止创建）: {e}"  # noqa: TRY401 -- 异常摘要保留在文案中
+            )
 
         builders = cls._get_builders()
         builder = builders.get(config.agent_type)

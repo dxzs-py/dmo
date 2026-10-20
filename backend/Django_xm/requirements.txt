@@ -40,6 +40,8 @@ langchain-community>=0.4.1
 langchain-openai>=1.0.2
 langchain-groq>=1.1.0
 langchain-ollama>=1.1.0
+# Anthropic provider：ai_engine/config.py 模型注册表的可选 provider，前端可经 provider_id 选中
+langchain-anthropic>=1.5.5
 langchain-chroma>=0.2.0
 langchain-postgres>=0.0.12
 langchain-mcp-adapters>=0.1.0
@@ -94,5 +96,7 @@ asgiref>=3.11.1
 typing_extensions>=4.15.0
 pillow>=12.1.1
 
-# --- 依赖方向契约校验（.importlinter 三契约）---
+# --- 依赖方向契约校验（.importlinter，共 8 条契约；存量 broken 基线 = 1：
+#     capabilities.builtin→tools→skills.tool→agent_hub.approval.step_gate，CI 门禁为
+#     "broken 数不得超过 1"，防止新增违规环）---
 import-linter>=2.0

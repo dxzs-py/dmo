@@ -730,7 +730,10 @@ _PANDOC_BLOCK_FLAGS = frozenset(
 _PANDOC_BLOCK_LONG_PREFIXES = ("--output=", "--output-dir=", "--extract-media=", "--log=", "--lua-filter=", "--filter=")
 # 取值的非路径 flag（格式/元数据类，其值不参与路径校验）
 _PANDOC_VALUE_FLAGS = frozenset(
-    {"-f", "--from", "--read", "-t", "--to", "--write", "-M", "--metadata", "-V", "--variable", "--indented-code-classes", "--column-spec"}
+    {
+        "-f", "--from", "--read", "-t", "--to", "--write", "-M", "--metadata",
+        "-V", "--variable", "--indented-code-classes", "--column-spec",
+    }
 )
 
 
@@ -976,7 +979,7 @@ def _reap_after_kill(process: subprocess.Popen, is_windows: bool) -> None:
     try:
         process.wait(timeout=5)
     except Exception:
-        logger.error(f"shell_exec: 进程强杀后仍未退出（疑似不可回收），pid={process.pid}")
+        logger.exception(f"shell_exec: 进程强杀后仍未退出（疑似不可回收），pid={process.pid}")
 
 
 def _execute_command(
@@ -1171,18 +1174,22 @@ class ShellExecTool(AsyncToolMixin, BaseTool):
     )
     description: str = (
         "执行 Shell 命令并返回输出结果。"
-        "适用场景：需要运行命令行工具（如 pandoc 只读转换、python manage.py 安全子命令等）、查看系统信息、执行自动化任务。"
+        "适用场景：需要运行命令行工具（如 pandoc 只读转换、python manage.py 安全子命令等）、"
+        "查看系统信息、执行自动化任务。"
         "不适用：文件读写（应使用 fs_read_file/fs_write_file）、网络搜索（应使用 web_search）。"
         "参数：command-要执行的命令（必填），timeout-超时秒数（默认60），working_dir-工作目录（默认当前目录）。"
-        "安全策略：白名单命令（pandoc stdout 只读转换、git status、python manage.py help/check/showmigrations/test/migrate --check 等安全子命令）直接执行；"
-        "cat/type/ls/dir/head/tail/wc/find 等文件读取命令仅放行允许目录内的路径参数（SHELL_EXEC_ALLOWED_DIRS/DATA_DIR），"
+        "安全策略：白名单命令（pandoc stdout 只读转换、git status、"
+        "python manage.py help/check/showmigrations/test/migrate --check 等安全子命令）直接执行；"
+        "cat/type/ls/dir/head/tail/wc/find 等文件读取命令仅放行允许目录内的路径参数"
+        "（SHELL_EXEC_ALLOWED_DIRS/DATA_DIR），"
         ".env/密钥等敏感文件一律需审批；"
         "curl 仅放行 GET 类只读用法（-X 只允许 GET，URL 协议仅 http/https，"
         "禁 -d/-T/--data/--upload/-F/--form 等外传形态与 -O/-J/-K/--config 写出配置形态，输出目标限允许目录内）；"
         "pandoc 仅放行 stdout 输出用法（-o/--output 写文件与 --lua-filter/--filter 过滤器需审批）；"
         "agent-browser、python -m pytest/unittest（等价任意代码执行）已移出白名单，需走审批流程；"
         "manage.py 的 shell/dbshell/shell_plus 子命令被禁止（等价任意代码执行）；"
-        "manage.py 其他子命令（migrate/runserver/collectstatic 等）与非白名单命令（含 python/node/npx 等可执行任意代码的解释器）需走审批流程；"
+        "manage.py 其他子命令（migrate/runserver/collectstatic 等）"
+        "与非白名单命令（含 python/node/npx 等可执行任意代码的解释器）需走审批流程；"
         "携带拼接/替换/重定向/管道符号（; && || | > < $( ` 换行）的命令强制走审批"
         "（防止 curl x; bash s.sh、echo $(evil) 等绕过）；"
         "危险命令（rm -rf、shutdown 等）始终拒绝。"

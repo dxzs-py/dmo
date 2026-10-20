@@ -248,7 +248,8 @@ def keyword_search_fallback(query: str, collection_name: str, k: int = 4) -> lis
             rows = cursor.fetchall()
 
         results: list[Document] = []
-        for document, cmetadata, hit_count in rows:
+        for document, raw_cmetadata, hit_count in rows:
+            cmetadata = raw_cmetadata
             # cmetadata 可能已是 dict，也可能是未反序列化的 JSON 字符串
             # （取决于驱动对 json/jsonb 列的解析行为），两种形态都要兼容。
             # 历史实现因 tsquery 从不命中、循环体从未执行，此处一直未被覆盖。

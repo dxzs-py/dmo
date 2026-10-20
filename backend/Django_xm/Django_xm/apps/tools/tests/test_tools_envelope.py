@@ -28,8 +28,8 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from Django_xm.apps.tools import _wrap_mcp_tools_external_content
-from Django_xm.apps.tools.langchain.external_content import EXTERNAL_CONTENT_END, EXTERNAL_CONTENT_START
 from Django_xm.apps.tools.langchain import web_duckduckgo
+from Django_xm.apps.tools.langchain.external_content import EXTERNAL_CONTENT_END, EXTERNAL_CONTENT_START
 
 # 注意：apps.tools.langchain.__init__ 把工具实例（web_search/file_reader）re-export
 # 为与子模块同名，from-import 拿到的是实例而非模块——测试用 importlib 直取模块
@@ -100,7 +100,7 @@ class McpToolEnvelopeTests(unittest.TestCase):
         wrapped = _wrap_mcp_tools_external_content(tools)
         self.assertEqual(len(wrapped), 2)
         self.assertEqual([w.name for w in wrapped], ["dummy_mcp", "mcp_b"])
-        for original, wrapper in zip(tools, wrapped):
+        for original, wrapper in zip(tools, wrapped, strict=True):
             self.assertIsNot(original, wrapper)
             self.assertIs(wrapper.inner, original)
 

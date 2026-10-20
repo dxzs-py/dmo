@@ -159,62 +159,108 @@ async def build_dynamic_context_prompt(
     prompt_mode: str,
     tools=None,
     tools_desc: str | None = None,
-) -> str | None:
-    """共享的动态 system prompt 构建链路（base_builder 与 deep_builder 复用）。
+) -> tuple[str, str] | None:
+    """共享的 system prompt 静态/易变分区构建链路（base_builder 与 deep_builder 复用）。
 
-    链路：create_context_manager → build_prompt_context → build_dynamic_prompt。
+    P0-1 前缀缓存裁决（唯一易变载体原则）：system_prompt 位于消息序列位置 0，
+    agent 每次构建都会重建（chat 主链每请求重建、深度研究 Celery 恢复路径重建），
+    任何易变内容（时间戳、文档上下文）进入 system_prompt 都会使整条 prompt
+    前缀缓存失效。本函数因此把产出拆为两个分区：
+
+    - static_prompt（静态段）：base prompt（prompts.yaml 模板，已剔除时间行）+
+      技能 L1 元数据 + 工具使用说明。同一会话/任务生命周期内逐字节稳定。
+    - volatile_text（易变段）：当前时间行 + 文档上下文（仅 tools 非空时获取，
+      与原 build_prompt_context 的 include_document_context 语义一致）。由调用方
+      经 :func:`attach_volatile_injection` 装配到尾部注入通道
+      （MemoryInjectionMiddleware 合并进最后一条 user message）。
+
+    知识图谱/跨会话分区不在此获取（原链路 query=None 时本就不触发），
+    继续由各自的注入文本组装方（chat_service.get_injection_context 等）承载。
+
     任何一步失败返回 None，由调用方决定回退策略（base 回退静态 get_system_prompt，
-    deep 回退 DEEP_RESEARCH_SYSTEM_PROMPT）。
+    deep 回退 prompt_factory / DEEP_RESEARCH_FALLBACK_PROMPT）。
 
     Args:
         config: AgentConfig 实例（使用 user_id/store/model/model_name/session_id 字段）
         prompt_mode: 提示词模式（如 "default"/"agent"/"deep-research"）
-        tools: 工具列表，非空时注入工具使用说明与文档/知识图谱上下文
+        tools: 工具列表，非空时注入工具使用说明（静态段）与文档上下文（易变段）
         tools_desc: 预构建的工具说明，None 且 tools 非空时内部构建
 
     Returns:
-        构建成功的动态 prompt；失败返回 None（触发调用方静态回退）
+        (static_prompt, volatile_text) 元组；失败返回 None（触发调用方静态回退）
     """
     try:
-        from Django_xm.apps.context_manager.services.manager import create_context_manager
+        skill_instructions = _build_skill_metadata_section(tools)
 
-        model_name_for_prompt = config.model_name or ""
-        if not model_name_for_prompt and config.model is not None:
-            model_name_for_prompt = (
-                getattr(config.model, "model_name", None) or getattr(config.model, "model", None) or ""
-            )
+        from Django_xm.apps.ai_engine.prompts.system_prompts import (
+            TOOL_USAGE_INSTRUCTIONS,
+            format_current_time_line,
+            get_system_prompt,
+        )
+
+        static_prompt = get_system_prompt(mode=prompt_mode, custom_instructions=skill_instructions)
 
         if tools_desc is None and tools:
             mcp_section = _build_mcp_tools_section(tools)
-            from Django_xm.apps.ai_engine.prompts.system_prompts import TOOL_USAGE_INSTRUCTIONS
-
             tools_desc = TOOL_USAGE_INSTRUCTIONS.format(mcp_tools_section=mcp_section)
+        if tools_desc:
+            static_prompt = f"{static_prompt}\n\n<tools>\n{tools_desc}\n</tools>"
 
-        ctx_mgr = create_context_manager(
-            user_id=config.user_id,
-            store=config.store,
-            model_name=model_name_for_prompt,
-            thread_id=config.session_id,
-        )
-        context = await sync_to_async(ctx_mgr.build_prompt_context, thread_sensitive=False)(
-            mode=prompt_mode,
-            session_id=config.session_id,
-            include_document_context=bool(tools),
-            include_knowledge_graph=bool(tools),
-            query=None,
-            model_name=model_name_for_prompt,
-            tools_description=tools_desc,
-        )
-        skill_instructions = _build_skill_metadata_section(tools)
-        from Django_xm.apps.ai_engine.prompts.system_prompts import build_dynamic_prompt
+        volatile_parts: list[str] = [format_current_time_line()]
+        if tools and config.user_id:
+            from Django_xm.apps.context_manager.services.manager import create_context_manager
 
-        prompt = build_dynamic_prompt(
-            mode=prompt_mode,
-            context=context,
-            custom_instructions=skill_instructions,
-        )
+            model_name_for_prompt = config.model_name or ""
+            if not model_name_for_prompt and config.model is not None:
+                model_name_for_prompt = (
+                    getattr(config.model, "model_name", None) or getattr(config.model, "model", None) or ""
+                )
+
+            ctx_mgr = create_context_manager(
+                user_id=config.user_id,
+                store=config.store,
+                model_name=model_name_for_prompt,
+                thread_id=config.session_id,
+            )
+            doc_context = await sync_to_async(ctx_mgr.get_document_context, thread_sensitive=False)()
+            if doc_context:
+                volatile_parts.append(doc_context)
+
+        volatile_text = "\n\n".join(volatile_parts)
         logger.info(f"动态提示词已构建 (mode={prompt_mode}, user={config.user_id})")
-        return prompt
+        return static_prompt, volatile_text
     except Exception as e:
         logger.warning(f"动态提示词构建失败，回退到静态: {e}")
         return None
+
+
+def attach_volatile_injection(middleware_stack: list | None, volatile_text: str | None) -> None:
+    """把易变注入文本装配到尾部注入通道（单一易变载体，base/deep builder 共享）。
+
+    装配语义（避免双注入）：
+    - 栈中已有 MemoryInjectionMiddleware（调用方注入通道已装配，如 chat 主链
+      AgentService 按 chat_service 注入文本装配）→ 合并进已有实例
+      （merge_injection_text 按段落去重，时间戳等重叠内容只出现一次）；
+    - 栈中无注入中间件（子代理 / deep research / 非 checkpointer 链路）→
+      新建实例追加到栈末；
+    - volatile_text 为空 → 什么都不做（注入通道零开销）。
+
+    Args:
+        middleware_stack: builder 中间件栈（原地修改；None 时忽略）
+        volatile_text: build_dynamic_context_prompt 产出的易变注入文本
+    """
+    if not volatile_text or not volatile_text.strip() or middleware_stack is None:
+        return
+
+    from Django_xm.apps.context_manager.middleware import MemoryInjectionMiddleware
+
+    existing = next(
+        (m for m in middleware_stack if isinstance(m, MemoryInjectionMiddleware)),
+        None,
+    )
+    if existing is not None:
+        existing.merge_injection_text(volatile_text)
+        logger.info("易变注入文本已合并进既有 MemoryInjectionMiddleware（去重）")
+    else:
+        middleware_stack.append(MemoryInjectionMiddleware(injection_text=volatile_text))
+        logger.info("已装配 MemoryInjectionMiddleware（builder 链易变分区注入）")

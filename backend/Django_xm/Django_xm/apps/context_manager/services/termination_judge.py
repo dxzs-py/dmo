@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -179,15 +180,13 @@ class ContextTerminationJudge:
         3. state 显式键（历史兼容）；
         4. "default"（图外直调兜底）。
         """
-        try:
+        with suppress(Exception):
             from langgraph.config import get_config
 
             runtime_config = get_config() or {}
             runtime_thread_id = ((runtime_config.get("configurable") or {}) or {}).get("thread_id")
             if runtime_thread_id:
                 return str(runtime_thread_id)
-        except Exception:
-            pass
         thread_id = (
             self._thread_id
             or state.get("thread_id")

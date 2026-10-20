@@ -29,7 +29,7 @@ from Django_xm.apps.context_manager.services.compression import (
     ContextCompressionEngine,
     SummaryQuality,
 )
-from Django_xm.apps.context_manager.services.manager import ContextManager, ContextManagementConfig
+from Django_xm.apps.context_manager.services.manager import ContextManagementConfig, ContextManager
 
 _BIG_CONTENT = "hello world " * 30
 

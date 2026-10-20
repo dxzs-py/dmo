@@ -193,7 +193,7 @@ class ContextPruner:
         scores = self._compute_relevance_scores(contents, query)
 
         # 按相似度降序取 top-k；分数只决定去留
-        ranked = sorted(zip(unpinned_indices, scores), key=lambda pair: pair[1], reverse=True)
+        ranked = sorted(zip(unpinned_indices, scores, strict=True), key=lambda pair: pair[1], reverse=True)
         kept_indices = {index for index, _ in ranked[:available_slots]}
         removed_count = len(unpinned_indices) - available_slots
 
@@ -261,7 +261,9 @@ class ContextPruner:
             doc_vectors: list | None = None
             if hasattr(embeddings, "embed_documents"):
                 try:
-                    doc_vectors = [np.array(vec, dtype=float) for vec in embeddings.embed_documents([t[:500] for t in texts])]
+                    doc_vectors = [
+                        np.array(vec, dtype=float) for vec in embeddings.embed_documents([t[:500] for t in texts])
+                    ]
                 except Exception as e:
                     logger.debug(f"embed_documents 批量失败，退化为逐条 embed_query: {e}")
             if doc_vectors is None:

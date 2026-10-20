@@ -178,9 +178,11 @@ class TestStopRequestedSafetyPoint(unittest.TestCase):
         async def _case():
             ex = _make_executor()
             ex._stop_requested = True
-            with _patch_shared(collect=mock.Mock(return_value=(None, False))):
-                with self.assertRaises(asyncio.CancelledError):
-                    await _wait_for_chat_batch_decision(ex, "s1", "g1")
+            with (
+                _patch_shared(collect=mock.Mock(return_value=(None, False))),
+                self.assertRaises(asyncio.CancelledError),
+            ):
+                await _wait_for_chat_batch_decision(ex, "s1", "g1")
             # 挂起事件已清理
             self.assertNotIn("g1", ex._pending_events)
 

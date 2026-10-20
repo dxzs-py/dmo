@@ -212,7 +212,9 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         await self._publish_status_event(instance, configurable, SubAgentStatus.FAILED)
         await self._notify_finished(instance, "failed")
 
-    def _execute_in_thread(self, instance: Any, agent_config: Any, configurable: dict | None, resume_payload: Any) -> None:
+    def _execute_in_thread(
+        self, instance: Any, agent_config: Any, configurable: dict | None, resume_payload: Any
+    ) -> None:
         """持有并发槽执行子代理图（原 _run_in_thread 执行体，独立成方法）。"""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -440,7 +442,10 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         """检测业务等待中断（wait_for_subagent）。
 
         Returns:
-            {"subagent_thread_ids": [...], "interrupt_id": LangGraph interrupt id}
+            {"subagent_thread_ids": [...], "interrupt_id": LangGraph interrupt id,
+             "deadline": wait_for_subagent 携带的超时截止时间戳（epoch 秒，旧
+             payload 无此键为 None），供 _handle_subagent_wait_suspend 持久化，
+             超时清扫任务（subagent_wait_tasks）据此定位过期等待}
             未命中返回 None。
         """
         from Django_xm.apps.tools.base import is_subagent_wait_interrupt
@@ -453,6 +458,7 @@ class LangGraphAdapter(BaseRuntimeAdapter):
                     return {
                         "subagent_thread_ids": list(subagent_thread_ids),
                         "interrupt_id": getattr(intr, "id", "") or "",
+                        "deadline": value.get("deadline"),
                     }
         return None
 
@@ -463,14 +469,20 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         interrupt_id = wait_info["interrupt_id"]
 
         # 挂起信息：RUNNING + _subagent_wait 标记（runtime.resume 校验放行，
-        # Command(resume={interrupt_id: ...}) 使用 interrupt_id 断点续跑）
+        # Command(resume={interrupt_id: ...}) 使用 interrupt_id 断点续跑）。
+        # deadline 由 wait_for_subagent interrupt payload 携带（旧 payload 无此
+        # 键则不写），供超时清扫任务（subagent_wait_tasks）定位过期等待。
+        pending_info: dict = {
+            "interrupt_id": interrupt_id,
+            "_subagent_wait": True,
+        }
+        deadline = wait_info.get("deadline")
+        if deadline is not None:
+            pending_info["deadline"] = deadline
         await self.runtime._update_status(
             thread_id,
             SubAgentStatus.RUNNING,
-            pending_interrupt_info={
-                "interrupt_id": interrupt_id,
-                "_subagent_wait": True,
-            },
+            pending_interrupt_info=pending_info,
         )
         logger.info(
             f"子代理业务等待挂起: {thread_id}, subagents={subagent_thread_ids}, "

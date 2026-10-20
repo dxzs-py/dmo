@@ -255,7 +255,8 @@ async def _publish_to_session_async(
     """异步实际发布会话事件到 WebSocket + Redis 持久化。
 
     底层实现函数，由 publish_event（异步路径）调用。
-    先把 event 经直接 Redis 客户端存进历史 List（Lua 脚本生成 seq 一并存储）→ 拿到 seq 补回 event（此时与 Redis 内容一致）→ group_send 广播同组 Consumer → 前端收到同步渲染。
+    先把 event 经直接 Redis 客户端存进历史 List（Lua 脚本生成 seq 一并存储）→ 拿到 seq 补回 event
+    （此时与 Redis 内容一致）→ group_send 广播同组 Consumer → 前端收到同步渲染。
     persist_history=False 时（D2/P2-8 快照治理）事件仅实时广播，不写入历史
     List（seq 照常生成，单调语义不变）。
 
@@ -295,8 +296,10 @@ async def _publish_to_session_async(
         # group_send 失败不回滚 seq（已持久化），仅记录日志
         try:
             """
-            用法 A（你的 _atomic_publish_event）：操作 realtime:history:* 和 realtime:seq:*，目的是存档/回放。这是显式写的。
-用法 B（Channel Layer）：channels_redis 自己管理一套内部结构（频道收件箱 + 群组集合），目的是实时投递。你从不直接碰这些 key。
+            用法 A（你的 _atomic_publish_event）：操作 realtime:history:* 和 realtime:seq:*，
+            目的是存档/回放。这是显式写的。
+            用法 B（Channel Layer）：channels_redis 自己管理一套内部结构（频道收件箱 + 群组集合），
+            目的是实时投递。你从不直接碰这些 key。
             """
             channel_layer = _get_loop_channel_layer()
             await channel_layer.group_send(  # 把这个消息，发给当前正在监听这个群的所有 Consumer 实例。
@@ -643,8 +646,10 @@ def _ordered_ensure_future(coro, channel_key):
 
     _pending_publish_tasks.add(new_task)
     """
-    `add_done_callback(func)`：当这个 Task **执行完毕（成功 / 抛异常 / 取消）** 时，自动调用 `func(task)`，回调函数会把任务对象作为参数传进去。
-    `set.discard(item)`：如果集合里存在 item，就删掉；不存在也不会报错（区别于 `remove`，`remove` 找不到会抛 KeyError）
+    `add_done_callback(func)`：当这个 Task **执行完毕（成功 / 抛异常 / 取消）** 时，自动调用 `func(task)`，
+    回调函数会把任务对象作为参数传进去。
+    `set.discard(item)`：如果集合里存在 item，就删掉；不存在也不会报错
+    （区别于 `remove`，`remove` 找不到会抛 KeyError）
     """
     new_task.add_done_callback(_pending_publish_tasks.discard)
 

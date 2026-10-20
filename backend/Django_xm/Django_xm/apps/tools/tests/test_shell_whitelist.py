@@ -432,40 +432,37 @@ class F3FileReadPathValidationTests(SimpleTestCase):
     def test_relative_paths_whitelisted(self):
         """纯相对路径按实际工作目录（working_dir）resolve 后校验：基准目录在
         允许范围内则放行；flag 值不误判为路径（R3 1.4 语义）。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            with override_settings(
-                SHELL_EXEC_WHITELIST=["cat", "head", "ls"],
-                SHELL_EXEC_ALLOWED_DIRS=[tmp],
-                DATA_DIR=tmp,
-            ):
-                self.assertTrue(_is_command_whitelisted("cat notes.txt", working_dir=tmp))
-                self.assertTrue(_is_command_whitelisted("head -n 5 notes.txt", working_dir=tmp))
-                self.assertTrue(_is_command_whitelisted("ls -la src", working_dir=tmp))
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            SHELL_EXEC_WHITELIST=["cat", "head", "ls"],
+            SHELL_EXEC_ALLOWED_DIRS=[tmp],
+            DATA_DIR=tmp,
+        ):
+            self.assertTrue(_is_command_whitelisted("cat notes.txt", working_dir=tmp))
+            self.assertTrue(_is_command_whitelisted("head -n 5 notes.txt", working_dir=tmp))
+            self.assertTrue(_is_command_whitelisted("ls -la src", working_dir=tmp))
 
     def test_allowed_dir_absolute_paths_whitelisted(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with override_settings(
-                SHELL_EXEC_WHITELIST=["cat"],
-                SHELL_EXEC_ALLOWED_DIRS=[tmp],
-                DATA_DIR=tmp,
-            ):
-                self.assertTrue(_is_command_whitelisted(f"cat {Path(tmp) / 'a.txt'}"))
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            SHELL_EXEC_WHITELIST=["cat"],
+            SHELL_EXEC_ALLOWED_DIRS=[tmp],
+            DATA_DIR=tmp,
+        ):
+            self.assertTrue(_is_command_whitelisted(f"cat {Path(tmp) / 'a.txt'}"))
 
     def test_outside_allowed_dirs_requires_approval(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with override_settings(
-                SHELL_EXEC_WHITELIST=["cat"],
-                SHELL_EXEC_ALLOWED_DIRS=[tmp],
-                DATA_DIR=tmp,
-            ):
-                # 绝对路径越界
-                self.assertFalse(_is_command_whitelisted("cat /etc/passwd"))
-                # .. 穿越形态
-                self.assertFalse(_is_command_whitelisted(f"cat {tmp}/../outside.txt"))
-                self.assertTrue(
-                    self.policy.should_approve({"command": "cat /etc/passwd"}),
-                    "越界读取应走审批流程",
-                )
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            SHELL_EXEC_WHITELIST=["cat"],
+            SHELL_EXEC_ALLOWED_DIRS=[tmp],
+            DATA_DIR=tmp,
+        ):
+            # 绝对路径越界
+            self.assertFalse(_is_command_whitelisted("cat /etc/passwd"))
+            # .. 穿越形态
+            self.assertFalse(_is_command_whitelisted(f"cat {tmp}/../outside.txt"))
+            self.assertTrue(
+                self.policy.should_approve({"command": "cat /etc/passwd"}),
+                "越界读取应走审批流程",
+            )
 
 
 class F3SafeWorkingDirTests(SimpleTestCase):

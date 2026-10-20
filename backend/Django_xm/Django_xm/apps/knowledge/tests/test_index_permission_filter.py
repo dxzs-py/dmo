@@ -28,8 +28,8 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from Django_xm.apps.knowledge.models import IndexMetadata
-from Django_xm.apps.knowledge.services.index_service import IndexManager
 from Django_xm.apps.knowledge.services import kb_service
+from Django_xm.apps.knowledge.services.index_service import IndexManager
 
 _KB_SERVICE = "Django_xm.apps.knowledge.services.kb_service"
 # search_knowledge_base 内为函数级导入（from .retrieval_service import ...），
@@ -128,9 +128,9 @@ class PermissionChainTests(TestCase):
         with (
             mock.patch(f"{_KB_SERVICE}.VectorSearchCacheService.get_cached_search", return_value=None),
             mock.patch(f"{_KB_SERVICE}.VectorSearchCacheService.cache_search_result"),
+            self.assertRaises(FileNotFoundError),
         ):
-            with self.assertRaises(FileNotFoundError):
-                kb_service.search_knowledge_base(self.u1, "kb-shared", "查询", top_k=3)
+            kb_service.search_knowledge_base(self.u1, "kb-shared", "查询", top_k=3)
 
     def test_search_own_kb_passes_user_id_to_manager(self):
         """归属链路：本人 kb 的 index_exists 调用携带真实 user_id（守卫生效前提）。"""
@@ -139,10 +139,10 @@ class PermissionChainTests(TestCase):
             mock.patch(f"{_KB_SERVICE}.VectorSearchCacheService.get_cached_search", return_value=None),
             mock.patch(f"{_KB_SERVICE}.VectorSearchCacheService.cache_search_result"),
             mock.patch(f"{_RETRIEVAL_SERVICE}.load_user_vector_store", return_value=None) as load_mock,
+            self.assertRaises(FileNotFoundError),
         ):
             # load_user_vector_store 返回 None → 走 FileNotFoundError（索引构建失败语义）
-            with self.assertRaises(FileNotFoundError):
-                kb_service.search_knowledge_base(self.u1, "kb-shared", "查询", top_k=3)
+            kb_service.search_knowledge_base(self.u1, "kb-shared", "查询", top_k=3)
 
         # 前置的 index_exists 已带 user_id 通过（否则同样抛 FileNotFoundError 但守卫未接线）
         self.assertEqual(load_mock.call_args.args, (self.u1.id, "kb-shared"))

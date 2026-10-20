@@ -21,7 +21,7 @@ from unittest import mock
 from langgraph.store.memory import InMemoryStore
 
 from Django_xm.apps.context_manager.config import context_settings
-from Django_xm.apps.context_manager.services.manager import ContextManager, ContextManagementConfig
+from Django_xm.apps.context_manager.services.manager import ContextManagementConfig, ContextManager
 
 _USER_ID = 556001
 _NAMESPACE = (str(_USER_ID), "session_contexts")

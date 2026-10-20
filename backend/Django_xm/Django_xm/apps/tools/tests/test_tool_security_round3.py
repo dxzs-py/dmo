@@ -84,17 +84,15 @@ class CurlTighteningTests(SimpleTestCase):
 
     def test_output_target_within_allowed_dirs_whitelisted(self):
         """1.1③：-o 输出目标在允许目录内 → 仍免审批（写目标同源校验通过）。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            with self._override(SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp):
-                self.assertTrue(_is_command_whitelisted(f"curl https://example.com -o {tmp}/out.html"))
-                self.assertTrue(_is_command_whitelisted("curl https://example.com -o out.html", working_dir=tmp))
+        with tempfile.TemporaryDirectory() as tmp, self._override(SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp):
+            self.assertTrue(_is_command_whitelisted(f"curl https://example.com -o {tmp}/out.html"))
+            self.assertTrue(_is_command_whitelisted("curl https://example.com -o out.html", working_dir=tmp))
 
     def test_output_target_outside_allowed_dirs_requires_approval(self):
         """-o 输出目标越界 → 走审批（同源校验失败）。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            with self._override(SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp):
-                self.assertFalse(_is_command_whitelisted("curl https://example.com -o /etc/cron.d/evil"))
-                self.assertFalse(_is_command_whitelisted("curl https://example.com -o ../escape.html", working_dir=tmp))
+        with tempfile.TemporaryDirectory() as tmp, self._override(SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp):
+            self.assertFalse(_is_command_whitelisted("curl https://example.com -o /etc/cron.d/evil"))
+            self.assertFalse(_is_command_whitelisted("curl https://example.com -o ../escape.html", working_dir=tmp))
 
     def test_url_scheme_whitelist(self):
         """URL 协议白名单 http/https：file/gopher/dict/ftp/telnet/ldap 等全部拦截。"""
@@ -146,31 +144,37 @@ class RelativePathBypassTests(SimpleTestCase):
 
     def test_relative_path_outside_allowed_dirs_requires_approval(self):
         """cwd 不在允许目录时，相对路径不再免审批（原恒 True 的绕过封堵）。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            with override_settings(SHELL_EXEC_WHITELIST=["cat"], SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp):
-                self.assertFalse(
-                    _is_command_whitelisted("cat .env"),
-                    "相对路径 resolve 后越界（cwd 不在允许目录）应走审批",
-                )
-                self.assertTrue(self.policy.should_approve({"command": "cat .env"}))
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            override_settings(SHELL_EXEC_WHITELIST=["cat"], SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp),
+        ):
+            self.assertFalse(
+                _is_command_whitelisted("cat .env"),
+                "相对路径 resolve 后越界（cwd 不在允许目录）应走审批",
+            )
+            self.assertTrue(self.policy.should_approve({"command": "cat .env"}))
 
     def test_relative_path_within_working_dir_whitelisted(self):
         """working_dir 在允许目录内：相对路径 resolve 后命中 → 放行（防误伤）。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            with override_settings(SHELL_EXEC_WHITELIST=["cat"], SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp):
-                self.assertTrue(_is_command_whitelisted("cat notes.txt", working_dir=tmp))
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            override_settings(SHELL_EXEC_WHITELIST=["cat"], SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp),
+        ):
+            self.assertTrue(_is_command_whitelisted("cat notes.txt", working_dir=tmp))
 
     def test_sensitive_file_requires_approval_even_within_allowed_dirs(self):
         """`cat .env` 类敏感文件即使在允许目录内也走审批。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            with override_settings(SHELL_EXEC_WHITELIST=["cat", "type"], SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp):
-                self.assertFalse(_is_command_whitelisted("cat .env", working_dir=tmp))
-                self.assertFalse(_is_command_whitelisted("cat .env.local", working_dir=tmp))
-                self.assertFalse(_is_command_whitelisted("cat config/id_rsa", working_dir=tmp))
-                self.assertFalse(_is_command_whitelisted("cat server.pem", working_dir=tmp))
-                self.assertTrue(self.policy.should_approve({"command": "cat .env"}))
-                # 防误伤：普通文件不受影响
-                self.assertTrue(_is_command_whitelisted("cat app.log", working_dir=tmp))
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            override_settings(SHELL_EXEC_WHITELIST=["cat", "type"], SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp),
+        ):
+            self.assertFalse(_is_command_whitelisted("cat .env", working_dir=tmp))
+            self.assertFalse(_is_command_whitelisted("cat .env.local", working_dir=tmp))
+            self.assertFalse(_is_command_whitelisted("cat config/id_rsa", working_dir=tmp))
+            self.assertFalse(_is_command_whitelisted("cat server.pem", working_dir=tmp))
+            self.assertTrue(self.policy.should_approve({"command": "cat .env"}))
+            # 防误伤：普通文件不受影响
+            self.assertTrue(_is_command_whitelisted("cat app.log", working_dir=tmp))
 
     def test_assess_risk_passes_working_dir(self):
         """ShellExecApprovalPolicy.assess_risk 透传 working_dir（审批与执行同源）。
@@ -178,14 +182,13 @@ class RelativePathBypassTests(SimpleTestCase):
         注：白名单含 cat 与 type——Windows 上平台适配把 cat 改写为 type
         后再判定（适配前移语义），自定义白名单需两者都登记。
         """
-        with tempfile.TemporaryDirectory() as tmp:
-            with override_settings(
-                SHELL_EXEC_WHITELIST=["cat", "type"], SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp
-            ):
-                # cwd（测试进程目录）不在允许目录 → 无 working_dir 需审批
-                self.assertTrue(self.policy.should_approve({"command": "cat notes.txt"}))
-                # working_dir 在允许目录 → 免审批
-                self.assertFalse(self.policy.should_approve({"command": "cat notes.txt", "working_dir": tmp}))
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            SHELL_EXEC_WHITELIST=["cat", "type"], SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp
+        ):
+            # cwd（测试进程目录）不在允许目录 → 无 working_dir 需审批
+            self.assertTrue(self.policy.should_approve({"command": "cat notes.txt"}))
+            # working_dir 在允许目录 → 免审批
+            self.assertFalse(self.policy.should_approve({"command": "cat notes.txt", "working_dir": tmp}))
 
 
 class EmptyAllowedDirsFailClosedTests(SimpleTestCase):
@@ -216,33 +219,30 @@ class WhitelistScopeTests(SimpleTestCase):
 
     def test_pandoc_stdout_conversion_whitelisted(self):
         """防误伤：stdout 纯转换（无 -o）+ 输入文件在允许目录内 → 放行。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            with override_settings(
-                SHELL_EXEC_WHITELIST=["pandoc"], SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp
-            ):
-                self.assertTrue(_is_command_whitelisted(f"pandoc {tmp}/in.md -f markdown -t html"))
-                self.assertTrue(_is_command_whitelisted(f"pandoc -s {tmp}/in.md", working_dir=tmp))
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            SHELL_EXEC_WHITELIST=["pandoc"], SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp
+        ):
+            self.assertTrue(_is_command_whitelisted(f"pandoc {tmp}/in.md -f markdown -t html"))
+            self.assertTrue(_is_command_whitelisted(f"pandoc -s {tmp}/in.md", working_dir=tmp))
 
     def test_pandoc_output_flags_require_approval(self):
         """pandoc -o/--output 写文件与 --lua-filter/--filter 代码执行面走审批。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            with override_settings(
-                SHELL_EXEC_WHITELIST=["pandoc"], SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp
-            ):
-                for cmd in [
-                    f"pandoc {tmp}/in.md -o {tmp}/out.html",
-                    f"pandoc {tmp}/in.md --output {tmp}/out.html",
-                    f"pandoc {tmp}/in.md --lua-filter {tmp}/evil.lua",
-                    f"pandoc {tmp}/in.md --filter {tmp}/evil.py",
-                ]:
-                    self.assertFalse(_is_command_whitelisted(cmd), f"应走审批: {cmd!r}")
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            SHELL_EXEC_WHITELIST=["pandoc"], SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp
+        ):
+            for cmd in [
+                f"pandoc {tmp}/in.md -o {tmp}/out.html",
+                f"pandoc {tmp}/in.md --output {tmp}/out.html",
+                f"pandoc {tmp}/in.md --lua-filter {tmp}/evil.lua",
+                f"pandoc {tmp}/in.md --filter {tmp}/evil.py",
+            ]:
+                self.assertFalse(_is_command_whitelisted(cmd), f"应走审批: {cmd!r}")
 
     def test_pandoc_input_outside_allowed_dirs_requires_approval(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with override_settings(
-                SHELL_EXEC_WHITELIST=["pandoc"], SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp
-            ):
-                self.assertFalse(_is_command_whitelisted("pandoc /etc/secret.md -t html"))
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            SHELL_EXEC_WHITELIST=["pandoc"], SHELL_EXEC_ALLOWED_DIRS=[tmp], DATA_DIR=tmp
+        ):
+            self.assertFalse(_is_command_whitelisted("pandoc /etc/secret.md -t html"))
 
     def test_agent_browser_removed_from_whitelist(self):
         """agent-browser（截图写文件/页面内 JS 执行）移出白名单 → CONTROLLED。"""
@@ -410,9 +410,8 @@ class ReapAfterKillTests(SimpleTestCase):
         proc = _FakeProcess(wait_results=["timeout", "timeout"])
         with mock.patch("os.getpgid", return_value=1234, create=True), mock.patch.object(
             os, "killpg", lambda *_: None, create=True
-        ):
-            with self.assertLogs("Django_xm.apps.tools.langchain.shell", level="ERROR") as logs:
-                _reap_after_kill(proc, is_windows=False)
+        ), self.assertLogs("Django_xm.apps.tools.langchain.shell", level="ERROR") as logs:
+            _reap_after_kill(proc, is_windows=False)
         self.assertTrue(any("未退出" in line for line in logs.output))
 
 

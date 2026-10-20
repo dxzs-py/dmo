@@ -11,7 +11,8 @@ Token 估算器（common 基础设施）
 
 import logging
 import time
-from typing import Any, Callable, ClassVar
+from collections.abc import Callable
+from typing import Any, ClassVar
 
 from Django_xm.common.messages import content_to_str
 
@@ -316,7 +317,7 @@ class TokenEstimator:
             return {}
         try:
             data = cls._custom_limits_loader()
-        except Exception as e:  # noqa: BLE001  # 配置读取失败不应影响预算规划
+        except Exception as e:  # 配置读取失败不应影响预算规划
             logger.warning(f"读取自定义模型窗口表失败，沿用上次配置: {type(e).__name__}: {e}")
             cls._custom_limits_loaded_at = now
             return cls._custom_limits

@@ -14,7 +14,7 @@ import unittest
 
 import httpx
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from openai import APIStatusError
 
@@ -118,7 +118,7 @@ class OpenCircuitPerCandidateTests(unittest.TestCase):
         from Django_xm.apps.ai_engine.services.llm_fallback import LazyFallbackChatModel
 
         primary, _ = _make_callable_model("primary", fail_with=_make_status_error(402))
-        fb1, fb1_counter = _make_callable_model("fb1", fail_with=RuntimeError("fb1 stream down"))
+        fb1, _fb1_counter = _make_callable_model("fb1", fail_with=RuntimeError("fb1 stream down"))
 
         class _Fb2Stream(BaseChatModel):
             @property

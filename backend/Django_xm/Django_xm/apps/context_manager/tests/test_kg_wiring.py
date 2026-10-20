@@ -26,7 +26,7 @@ from Django_xm.apps.context_manager.services.knowledge_graph import (
     ContextKnowledgeGraph,
     clear_graph_cache,
 )
-from Django_xm.apps.context_manager.services.manager import ContextManager, ContextManagementConfig
+from Django_xm.apps.context_manager.services.manager import ContextManagementConfig, ContextManager
 
 _TURN_MESSAGES = [
     {"role": "user", "content": "我喜欢『Vue』，我们的项目用 python 和 django。"},
@@ -43,7 +43,7 @@ class KnowledgeGraphWriteReadTests(unittest.TestCase):
 
     def test_process_conversation_returns_merged_graph(self):
         kg = ContextKnowledgeGraph(store=InMemoryStore())
-        entities, relations = kg.process_conversation(1, _TURN_MESSAGES)
+        entities, _relations = kg.process_conversation(1, _TURN_MESSAGES)
 
         self.assertTrue(entities)
         names = {e.name for e in entities}

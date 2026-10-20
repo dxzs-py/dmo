@@ -35,7 +35,8 @@ from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.core.throttling import KnowledgeRateThrottle
 
 # A-5：ai_engine 配置统一经 knowledge.config 门面（settings 为其 re-export）
-from Django_xm.apps.knowledge.config import get_model_string, settings as ai_settings
+from Django_xm.apps.knowledge.config import get_model_string
+from Django_xm.apps.knowledge.config import settings as ai_settings
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.responses import success_response

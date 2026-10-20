@@ -12,11 +12,11 @@
 from django.test import SimpleTestCase
 
 from Django_xm.apps.tools.langchain.shell import assess_command_risk_level
+from Django_xm.common.risk_levels import RiskLevel
 from Django_xm.common.sandbox.executor import (
     HIGH_RISK_COMMAND_PATTERNS,
     is_high_risk_command,
 )
-from Django_xm.common.risk_levels import RiskLevel
 
 # 每条模式配一条真实形态的命令样例（子串匹配需要样例含模式本体，
 # 注意 is_high_risk_command 会 strip 首尾空白）
@@ -76,7 +76,7 @@ class HighRiskUnificationTests(SimpleTestCase):
     def test_shell_port_agrees_with_sandbox_port(self):
         """审批评级与沙箱路由兜底同源：词表样例在 shell 侧必须为 HIGH，
         除非该命令被黑名单/白名单短路（SAFE）。"""
-        for pattern, sample in PATTERN_SAMPLES.items():
+        for _pattern, sample in PATTERN_SAMPLES.items():
             risk = assess_command_risk_level(sample)
             self.assertIn(
                 risk,

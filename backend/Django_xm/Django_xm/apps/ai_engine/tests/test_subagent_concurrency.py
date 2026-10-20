@@ -197,7 +197,11 @@ class SubAgentConcurrencyQueueingTests(SimpleTestCase):
         """上限 2：第 3 个 spawn 被挂起，前序释放槽后被唤醒进入执行。"""
         adapter = LangGraphAdapter(runtime=mock.MagicMock())
         started: list = []
-        stop_events: dict = {"subagent_0": threading.Event(), "subagent_1": threading.Event(), "subagent_2": threading.Event()}
+        stop_events: dict = {
+            "subagent_0": threading.Event(),
+            "subagent_1": threading.Event(),
+            "subagent_2": threading.Event(),
+        }
         self._register_stop_cleanup(stop_events)
         fake_execute = _make_gated_execute(started, stop_events)
 
@@ -216,7 +220,7 @@ class SubAgentConcurrencyQueueingTests(SimpleTestCase):
             self._wait_until(lambda: queued_tid in started, f"槽释放后排队者 {queued_tid} 未被唤醒")
 
             # 全部终态：置位剩余 stop 事件，槽全数归还
-            for tid, ev in stop_events.items():
+            for _tid, ev in stop_events.items():
                 ev.set()
             self._wait_all_slots_free(limit=2)
 

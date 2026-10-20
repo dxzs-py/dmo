@@ -92,7 +92,7 @@ class BackendCapabilityMatrixTests(unittest.TestCase):
     def test_inmemory_remove_by_metadata_is_real(self):
         """InMemory 按元数据删除为真实实现（旧实现恒返 0）。"""
         backend = InMemoryBackend()
-        store = backend.create(
+        _ = backend.create(
             [_doc("甲内容", "a.txt", file_name="a.txt"), _doc("乙内容", "b.txt", file_name="b.txt")],
             _FakeEmbeddings(),
             "user_1_kb",
@@ -274,7 +274,7 @@ class SearchAllDimensionTests(unittest.TestCase):
             mock.patch(f"{_VIEWS_RAG}.ai_settings") as ai_settings,
         ):
             ai_settings.rag_rrf_constant = 60
-            data, message = SearchAllView._run_search(prepared)
+            data, _message = SearchAllView._run_search(prepared)
 
         self.assertEqual(data["searched_indexes"], 2)
         self.assertEqual(data["failed_indexes"], 0)

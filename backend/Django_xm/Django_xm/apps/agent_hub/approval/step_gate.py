@@ -46,7 +46,7 @@ SKILL_STEP_CACHE_TTL = 6 * 3600
 # 缓存缺失哨兵（区分"未缓存"与"缓存值为 None"）
 _CACHE_MISS = object()
 
-_policy_registry: dict[str, Any] | None = None
+_policy_registry: dict[str, dict[str, Any]] = {}
 _registry_lock = threading.Lock()
 
 
@@ -67,15 +67,14 @@ class SkillStepGateResult(NamedTuple):
 
 def get_default_policy_registry() -> dict[str, Any]:
     """默认审批策略注册表（单例，与 ApprovalMiddleware._default_policies 同源）。"""
-    global _policy_registry
     with _registry_lock:
-        if _policy_registry is None:
+        if not _policy_registry:
             from .middleware import ApprovalMiddleware
 
-            _policy_registry = {
+            _policy_registry["policies"] = {
                 p.tool_name: p for p in ApprovalMiddleware._default_policies() if p.tool_name
             }
-        return _policy_registry
+        return _policy_registry["policies"]
 
 
 def resolve_tool_policy(tool_name: str, policies: dict[str, Any] | None = None) -> Any | None:
@@ -245,9 +244,9 @@ async def gate_skill_step_tool_call(
         if isinstance(gate_err, GraphInterrupt):
             raise  # 图挂起语义：必须向上传播（checkpoint 记录 + 恢复重放）
         # 门禁不可用（图外调用/无 checkpointer 等）→ fail-closed 拒绝执行
-        logger.error(
+        logger.exception(
             f"[StepGate] Skill 步骤审批门禁不可用（fail-closed）: skill={skill_name}, "
-            f"step={step_idx}, tool={tool_name}, err={type(gate_err).__name__}: {gate_err}"
+            f"step={step_idx}, tool={tool_name}, err={type(gate_err).__name__}: {gate_err}"  # noqa: TRY401 -- 异常摘要保留在文案中
         )
         return SkillStepGateResult(
             False,

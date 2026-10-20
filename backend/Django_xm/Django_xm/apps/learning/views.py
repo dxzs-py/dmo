@@ -26,9 +26,9 @@ from Django_xm.apps.core.throttling import LearningRateThrottle
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventSource, EventType
 from Django_xm.common.exceptions import BaseAppError
+from Django_xm.common.pagination import paginate_to_dict
 from Django_xm.common.realtime_events import publish_event_sync
 from Django_xm.common.responses import success_response
-from Django_xm.common.pagination import paginate_to_dict
 from Django_xm.common.serializers import EmptySerializer
 from Django_xm.common.sse_utils import SSERenderer, sse_error_event, sse_response
 
@@ -58,7 +58,6 @@ from .services.study_flow import (
     get_workflow_state,
     prepare_restart,
 )
-
 
 logger = get_logger(__name__)
 file_manager = get_file_manager()

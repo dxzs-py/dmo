@@ -25,13 +25,13 @@ django.setup()
 
 from django.test import SimpleTestCase
 
-from Django_xm.async_utils import run_async
 from Django_xm.apps.tools.langchain.filesystem import (
     MAX_CONTENT_LENGTH,
     MAX_FILE_SIZE,
     ResearchFileSystem,
     _filesystem_instances,
 )
+from Django_xm.async_utils import run_async
 
 _FS_MODULE = "Django_xm.apps.tools.langchain.filesystem"
 

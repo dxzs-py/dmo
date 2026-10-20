@@ -65,24 +65,36 @@ class TestSubAgentWaitInterruptPredicate(unittest.TestCase):
 
 
 class TestWaitForSubAgentFormat(unittest.TestCase):
-    """wait_for_subagent 结果格式化（纯静态方法）。"""
+    """wait_for_subagent 结果格式化（format_subagent_results_text，含预算收敛）。"""
 
     def test_completed(self):
-        from Django_xm.apps.agent_hub.subagent_tools.wait import WaitForSubAgentTool
+        from Django_xm.apps.agent_hub.subagent_tools.wait import format_subagent_results_text
 
-        out = WaitForSubAgentTool._format_resume_value(
-            {"subagent_results": [{"subagent_thread_id": "sub1", "status": "completed", "result": "hello"}]}
+        out = format_subagent_results_text(
+            [{"subagent_thread_id": "sub1", "status": "completed", "result": "hello"}],
+            result_max_chars=5000,
+            total_budget_chars=48000,
         )
         self.assertIn("已完成", out)
         self.assertIn("hello", out)
 
     def test_failed(self):
-        from Django_xm.apps.agent_hub.subagent_tools.wait import WaitForSubAgentTool
+        from Django_xm.apps.agent_hub.subagent_tools.wait import format_subagent_results_text
 
-        out = WaitForSubAgentTool._format_resume_value(
-            {"subagent_results": [{"subagent_thread_id": "sub1", "status": "failed", "result": ""}]}
+        out = format_subagent_results_text(
+            [{"subagent_thread_id": "sub1", "status": "failed", "result": ""}],
+            result_max_chars=5000,
+            total_budget_chars=48000,
         )
         self.assertIn("失败", out)
+
+    def test_empty_results(self):
+        from Django_xm.apps.agent_hub.subagent_tools.wait import format_subagent_results_text
+
+        self.assertEqual(
+            format_subagent_results_text([], result_max_chars=100, total_budget_chars=1000),
+            "子代理结果缺失",
+        )
 
 
 class TestHandleSuspend(unittest.TestCase):

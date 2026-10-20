@@ -62,7 +62,8 @@ class UserRegisterSerializer(serializers.ModelSerializer):
     def validate_password(self, value: str) -> str:
         """校验密码复杂度。
         validate_<字段名>(self, value) 形式的方法，DRF 在每次校验该字段时会自动触发
-        触发点在 DRF 的 Serializer.to_internal_value() 里：它先跑字段自身的约束（min_length 等），再调对应的 validate_<field>。
+        触发点在 DRF 的 Serializer.to_internal_value() 里：它先跑字段自身的约束
+        （min_length 等），再调对应的 validate_<field>。
         POST /register
           └─ UserRegisterView.create(request)        # views.py:134
                ├─ self.verify_captcha(request.data)
@@ -127,6 +128,14 @@ class ChangePasswordSerializer(serializers.Serializer):
         user = self.context.get("request").user
         if not user.check_password(value):
             raise serializers.ValidationError("当前密码错误")
+        return value
+
+    def validate_new_password(self, value):
+        """新密码复杂度与注册规则（PASSWORD_COMPLEXITY_PATTERN）保持一致。"""
+        if not PASSWORD_COMPLEXITY_PATTERN.match(value):
+            raise serializers.ValidationError(
+                f"密码至少 8 位，必须同时包含大写字母、小写字母、数字和特殊字符（特殊字符集：{PASSWORD_SPECIAL_CHARS}）"
+            )
         return value
 
 

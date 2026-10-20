@@ -12,7 +12,8 @@ from unittest import mock
 from django.conf import settings as django_settings
 from django.test import SimpleTestCase
 
-from Django_xm.apps.core.config import ProjectSettings, settings as project_cfg
+from Django_xm.apps.core.config import ProjectSettings
+from Django_xm.apps.core.config import settings as project_cfg
 
 # 12 收编键：env 键名 -> (ProjectSettings 字段名, 期望默认值)
 SANDBOX_ATTACHMENT_KEYS = {
@@ -95,7 +96,9 @@ class DjangoSettingsChannelEquivalenceTests(SimpleTestCase):
     """base.py Django settings 通道与 project_cfg 真相源等价（12 键 + SSRF 桥）。"""
 
     def test_attachment_settings_attributes_come_from_project_cfg(self):
-        self.assertEqual(django_settings.ATTACHMENT_DEFAULT_RETENTION_DAYS, project_cfg.attachment_default_retention_days)
+        self.assertEqual(
+            django_settings.ATTACHMENT_DEFAULT_RETENTION_DAYS, project_cfg.attachment_default_retention_days
+        )
         self.assertEqual(django_settings.ATTACHMENT_CLEANUP_HOUR, project_cfg.attachment_cleanup_hour)
         self.assertEqual(
             django_settings.ATTACHMENT_STORAGE_WARNING_THRESHOLD,
@@ -111,7 +114,9 @@ class DjangoSettingsChannelEquivalenceTests(SimpleTestCase):
     def test_sandbox_config_values_come_from_project_cfg(self):
         sandbox = django_settings.SANDBOX_CONFIG
         # 结构键名保持不变（消费方 common/sandbox/executor.py 依赖）
-        for key in ("ENABLED", "DOCKER_IMAGE", "MEMORY_LIMIT", "CPU_LIMIT", "NETWORK_MODE", "SESSION_TIMEOUT", "WORK_DIR_MOUNT"):
+        for key in (
+            "ENABLED", "DOCKER_IMAGE", "MEMORY_LIMIT", "CPU_LIMIT", "NETWORK_MODE", "SESSION_TIMEOUT", "WORK_DIR_MOUNT"
+        ):
             self.assertIn(key, sandbox)
         self.assertEqual(sandbox["DOCKER_IMAGE"], project_cfg.sandbox_image)
         self.assertEqual(sandbox["MEMORY_LIMIT"], project_cfg.sandbox_memory)

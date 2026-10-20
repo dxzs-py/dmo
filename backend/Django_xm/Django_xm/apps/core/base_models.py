@@ -33,7 +33,8 @@ def clear_current_request():
         del _thread_locals.request
 
 """
-为什么是全局变量：必须全局唯一，这样所有线程访问的是同一个容器对象，而 threading.local() 内部机制保证每个线程读写时自动隔离到各自的命名空间。
+为什么是全局变量：必须全局唯一，这样所有线程访问的是同一个容器对象，
+而 threading.local() 内部机制保证每个线程读写时自动隔离到各自的命名空间。
 上面这些代码的效果：
 _thread_locals（全局唯一对象）
   │
@@ -43,7 +44,7 @@ _thread_locals（全局唯一对象）
         线程B_id: { "request": req_B },    ← 线程B 读写这里
         线程C_id: { },                     ← 线程C 还没 set，为空
       }
-      
+
 """
 
 class SoftDeleteManager(models.Manager):

@@ -11,7 +11,6 @@ from rest_framework import serializers
 
 from Django_xm.apps.approvals.models import Approval
 
-
 # 客户端不允许通过 API 设置的审批字段（白名单之外的 protected 字段）
 # 任一字段被客户端提交时，ApprovalWriteSerializer.to_internal_value 显式拒绝
 # 注意：approved 与 user_input 是客户端可提交字段，故不在本集合中

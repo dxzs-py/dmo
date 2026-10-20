@@ -35,11 +35,22 @@ WRITER_GUIDELINES = (
 )
 
 
-def get_system_prompt(
-    mode: str = "default",
-    custom_instructions: str | None = None,
-    include_time: bool = True,
-) -> str:
+def get_system_prompt(mode: str = "default", custom_instructions: str | None = None) -> str:
+    """构建静态 system prompt（同一会话/任务生命周期内逐字节稳定）。
+
+    P0-1 前缀缓存裁决：prompts.yaml 模板中的 ``当前时间：{current_time}`` 行
+    属于逐秒变化的动态内容，曾按秒格式化进 system_prompt（消息序列位置 0），
+    每次构建都使整条 prompt 前缀缓存失效。现统一剔除该行，时间信息改经
+    :func:`format_current_time_line` 进入尾部易变注入区（builder 链
+    ``build_dynamic_context_prompt`` 的 volatile_text → MemoryInjectionMiddleware）。
+
+    Args:
+        mode: 提示词模式（prompts.yaml 的键，如 "default"/"agent"/"deep-research"）
+        custom_instructions: 追加的静态补充说明（如技能 L1 元数据清单）
+
+    Returns:
+        静态 system prompt 文本
+    """
     if mode not in SYSTEM_PROMPTS:
         available_modes = ", ".join(SYSTEM_PROMPTS.keys())
         raise ValueError(f"未知的提示词模式: {mode}. 可用模式: {available_modes}")
@@ -48,16 +59,23 @@ def get_system_prompt(
     if prompt is None:
         prompt = SYSTEM_PROMPTS["default"]
 
-    if include_time:
-        current_time = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
-        prompt = prompt.format(current_time=current_time)
-    else:
-        prompt = prompt.replace("当前时间：{current_time}\n\n", "")
+    prompt = prompt.replace("当前时间：{current_time}\n\n", "")
 
     if custom_instructions:
         prompt += f"\n\n补充说明：\n{custom_instructions}"
 
     return prompt
+
+
+def format_current_time_line() -> str:
+    """当前时间行（UTC）：模板时间戳的注入通道载体（易变区，不进 system_prompt）。
+
+    每次调用返回当下时间，仅供注入文本组装方（builder 链 volatile_text /
+    其他运行时注入文本）使用，保证 ``[静态 system prompt + 历史消息]`` 前缀
+    逐字节稳定。
+    """
+    current_time = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    return f"当前时间：{current_time}（UTC）"
 
 
 TOOL_USAGE_INSTRUCTIONS = """
@@ -151,14 +169,3 @@ TOOL_USAGE_INSTRUCTIONS = """
 - 只在必要时引用关键片段作为佐证，且引用部分不超过3-5行
 - 如果检索结果很长，提取与用户问题直接相关的要点
 """
-
-
-def build_dynamic_prompt(
-    mode: str = "default",
-    context: str | None = None,
-    custom_instructions: str | None = None,
-) -> str:
-    prompt = get_system_prompt(mode, custom_instructions=custom_instructions)
-    if context:
-        prompt = f"{prompt}\n\n{context}"
-    return prompt

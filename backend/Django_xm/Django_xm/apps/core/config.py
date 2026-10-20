@@ -147,7 +147,9 @@ class ProjectSettings(BaseSettings):
 
     attachment_cleanup_hour: int = Field(default=3, ge=0, le=23, description="过期附件每日清理时刻（24 小时制）")
 
-    attachment_storage_warning_threshold: float = Field(default=80, ge=0, le=100, description="存储用量警告阈值（百分比）")
+    attachment_storage_warning_threshold: float = Field(
+        default=80, ge=0, le=100, description="存储用量警告阈值（百分比）"
+    )
 
     attachment_storage_critical_threshold: float = Field(
         default=95, ge=0, le=100, description="存储用量严重告警阈值（百分比）"

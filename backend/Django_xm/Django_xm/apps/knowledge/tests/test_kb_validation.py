@@ -210,9 +210,8 @@ class KnowledgeBaseServiceNameWhitelistTests(SimpleTestCase):
 
         user = mock.MagicMock(id=1, username="svc-user")
         for name in ("../evil", "a\\..\\b", "kb%5c..", ".."):
-            with self.subTest(name=name):
-                with self.assertRaises(ValueError):
-                    create_knowledge_base(user, name)
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                create_knowledge_base(user, name)
 
     def test_save_uploaded_files_rejects_traversal_kb(self):
         """上传落盘路径 upload_dir.mkdir(parents=True) 是穿越写的主危害面。"""
