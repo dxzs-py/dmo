@@ -101,6 +101,14 @@ export const createSessionCrudSlice = (sessionList, runtimeDeps) => {
     }
   }
 
+  /**
+   * 设置当前会话 ID（URL 指定会话时使用；不触发详情加载与知识库联动）
+   * @param {string} sessionId - 目标会话 ID
+   */
+  const setCurrentSessionId = (sessionId) => {
+    currentSessionId.value = sessionId
+  }
+
   const deleteSession = async (sessionId) => {
     const session = sessions.value.find(s => s.id === sessionId)
     if (!session) return
@@ -249,6 +257,7 @@ export const createSessionCrudSlice = (sessionList, runtimeDeps) => {
     consumeOptimisticSession,
     createNewSession,
     switchSession,
+    setCurrentSessionId,
     deleteSession,
     removeSession,
     updateSession,

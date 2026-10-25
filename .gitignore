@@ -51,6 +51,7 @@ performance_benchmark.py
 .codebuddy/
 docs/
 .trae/
+.trae-html-share-packages
 .github/
 submission/
 stubs/

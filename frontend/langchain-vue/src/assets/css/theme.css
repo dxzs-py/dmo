@@ -18,6 +18,7 @@
   --accent: #f7f7f7;
   --accent-foreground: #374151;
   --destructive: #dc2626;
+  --info: #409eff;
   --border: #e5e7eb;
   --input: #e5e7eb;
   --ring: #a3a3a3;
@@ -69,6 +70,7 @@ html.dark {
   --accent: #404040;
   --accent-foreground: #fafafa;
   --destructive: #ef4444;
+  --info: #60a5fa;
   --border: rgba(255, 255, 255, 0.1);
   --input: rgba(255, 255, 255, 0.15);
   --ring: #8c8c8c;

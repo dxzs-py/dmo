@@ -53,6 +53,14 @@ export const useChatDeepResearchStore = defineStore('chatDeepResearch', () => {
     deepResearchTask.value = null
   }
 
+  /**
+   * 设置研究上下文标识（URL 跳转携带 research_task_id 时写入）
+   * @param {{ taskId: string, query: string }} info - 研究上下文
+   */
+  const setChatResearchContext = (info) => {
+    researchContextInfo.value = info
+  }
+
   /** 清空研究上下文标签（发送首条消息后 / 用户手动取消研究上下文） */
   const clearChatResearchContext = () => {
     researchContextInfo.value = null
@@ -130,6 +138,7 @@ export const useChatDeepResearchStore = defineStore('chatDeepResearch', () => {
     // 方法
     setChatDeepResearchTask,
     setChatResearchTaskId,
+    setChatResearchContext,
     clearChatDeepResearchTask,
     clearChatResearchContext,
     resetChatDeepResearch,
