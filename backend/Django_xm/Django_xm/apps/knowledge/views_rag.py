@@ -19,6 +19,7 @@ async 生成器出帧。
 import asyncio
 import json
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
@@ -30,6 +31,7 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from Django_xm.apps.analytics.services import retrieval_metrics
 from Django_xm.apps.cache_manager.services.cache_service import QueryCacheService
 from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.core.throttling import KnowledgeRateThrottle
@@ -53,8 +55,8 @@ from .serializers import (
 )
 from .services.embedding_service import get_embeddings
 from .services.index_service import IndexManager
-from .services.rag_retrieval import UnifiedRagPipeline, rrf_fuse
-from .services.retrieval_service import build_user_retriever
+from .services.rag_retrieval import UnifiedRagPipeline, _rrf_doc_key, rrf_fuse
+from .services.retrieval_service import build_user_retriever_bundle
 from .services.strict_rag_chain import query_strict_rag, sanitize_source_metadata, stream_strict_rag
 from .views_utils import build_user_index_name, get_original_index_name, get_user_index_name
 
@@ -66,18 +68,34 @@ _RAG_QUERY_CACHE_MODE = "strict"
 
 
 def _query_cache_segments() -> tuple[str, str]:
-    """B5：查询缓存键的模型/模式段——同一请求的读与写必须用同一段值。
+    """B5/P0-O1：查询缓存键的模型/模式段——同一请求的读与写必须用同一段值。
 
     模型标识经 get_model_string()（SystemConfig → settings 兜底，换模型后
     旧缓存不得命中）；解析异常时用 "default" 占位（键段变化后旧键自然失配，
     随 TTL 过期，无需迁移）。
+
+    P0-O1：模式段携带**检索配置指纹**（阈值/召窗口/精排保留数/rerank 开关/
+    hybrid 开关）——任何一项变化后旧结果不再命中，避免「配置已改、缓存仍返旧结果」
+    让 P0 收益在一整个 TTL 内不可见。
     """
     try:
         model_id = get_model_string()
     except Exception:
         logger.warning("查询缓存模型段解析失败，使用 default 占位")
         model_id = "default"
-    return model_id, _RAG_QUERY_CACHE_MODE
+
+    from Django_xm.apps.knowledge.rag_settings import get_rag_runtime_settings
+
+    runtime = get_rag_runtime_settings()
+    retrieval_fingerprint = (
+        f"t{runtime['score_threshold']}"
+        f":r{runtime['recall_k']}"
+        f":n{runtime['rerank_top_n']}"
+        f":e{int(runtime['use_reranker'])}"
+        f":h{int(runtime['hybrid_enabled'])}"
+        f":mq{int(runtime['multi_query_enabled'])}"
+    )
+    return model_id, f"{_RAG_QUERY_CACHE_MODE}:{retrieval_fingerprint}"
 
 
 class AsyncAPIView(APIView):
@@ -118,9 +136,9 @@ def _run_strict_query_sync(query, user_id, index_name, k):
 
     索引校验/空索引拒绝（用户可见 4xx 语义保留在 view 层）；向量库构建
     （metadata/维度探测/embeddings/load_index/create_retriever）经
-    build_user_retriever 单一门面（B-1 收敛，此前本函数与流式构建各写一遍）。
-    异常（NotFound/ValidationError/其余）原样上抛，由 AsyncAPIView.dispatch
-    的 except 链转统一 JSON 错误响应。
+    build_user_retriever_bundle 单一门面（B-1 收敛；P0 起同时返回 store，
+    使 Level 1 降阈扩召回 + 精排真实可达）。异常（NotFound/ValidationError/
+    其余）原样上抛，由 AsyncAPIView.dispatch 的 except 链转统一 JSON 错误响应。
     """
     manager = IndexManager()
     user_index_name = build_user_index_name(user_id, index_name)
@@ -132,21 +150,22 @@ def _run_strict_query_sync(query, user_id, index_name, k):
     if num_documents == 0:
         raise ValidationError("索引中暂无文档，请先上传文档后再查询")
 
-    retriever = build_user_retriever(user_id, index_name, k=k)
-    if retriever is None:
+    bundle = build_user_retriever_bundle(user_id, index_name, k=k)
+    if bundle is None:
         # 前置校验后索引被并发删除/构建失败（不可达防御）
         raise NotFound(f"索引不存在: {user_index_name}")
 
     # Strict Chain 模式：强制检索 -> 注入上下文 -> 生成（防幻觉）
     return query_strict_rag(
-        retriever,
+        bundle.retriever,
         query,
         k=k,
         collection_name=user_index_name,
+        vector_store=bundle.vector_store,
     )
 
 
-def _pump_strict_rag_events(query, k, user_index_name, retriever, loop, queue):
+def _pump_strict_rag_events(query, k, user_index_name, retriever, vector_store, loop, queue):
     """在专用线程中迭代 stream_strict_rag 同步生成器，事件经线程泵投递队列。
 
     对齐 apps/learning/services/learning_stream.pump_sync_events 先例：daphne
@@ -156,7 +175,9 @@ def _pump_strict_rag_events(query, k, user_index_name, retriever, loop, queue):
     异常时投递 error 事件（SSE 白名单契约：已进入流式阶段无法回退 JSON 错误）。
     """
     try:
-        for event in stream_strict_rag(retriever, query, k=k, collection_name=user_index_name):
+        for event in stream_strict_rag(
+            retriever, query, k=k, collection_name=user_index_name, vector_store=vector_store
+        ):
             loop.call_soon_threadsafe(queue.put_nowait, event)
     except Exception:
         logger.exception("[RAG Chain] 流式生成异常")
@@ -235,6 +256,17 @@ class RAGQueryView(AsyncAPIView):
             if inner.get("degraded"):
                 response_data["degraded"] = True
                 response_data["degradation_notice"] = inner.get("degradation_notice", "")
+            # 灰度指标（P1）：缓存命中单独打标，避免与真实检索收益混淆
+            retrieval_metrics.record_retrieval(
+                request.user.id,
+                kind="strict",
+                index_name=user_index_name,
+                k=k,
+                hits=len(response_data.get("sources") or []),
+                sources=len(response_data.get("sources") or []),
+                degraded=bool(inner.get("degraded")),
+                cached=True,
+            )
             return SimpleNamespace(
                 query=data["query"],
                 user_id=request.user.id,
@@ -243,6 +275,7 @@ class RAGQueryView(AsyncAPIView):
                 k=k,
                 model_seg=model_seg,
                 mode_seg=mode_seg,
+                started_at=time.perf_counter(),
                 cached_response=success_response(data=response_data, message="操作成功"),
             )
         return SimpleNamespace(
@@ -253,11 +286,13 @@ class RAGQueryView(AsyncAPIView):
             k=k,
             model_seg=model_seg,
             mode_seg=mode_seg,
+            started_at=time.perf_counter(),
             cached_response=None,
         )
 
     @staticmethod
     def _finalize_response(prepared, result):
+        duration_ms = (time.perf_counter() - prepared.started_at) * 1000
         # Task 4/B3：空结果（受控未找到应答）与降级结果不写查询缓存——
         # 避免缓存 TTL 内持续返回低质量/受控文案
         if result.get("degraded") or not result.get("answer"):
@@ -272,6 +307,27 @@ class RAGQueryView(AsyncAPIView):
                 model_name=prepared.model_seg,
                 rag_mode=prepared.mode_seg,
             )
+
+        # 灰度指标（P1/P2）：命中数/降级/耗时 + 多路路数/扩展规模/引用校验
+        sources = result.get("sources") or []
+        retrieval_meta = result.get("retrieval_meta") or {}
+        citation_check = result.get("citation_check") or {}
+        retrieval_metrics.record_retrieval(
+            prepared.user_id,
+            kind="strict",
+            index_name=prepared.user_index_name,
+            k=prepared.k,
+            hits=len(sources),
+            sources=len(sources),
+            degraded=bool(result.get("degraded")),
+            duration_ms=duration_ms,
+            extra={
+                "mq_routes": retrieval_meta.get("routes"),
+                "expanded_docs": retrieval_meta.get("docs"),
+                "citation_unsupported": citation_check.get("unsupported"),
+                "citation_skipped": citation_check.get("skipped"),
+            },
+        )
 
         logger.info("查询完成")
         response_data = RagResponseSerializer(
@@ -309,7 +365,20 @@ class SearchAllView(AsyncAPIView):
         if prepared.early_response is not None:
             return prepared.early_response
 
+        started_at = time.perf_counter()
         data, message = await sync_to_async(self._run_search, thread_sensitive=False)(prepared)
+        # 灰度指标（P1）：跨库检索的命中/失败/耗时（不含精排耗时拆分，P95 以本值为准）
+        retrieval_metrics.record_retrieval(
+            request.user.id,
+            kind="multi_kb",
+            k=prepared.k,
+            hits=len(data.get("results") or []),
+            duration_ms=(time.perf_counter() - started_at) * 1000,
+            extra={
+                "searched": data.get("searched_indexes", 0),
+                "failed": data.get("failed_indexes", 0),
+            },
+        )
         return success_response(data=data, message=message)
 
     @staticmethod
@@ -457,8 +526,25 @@ class SearchAllView(AsyncAPIView):
 
         # 等权融合（跨库绝对 score 不可比，按排名倒数累加；同库内相对顺序不变）
         fused = rrf_fuse(ranked_lists, rrf_k=rrf_k)
+
+        # P0-O3：融合后统一精排一次（跨库分数不可比，融合序后再由 cross-encoder 定序）
+        fused_meta = {
+            _rrf_doc_key(doc): (first_score, first_list_idx)
+            for doc, _fused_score, first_score, first_list_idx in fused
+        }
+        candidates = [doc for doc, _fused_score, _first_score, _first_idx in fused]
+        if ai_settings.rag_multi_kb_rerank_enabled and len(candidates) > prepared.k:
+            from .services.rerank_service import rerank_documents
+
+            selected = rerank_documents(
+                candidates[: prepared.k * 3], prepared.query, prepared.k
+            )
+        else:
+            selected = candidates[: prepared.k]
+
         results_payload = []
-        for fused_rank, (doc, _fused_score, first_score, first_list_idx) in enumerate(fused[: prepared.k], 1):
+        for fused_rank, doc in enumerate(selected, 1):
+            first_score, first_list_idx = fused_meta[_rrf_doc_key(doc)]
             source_index = get_original_index_name(ranked_sources[first_list_idx])
             item = {
                 "content": doc.page_content,
@@ -526,6 +612,17 @@ def rag_query_stream(request):
         data["query"], user_index_name, k, model_name=model_seg, rag_mode=mode_seg
     )
     if cached_result is not None:
+        # 灰度指标（P1）：流式缓存命中单独打标
+        cached_sources = cached_result.get("result", {}).get("sources") or []
+        retrieval_metrics.record_retrieval(
+            request.user.id,
+            kind="stream",
+            index_name=user_index_name,
+            k=k,
+            hits=len(cached_sources),
+            sources=len(cached_sources),
+            cached=True,
+        )
         return sse_response(_cached_sse_events(cached_result.get("result", {})))
 
     # Strict Chain 模式流式查询（防幻觉）：同步核心进线程泵，async 生成器出帧
@@ -535,21 +632,25 @@ def rag_query_stream(request):
         try:
             yield f"data: {json.dumps({'type': 'start', 'message': '检索中...'})}\n\n"
             full_response = ""
+            stream_started = time.perf_counter()
 
             # RP-01：检索器构建（可能触发 PG engine 建立）经线程池离开主执行器；
-            # B-1：构建编排经 build_user_retriever 单一门面（原 _build_stream_retriever
-            # 专建函数删除），前置校验已过，None 为并发删除/构建失败防御
-            retriever = await sync_to_async(build_user_retriever, thread_sensitive=False)(
+            # B-1：构建编排经 build_user_retriever_bundle 单一门面（P0 同时返回
+            # store，供 Level 1 降级使用），前置校验已过，None 为并发删除/构建失败防御
+            bundle = await sync_to_async(build_user_retriever_bundle, thread_sensitive=False)(
                 request.user.id, data["index_name"], k
             )
-            if retriever is None:
+            if bundle is None:
                 yield sse_error_event(code="50002", message="索引暂不可用，请稍后重试")
                 return
             loop = asyncio.get_running_loop()
             queue: asyncio.Queue = asyncio.Queue()
             worker = threading.Thread(
                 target=_pump_strict_rag_events,
-                args=(data["query"], k, user_index_name, retriever, loop, queue),
+                args=(
+                    data["query"], k, user_index_name,
+                    bundle.retriever, bundle.vector_store, loop, queue,
+                ),
                 name="rag-stream-pump",
                 daemon=True,
             )
@@ -595,6 +696,19 @@ def rag_query_stream(request):
                     model_name=model_seg,
                     rag_mode=mode_seg,
                 )
+
+            # 灰度指标（P1）：流式链路命中数/降级/耗时
+            stream_sources = sources_payload or []
+            retrieval_metrics.record_retrieval(
+                request.user.id,
+                kind="stream",
+                index_name=user_index_name,
+                k=k,
+                hits=len(stream_sources),
+                sources=len(stream_sources),
+                degraded=bool(degraded_notice),
+                duration_ms=(time.perf_counter() - stream_started) * 1000,
+            )
 
             yield f"data: {json.dumps({'type': 'end', 'message': '生成完成'})}\n\n"
         except Exception:

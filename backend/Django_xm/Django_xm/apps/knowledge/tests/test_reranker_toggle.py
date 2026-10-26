@@ -71,6 +71,6 @@ class RerankerTogglePassthroughTests(SimpleTestCase):
         call = self._run_build("comprehensive")
         self.assertIs(call.kwargs["use_reranker"], False)
 
-    def test_setting_defaults_to_true(self):
-        """D1 决策：配置开关默认开启"""
-        self.assertIs(Settings.model_fields["retriever_use_reranker"].default, True)
+    def test_setting_defaults_to_false(self):
+        """Phase 3 评测决策：rerank 在当前语料上负收益（Recall/MRR 下降、P50 涨百倍），默认关闭。"""
+        self.assertIs(Settings.model_fields["retriever_use_reranker"].default, False)

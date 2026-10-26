@@ -565,6 +565,7 @@ class ToolCallLifecycleService:
         error: str | None = None,
         parameters: dict | None = None,
         batch_fingerprint: str | None = None,
+        sources: list | None = None,
     ) -> None:
         """状态机转换并发布事件（同步版，适配 sync 上下文：chat 模块 stream_helpers）。
 
@@ -603,6 +604,7 @@ class ToolCallLifecycleService:
                 graph_interrupt_id=ctx_dict.get("graph_interrupt_id"),
                 result=result,
                 error=error,
+                sources=sources,
                 auto_approved=ctx_dict.get("auto_approved", False),
                 # 子 agent 嵌套层级字段（Phase E3）：从 context 透传到事件 payload
                 # 主 agent 字段为空/0 时统一规范化为 None，保持 publish_tool_call
@@ -647,6 +649,7 @@ class ToolCallLifecycleService:
         error: str | None = None,
         parameters: dict | None = None,
         batch_fingerprint: str | None = None,
+        sources: list | None = None,
     ) -> None:
         """状态机转换并发布事件（异步版，适配 async 上下文：research 模块）。
 
@@ -682,6 +685,7 @@ class ToolCallLifecycleService:
                 graph_interrupt_id=ctx_dict.get("graph_interrupt_id"),
                 result=result,
                 error=error,
+                sources=sources,
                 auto_approved=ctx_dict.get("auto_approved", False),
                 # 子 agent 嵌套层级字段（Phase E3）：从 context 透传到事件 payload
                 # 主 agent 字段为空/0 时统一规范化为 None，保持 publish_tool_call

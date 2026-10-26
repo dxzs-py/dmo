@@ -33,7 +33,7 @@ from django.test import SimpleTestCase
 
 from Django_xm.apps.attachments import models as attachments_models
 from Django_xm.apps.tools.langchain import attachment_rag as attachment_rag_module
-from Django_xm.apps.tools.langchain.attachment_rag import attachment_rag_search
+from Django_xm.apps.tools.langchain.attachment_rag import attachment_search
 
 
 def _unique_session(prefix: str) -> str:
@@ -61,7 +61,7 @@ class ChatSessionProviderTests(SimpleTestCase):
         attachment_rag_module.set_chat_session_exists_provider(None)
         session = _unique_session("sess-unreg")
 
-        result = attachment_rag_search.invoke(
+        result = attachment_search.invoke(
             "检索测试", config={"configurable": {"thread_id": session}}
         )
 
@@ -73,7 +73,7 @@ class ChatSessionProviderTests(SimpleTestCase):
         attachment_rag_module.set_chat_session_exists_provider(lambda _sid: False)
         session = _unique_session("sess-miss")
 
-        result = attachment_rag_search.invoke(
+        result = attachment_search.invoke(
             "检索测试", config={"configurable": {"thread_id": session}}
         )
 
@@ -89,7 +89,7 @@ class ChatSessionProviderTests(SimpleTestCase):
         attachment_rag_module.set_chat_session_exists_provider(_boom)
         session = _unique_session("sess-err")
 
-        result = attachment_rag_search.invoke(
+        result = attachment_search.invoke(
             "检索测试", config={"configurable": {"thread_id": session}}
         )
 
@@ -106,7 +106,7 @@ class ChatSessionProviderTests(SimpleTestCase):
         with mock.patch.object(
             attachment_rag_module.logger, "exception"
         ) as log_mock:
-            result = attachment_rag_search.invoke(
+            result = attachment_search.invoke(
                 "检索测试", config={"configurable": {"thread_id": session}}
             )
 
@@ -134,7 +134,7 @@ class TypedErrorCopyTests(SimpleTestCase):
         fake_model.objects.filter.side_effect = RuntimeError("SECRET_SQL_FRAGMENT")
 
         with mock.patch.object(attachments_models, "ChatAttachment", fake_model):
-            result = attachment_rag_search.invoke(
+            result = attachment_search.invoke(
                 "检索测试", config={"configurable": {"thread_id": session}}
             )
 

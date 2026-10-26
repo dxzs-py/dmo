@@ -189,12 +189,24 @@ class WithScoresPathTests(SimpleTestCase):
 
 class StrictChainWiringTests(SimpleTestCase):
     def test_strict_chain_passes_with_scores(self):
-        """strict_rag_chain 两侧检索必须传 with_scores=True（接线锁定）。"""
+        """strict_rag_chain 两侧检索必须经多路融合入口（内部固定 with_scores=True）。"""
+        from Django_xm.apps.knowledge.services import rag_retrieval as rr
+        from Django_xm.apps.knowledge.services import rag_service as svc
         from Django_xm.apps.knowledge.services import strict_rag_chain as src
 
         with open(src.__file__, encoding="utf-8") as source_file:
             source = source_file.read()
-        self.assertEqual(source.count("with_scores=True,"), 2, "sync/async 两侧检索均须传 with_scores")
+        self.assertGreaterEqual(
+            source.count("retrieve_many"),
+            2,
+            "sync/async 两侧检索均须经 RagService.retrieve_many",
+        )
+
+        with open(svc.__file__, encoding="utf-8") as service_file:
+            self.assertIn("retrieve_multi_query", service_file.read(), "RagService 内部须走多路融合")
+
+        with open(rr.__file__, encoding="utf-8") as retrieval_file:
+            self.assertIn("with_scores=True", retrieval_file.read(), "多路融合内部必须透出分数")
 
 
 if __name__ == "__main__":

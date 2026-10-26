@@ -32,12 +32,12 @@ from Django_xm.apps.chat.services import stream_broadcast
 from Django_xm.apps.chat.services.chat_service import ChatService
 from Django_xm.common.event_schema import EventType
 
-_RETRIEVER_TOOL = "Django_xm.apps.knowledge.services.retriever_tool"
+_RETRIEVER_TOOL = "Django_xm.apps.knowledge.services.kb_search_tool"
 _REALTIME_EVENTS = "Django_xm.common.realtime_events"
 
 
 def _stub_retriever_tool(*args, **kwargs):
-    return SimpleNamespace(name="knowledge_base_kb-a")
+    return SimpleNamespace(name="knowledge_base_search")
 
 
 class InjectionDegradationTests(SimpleTestCase):
@@ -55,7 +55,7 @@ class InjectionDegradationTests(SimpleTestCase):
             mock.patch(
                 "Django_xm.apps.chat.services.chat_service.sync_to_async", side_effect=lambda fn: fn
             ),
-            mock.patch(f"{_RETRIEVER_TOOL}.create_retriever_tool", _stub_retriever_tool),
+            mock.patch(f"{_RETRIEVER_TOOL}.build_knowledge_base_search_tool", _stub_retriever_tool),
             mock.patch("Django_xm.apps.ai_engine.services.llm_factory.get_helper_model", return_value=None),
             mock.patch.object(
                 ChatService,
@@ -138,7 +138,7 @@ class ModeHandlerYieldWiringTests(SimpleTestCase):
             mock.patch(
                 "Django_xm.apps.chat.services.chat_service.sync_to_async", side_effect=lambda fn: fn
             ),
-            mock.patch(f"{_RETRIEVER_TOOL}.create_retriever_tool", _stub_retriever_tool),
+            mock.patch(f"{_RETRIEVER_TOOL}.build_knowledge_base_search_tool", _stub_retriever_tool),
             mock.patch("Django_xm.apps.ai_engine.services.llm_factory.get_helper_model", return_value=None),
             mock.patch.object(
                 ChatService,

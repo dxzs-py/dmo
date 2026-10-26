@@ -16,6 +16,7 @@
 """
 
 import asyncio
+import contextlib
 import os
 import unittest
 from unittest import mock
@@ -34,6 +35,20 @@ from Django_xm.apps.knowledge.views_rag import SearchAllView
 
 SEARCH_ALL_URL = "/api/v1/knowledge/search-all/"
 _VIEWS_RAG = "Django_xm.apps.knowledge.views_rag"
+
+# P1 埋点：模块级隔离 Celery broker（测试环境不投递真任务）
+_METRICS_PATCHERS: list = []
+
+
+def setUpModule():
+    patcher = mock.patch(f"{_VIEWS_RAG}.retrieval_metrics.record_retrieval")
+    patcher.start()
+    _METRICS_PATCHERS.append(patcher)
+
+
+def tearDownModule():
+    while _METRICS_PATCHERS:
+        _METRICS_PATCHERS.pop().stop()
 
 
 def _make_doc(content: str, source: str):
@@ -57,13 +72,15 @@ class _FakeRequest:
 class SearchAllViewTests(unittest.TestCase):
     """SearchAllView 单元表征：RRF 融合 / 失败隔离 / embedding 单次 / 过滤与归属。"""
 
-    def _post(self, data: dict, stores: dict, records: list, on_stores=None):
+    def _post(self, data: dict, stores: dict, records: list, on_stores=None, rerank=False, rerank_fn=None):
         """打桩视图模块绑定后调用 post，返回 (response, store_mocks, embeddings)。
 
         stores: {索引全名: [(content, source, score), ...]}（映射为
                 similarity_search_with_score_by_vector 的返回值）；
         records: [(索引全名, num_documents, embedding_dimension)]（IndexMetadata 查询结果）；
-        on_stores: 可选回调，在执行 post 前对 store_mocks 做额外配置（如注入异常）。
+        on_stores: 可选回调，在执行 post 前对 store_mocks 做额外配置（如注入异常）；
+        rerank: 是否模拟跨库精排（P0-O3）；默认关闭以锁定纯 RRF 语义。
+        rerank_fn: 精排替身（默认按原序截断）。
         """
         store_mocks = {}
         for full_name, items in stores.items():
@@ -89,12 +106,23 @@ class SearchAllViewTests(unittest.TestCase):
 
         ai_settings = mock.MagicMock(name="ai_settings")
         ai_settings.rag_rrf_constant = 60
+        ai_settings.rag_multi_kb_rerank_enabled = rerank
+
+        rerank_patch = (
+            mock.patch(
+                "Django_xm.apps.knowledge.services.rerank_service.rerank_documents",
+                side_effect=rerank_fn or (lambda docs, query, top_n, **kwargs: docs[:top_n]),
+            )
+            if rerank
+            else contextlib.nullcontext()
+        )
 
         with (
             mock.patch(f"{_VIEWS_RAG}.IndexMetadata", metadata_cls),
             mock.patch(f"{_VIEWS_RAG}.IndexManager", return_value=manager),
             mock.patch(f"{_VIEWS_RAG}.get_embeddings", return_value=embeddings),
             mock.patch(f"{_VIEWS_RAG}.ai_settings", ai_settings),
+            rerank_patch,
         ):
             # RP-01：post 已 async 化（重活经 sync_to_async 调度），直调时需事件循环
             response = asyncio.run(SearchAllView().post(_FakeRequest(data)))
@@ -148,6 +176,27 @@ class SearchAllViewTests(unittest.TestCase):
         self.assertEqual(len(data["results"]), 1)
         self.assertEqual(data["results"][0]["content"], "A 内容")
         self.assertEqual(data["results"][0]["fused_rank"], 1)
+
+    def test_fusion_then_rerank_controls_final_order(self):
+        """P0-O3：融合后统一精排一次，最终顺序以精排结果为准（fused_rank 重编号）。"""
+
+        def _last_only(docs, query, top_n, **kwargs):
+            return [docs[-1]][:top_n]
+
+        response, _, _ = self._post(
+            {"query": "查询", "k": 2},
+            stores={
+                "user_1_kb1": [("A 内容", "a.md", 0.9), ("B 内容", "b.md", 0.8)],
+                "user_1_kb2": [("C 内容", "c.md", 0.7)],
+            },
+            records=[("user_1_kb1", 3, 1024), ("user_1_kb2", 3, 1024)],
+            rerank=True,
+            rerank_fn=_last_only,
+        )
+
+        data = response.data["data"]
+        self.assertEqual([item["content"] for item in data["results"]], ["B 内容"])
+        self.assertEqual([item["fused_rank"] for item in data["results"]], [1])
 
     def test_partial_index_failure_does_not_interrupt(self):
         """单库异常计入 failed_indexes，正常库结果照常返回（200 不抛 500）。"""

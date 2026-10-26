@@ -82,6 +82,8 @@ export const createHandleToolCallEvent = (ctx) => {
       status: mappedStatus || payload.status,
       result: payload.result,
       error: payload.error,
+      // 检索工具结构化来源（source/score/scope）：ToolCallCard 优先展示
+      ...(Array.isArray(payload.sources) ? { sources: payload.sources } : {}),
       isInternal: payload.isInternal || false,
       // SAFE 级自动通过标记（Phase F1）：后端 publish_tool_call payload 携带，
       // ToolCallCard 读取 toolCall.isAutoApproved 显示"自动通过"徽章

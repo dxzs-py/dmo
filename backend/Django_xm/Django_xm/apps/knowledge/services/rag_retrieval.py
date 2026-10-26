@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from langchain_core.documents import Document
@@ -35,6 +34,7 @@ from Django_xm.apps.core.logging_utils import get_logger
 
 # A-5：ai_engine 配置统一经 knowledge.config 门面（settings 为其 re-export）
 from Django_xm.apps.knowledge.config import settings
+from Django_xm.apps.knowledge.rag_settings import get_rag_runtime_settings
 
 logger = get_logger(__name__)
 
@@ -51,7 +51,9 @@ except ImportError:
     FLASHRANK_AVAILABLE = False
 
 try:
-    from langchain_classic.retrievers import ContextualCompressionRetriever
+    # P0：Level 1 精排已下沉 rerank_service；本导入仅保留可用性探测
+    # （既有测试与观测消费 ADVANCED_RETRIEVERS_AVAILABLE 标志）
+    from langchain_classic.retrievers import ContextualCompressionRetriever  # noqa: F401
 
     ADVANCED_RETRIEVERS_AVAILABLE = True
 except ImportError:
@@ -183,52 +185,46 @@ def load_kb_documents(collection_names: list[str]) -> tuple[list[Document], int]
     return all_docs, total_tokens
 
 
-# ── 内部辅助: 静态文档检索器 ────────────────────────────────────────────────────
-
-
-class _StaticDocRetriever(BaseRetriever):
-    """将固定的 Document 列表包装为 BaseRetriever。
-
-    用于 FlashRank ContextualCompressionRetriever 的 base_retriever 参数，
-    直接返回预先准备好的文档列表，不执行向量检索。
-    """
-
-    def __init__(self, documents: list[Document]):
-        super().__init__()
-        self._docs = documents
-
-    def _get_relevant_documents(self, query: str) -> list[Document]:
-        return self._docs
-
-    async def _aget_relevant_documents(self, query: str) -> list[Document]:
-        return self._docs
+# ── 内部辅助: 阈值检索适配器 ────────────────────────────────────────────────────
 
 
 class _ScoreThresholdRetriever:
-    """InMemory 阈值检索适配器（C2/KV-1）。
+    """相似度阈值检索适配器（C2/KV-1 + P0 分数语义归一）。
 
     langchain-core 1.5.4 的 InMemoryVectorStore 不支持
     search_type="similarity_score_threshold"（invoke 即抛 NotImplementedError，
-    运行时实测），且异常被调用方吞掉 → 阈值检索从未生效，RAG 恒走关键词
-    召回降级。本适配器用等价实现替代：similarity 检索取回候选后按相似度
-    阈值在应用层过滤（similarity_search_with_score 返回 cosine similarity，
-    越大越相关，与 config 阈值口径一致）。
+    运行时实测），且各后端分数语义不一致（pgvector 为 cosine distance，
+    越小越相关）。本适配器复用 ``vector_store.search_vector_store`` 统一内核：
+    先按 score_semantics 归一为 similarity，再与阈值比较。
 
-    只实现 invoke(query)——消费方（_initial_search_from_retriever 等）
-    仅使用该接口。
+    只实现 invoke(query)——消费方（_initial_search_from_retriever /
+    _degradation_level1_from_retriever）仅使用该接口。
     """
 
-    def __init__(self, vector_store: InMemoryVectorStore, k: int, score_threshold: float):
+    def __init__(
+        self,
+        vector_store: VectorStore,
+        k: int,
+        score_threshold: float,
+        score_semantics: str = "similarity",
+    ):
         self._store = vector_store
         self._k = k
         self._threshold = score_threshold
+        self._score_semantics = score_semantics
 
     def invoke(self, query: str) -> list[Document]:
-        pairs = self._store.similarity_search_with_score(query, k=self._k)
+        from Django_xm.apps.knowledge.vector_store import search_vector_store
+
         return [
             doc
-            for doc, score in pairs
-            if score is not None and score >= self._threshold
+            for doc, _score in search_vector_store(
+                self._store,
+                query,
+                k=self._k,
+                score_threshold=self._threshold,
+                score_semantics=self._score_semantics,
+            )
         ]
 
 
@@ -476,6 +472,7 @@ class UnifiedRagPipeline:
         vector_store: InMemoryVectorStore | None = None,
         raise_on_error: bool = False,
         with_scores: bool = False,
+        k: int | None = None,
     ) -> list[Document]:
         """基于 BaseRetriever 检索文档，含 Level 1 降级。
 
@@ -498,6 +495,9 @@ class UnifiedRagPipeline:
                 纯 similarity 的 VectorStoreRetriever 时，改走 search_scored
                 统一打分内核（检索次数不变），相似度分数写入 doc.metadata["score"]；
                 其余检索器（MMR/MultiQuery/重排等）保持 invoke 原路径不带分数。
+            k: 调用方期望的最终文档数（P0）。传入时 Level 1 精排保留数取
+                min(k, settings.rag_rerank_top_n)，与正常路径的交付条数保持一致；
+                None 时取 settings.rag_rerank_top_n。
 
         Returns:
             按相关性排序的 Document 列表，无结果时返回空列表
@@ -510,7 +510,7 @@ class UnifiedRagPipeline:
                 return docs
 
             if vector_store is not None:
-                return self._degradation_level1_from_retriever(vector_store, query)
+                return self._degradation_level1_from_retriever(vector_store, query, top_n=k)
 
             return []
         except Exception:
@@ -519,130 +519,7 @@ class UnifiedRagPipeline:
             logger.exception("retrieve_documents_from_retriever 异常")
             return []
 
-    # ═══════════════════════════════════════════════════════════════════════════════
-    # 多知识库 RRF 融合检索
-    # ═══════════════════════════════════════════════════════════════════════════════
-
-    def search_multi_kb(
-        self,
-        kb_names: list[str],
-        query: str,
-        k: int | None = None,
-        weights: list[float] | None = None,
-        user_id: int | None = None,
-    ) -> str:
-        """多知识库 RRF 联合检索。
-
-        为每个知识库创建 retriever → 并行独立检索（B11：ThreadPoolExecutor，
-        对齐 views_rag.SearchAllView 的 worker 模型——单库异常计入失败不中断、
-        线程内 Django 连接显式释放）→ RRF 融合（rrf_fuse 单源）→ Level 2 降级
-        判断。命中路径输出加 KB_RESULT_INSTRUCTION 规则前缀与单文档 800 字符
-        截断（对齐单库检索工具行为）。
-
-        Args:
-            kb_names: 知识库全名列表（如 user_{id}_{kb}）
-            query: 用户查询文本
-            k: 每个知识库检索返回数，默认从 settings.rag_initial_k 读取
-            weights: RRF 权重列表，默认等权
-            user_id: 检索发起用户（3.5 越权守卫）。提供时索引名前缀必须匹配
-                ``user_{user_id}_``，不匹配的库直接剔除（名字内嵌 user_id 是
-                第一道防线；DB 归属校验在工具构建期由 build_retriever_tool_for_research
-                完成）。None 为系统内部可信路径，行为与旧版一致
-
-        Returns:
-            格式化后的检索结果字符串
-        """
-        from django.db import connections
-
-        from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
-        from Django_xm.apps.knowledge.services.index_service import IndexManager
-        from Django_xm.apps.knowledge.services.retrieval_service import create_retriever
-        from Django_xm.apps.knowledge.services.retriever_tool import KB_RESULT_INSTRUCTION
-
-        if not kb_names:
-            return "知识库中暂无文档，请先上传文档。"
-
-        # 3.5 越权硬守卫：user_id 提供时仅保留本用户前缀的库（他人库剔除并
-        # 留痕，不泄露存在性——剔除后等同"该库不存在"）
-        if user_id is not None:
-            denied = [n for n in kb_names if not n.startswith(f"user_{user_id}_")]
-            if denied:
-                logger.warning(
-                    f"search_multi_kb: 拒绝非归属知识库检索: user_id={user_id}, denied={denied}"
-                )
-                kb_names = [n for n in kb_names if n not in denied]
-            if not kb_names:
-                return "知识库中暂无文档，请先上传文档。"
-
-        if k is None:
-            k = settings.rag_initial_k
-
-        manager = IndexManager()
-        embeddings = get_embeddings()
-        ranked_lists: list[list[tuple[Document, float | None]]] = []
-        used_weights: list[float] = []
-        if weights is None:
-            weights = [1.0 / len(kb_names)] * len(kb_names)
-
-        def _search_one_kb(name: str, weight: float):
-            """单库检索 worker（B11）：加载/检索异常计入失败返回 None，不中断整体。
-
-            worker 内打开的 Django 连接随线程结束显式释放（对齐
-            SearchAllView._search_one，防止线程池连接泄漏）。
-            """
-            try:
-                vector_store = manager.load_index(name, embeddings)
-                retriever = create_retriever(vector_store, k=k)
-                docs = retriever.invoke(query)
-                return [(doc, None) for doc in docs], weight
-            except Exception as e:
-                logger.warning(f"search_multi_kb: 知识库 {name} 检索失败: {e}")
-                return None
-            finally:
-                connections.close_all()
-
-        # 逐库串行 invoke → 线程池并行（B11）；executor.map 按提交序返回，
-        # used_weights 与 ranked_lists 顺序保持与 kb_names 一致（zip strict=False
-        # 语义：weights 长度不足时截断，与原实现一致）
-        max_workers = min(len(kb_names), MULTI_KB_MAX_WORKERS)
-        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="multi-kb-search") as executor:
-            for result in executor.map(_search_one_kb, kb_names, weights):
-                if result is None:
-                    continue
-                ranked, weight = result
-                ranked_lists.append(ranked)
-                used_weights.append(weight)
-
-        if not ranked_lists:
-            return "知识库加载失败，请稍后重试。"
-
-        # RRF 融合（B-2 单源：与 views_rag.SearchAllView 共用 rrf_fuse 纯函数）
-        fused = rrf_fuse(ranked_lists, weights=used_weights)
-        merged_docs = [doc for doc, _fused_score, _first_score, _first_list in fused]
-        merged_docs = merged_docs[: settings.rag_initial_k]
-
-        query_short = query[:50] + "..." if len(query) > 50 else query
-
-        if merged_docs:
-            logger.info(
-                f"pipeline=UnifiedRagPipeline degradation_level=0 "
-                f"query_short={query_short} doc_count={len(merged_docs)} scenario=multi_kb_rrf"
-            )
-            # B11：对齐单库检索工具——真实检索内容加 KB_RESULT_INSTRUCTION 规则前缀，
-            # 单文档内容截断（保头 + 注明）防止全文注入撑爆下游 LLM 上下文
-            truncated = [self._truncate_doc_content(doc) for doc in merged_docs]
-            return KB_RESULT_INSTRUCTION + self._format_output(truncated, degradation_level=0)
-
-        # RRF 无结果 → Level 2: 加载全库文档全文注入
-        logger.info(
-            f"pipeline=UnifiedRagPipeline degradation_level=2 "
-            f"query_short={query_short} doc_count=0 scenario=multi_kb_rrf"
-        )
-        kb_docs, total_tokens = load_kb_documents(kb_names)
-        if kb_docs:
-            return self._degradation_level2(kb_docs, total_tokens)
-
-        return "知识库中未找到与您问题相关的信息。"
+    # （C4：search_multi_kb 已删除；跨库检索统一走 RagService.retrieve_scopes）
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # 统一原始打分检索入口（Level 0）：kb_service / SearchAllView 共用
@@ -783,7 +660,7 @@ class UnifiedRagPipeline:
             retriever = _ScoreThresholdRetriever(
                 vector_store,
                 k=settings.rag_initial_k,
-                score_threshold=settings.rag_score_threshold,
+                score_threshold=get_rag_runtime_settings()["score_threshold"],
             )
             return self.search_with_retriever(
                 retriever=retriever,
@@ -831,7 +708,7 @@ class UnifiedRagPipeline:
             retriever = _ScoreThresholdRetriever(
                 vector_store,
                 k=settings.rag_initial_k,
-                score_threshold=settings.rag_score_threshold,
+                score_threshold=get_rag_runtime_settings()["score_threshold"],
             )
             return self.retrieve_documents_from_retriever(
                 retriever=retriever,
@@ -882,7 +759,7 @@ class UnifiedRagPipeline:
                         #（pgvector distance 已归一 0~1 similarity，与附件路径
                         # _ScoreThresholdRetriever 同口径）；MMR/重排等包装检索器
                         # 不经过本分支，行为不变
-                        score_threshold=settings.rag_score_threshold,
+                        score_threshold=get_rag_runtime_settings()["score_threshold"],
                         score_semantics=getattr(vector_store, "native_score_semantics", "similarity"),
                     )
                     docs = []
@@ -903,7 +780,12 @@ class UnifiedRagPipeline:
     # ═══════════════════════════════════════════════════════════════════════════════
 
     def _degradation_level1_from_retriever(
-        self, vector_store: InMemoryVectorStore, query: str
+        self,
+        vector_store: VectorStore,
+        query: str,
+        *,
+        score_semantics: str | None = None,
+        top_n: int | None = None,
     ) -> list[Document]:
         """Level 1 降级: 扩展向量检索 + FlashRank 重排序。
 
@@ -912,26 +794,49 @@ class UnifiedRagPipeline:
         多一次 embed）已删除——它不是关键词检索路径；真正的关键词降级在
         keyword_fallback（CJK 2-gram ILIKE，embedding 故障时的 PG 子串检索）。
 
+        P0 检索改造：
+        - 分数语义归一：扩展检索经 search_vector_store 内核，pgvector 的
+          cosine distance 先转为 similarity 再与 rag_degraded_threshold 比较
+          （旧实现直接 `score >= threshold` 会淘汰最相关文档）。
+        - 精排保留数可取调用方 k（不超过 rag_rerank_top_n），使 Level 1
+          交付条数与正常路径一致。
+
         Args:
-            vector_store: InMemoryVectorStore 实例（已有 embeddings）
+            vector_store: 向量库实例（附件为 InMemory，知识库为 PGVector）
             query: 用户查询文本
+            score_semantics: 后端原生分数语义；None 时读 store 的
+                native_score_semantics 自描述（缺失/非法回退 similarity）
+            top_n: 精排保留数；None 时取 settings.rag_rerank_top_n，且始终
+                不超过该配置（防止调用方传入超大值绕过上下文预算）
 
         Returns:
             重排序后的 Document 列表
         """
+        from Django_xm.apps.knowledge.vector_store import resolve_score_semantics
+
+        semantics = score_semantics or resolve_score_semantics(vector_store)
+        rerank_top_n = get_rag_runtime_settings()["rerank_top_n"]
+        limit = min(top_n or rerank_top_n, rerank_top_n)
         all_docs: list[Document] = []
 
-        # 1) 扩展向量检索: 降低阈值 + 增加 k
+        # 1) 扩展向量检索：降低阈值 + 增加 k
+        # P0：扩展窗口不得小于正常路径（否则「扩展召回」反而窗口更小）
+        expanded_k = max(settings.rag_degraded_k, get_rag_runtime_settings()["recall_k"])
         try:
-            # C2/KV-1：同上，core 1.5.4 不支持 similarity_score_threshold，改应用层过滤
+            # C2/KV-1：core 1.5.4 不支持 similarity_score_threshold，改用
+            # 应用层阈值适配器；P0：同时传入后端分数语义（distance 归一）
             expanded_retriever = _ScoreThresholdRetriever(
                 vector_store,
-                k=settings.rag_degraded_k,
+                k=expanded_k,
                 score_threshold=settings.rag_degraded_threshold,
+                score_semantics=semantics,
             )
             vector_docs = expanded_retriever.invoke(query)
             all_docs.extend(vector_docs)
-            logger.debug(f"Level 1 扩展向量检索: {len(vector_docs)} 个文档")
+            logger.debug(
+                f"Level 1 扩展向量检索: {len(vector_docs)} 个文档 "
+                f"(k={expanded_k}, threshold={settings.rag_degraded_threshold}, semantics={semantics})"
+            )
         except Exception as e:
             logger.warning(f"Level 1 扩展向量检索失败: {e}")
 
@@ -941,29 +846,12 @@ class UnifiedRagPipeline:
         if not all_docs:
             return []
 
-        # 3) FlashRank 重排序（如果可用）
-        if FLASHRANK_AVAILABLE and ADVANCED_RETRIEVERS_AVAILABLE:
-            try:
-                # RP-10：经检索器工厂的缓存单例取重排器（同模型+top_n 进程级
-                # 复用，不再每次降级重建百 MB ONNX）；构造失败仍回退原始结果
-                from Django_xm.apps.knowledge.services.retrieval_service import get_flashrank_reranker
+        # 2) 精排（O3 复用件：模型可配置 + 精排分数闸门 + 失败回退）
+        from Django_xm.apps.knowledge.services.rerank_service import rerank_documents
 
-                reranker = get_flashrank_reranker(
-                    "ms-marco-MiniLM-L-12-v2", settings.rag_rerank_top_n
-                )
-                simple_retriever = _StaticDocRetriever(all_docs)
-                compression_retriever = ContextualCompressionRetriever(
-                    base_compressor=reranker,
-                    base_retriever=simple_retriever,
-                )
-                reranked = compression_retriever.invoke(query)
-                logger.debug(f"Level 1 FlashRank 重排序: {len(all_docs)} -> {len(reranked)}")
-                return reranked
-            except Exception as e:
-                logger.warning(f"Level 1 FlashRank 重排序失败: {e}，回退到原始结果")
-
-        # 无 FlashRank：返回去重后的前 N 个
-        return all_docs[: settings.rag_rerank_top_n]
+        reranked = rerank_documents(all_docs, query, limit)
+        logger.debug(f"Level 1 精排: {len(all_docs)} -> {len(reranked)}")
+        return reranked
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # Level 2: 全文 / 结构化提示
@@ -1004,18 +892,14 @@ class UnifiedRagPipeline:
 
     @staticmethod
     def _truncate_doc_content(doc: Document, max_chars: int = _MULTI_KB_DOC_MAX_CHARS) -> Document:
-        """单文档内容截断（B11，保头 + 注明截断），不改动入参 Document。
+        """单文档内容截断（B11，O18 起委托 context_format 单源）。
 
         multi-KB 工具输出侧防全文注入撑爆下游 LLM 上下文；截断上限 800 字符，
         与 strict_rag_chain._FORMAT_DOC_MAX_CHARS 同一口径。
         """
-        content = doc.page_content
-        if len(content) <= max_chars:
-            return doc
-        return Document(
-            page_content=content[:max_chars].rstrip() + _MULTI_KB_TRUNCATED_TAG,
-            metadata=doc.metadata,
-        )
+        from Django_xm.apps.knowledge.services.context_format import truncate_document
+
+        return truncate_document(doc, max_chars)
 
     def _build_structured_hint(self, documents: list[Document], total_token_count: int) -> str:
         """构建结构化提示（文档过大时）。
@@ -1075,3 +959,72 @@ class UnifiedRagPipeline:
             full_text = "\n\n".join(doc.page_content for doc in documents)
             return f"向量索引构建失败，以下基于{source_label}全文整理：\n\n{full_text}"
         return self._build_structured_hint(documents, total_token_count)
+
+
+# ── 多路查询融合（Phase 2） ─────────────────────────────────────────────────────
+
+
+def _doc_score(doc: Document) -> float | None:
+    """取文档的可比分数：归一 similarity 优先，其次精排分。"""
+    score = doc.metadata.get("score")
+    if score is None:
+        score = doc.metadata.get("relevance_score")
+    try:
+        return float(score) if score is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def retrieve_multi_query(
+    retriever: BaseRetriever,
+    queries: list[str],
+    *,
+    vector_store: VectorStore | None,
+    k: int,
+) -> list[Document]:
+    """多路召回 + RRF 融合（原 query / HyDE / MultiQuery）。
+
+    每一路都走完整管线（阈值 → 精排 → Level 1 降级），再用 ``rrf_fuse`` 融合：
+    - 单路直接返回（避免无谓融合）；
+    - 任一非 embedding 异常原样上抛（由 strict_rag_chain 判定降级）；
+    - 空结果不影响其他路。
+
+    Args:
+        retriever: 已构建的知识库检索器
+        queries: 多路查询（第 1 路应为原 query）
+        vector_store: 底层向量库（Level 1 降级需要）
+        k: 最终保留文档数
+
+    Returns:
+        融合后的文档列表（按 RRF 融合分降序）
+    """
+    unique_queries = [q for i, q in enumerate(queries) if q and q not in queries[:i]]
+    if not unique_queries:
+        return []
+
+    pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+    ranked_lists: list[list[tuple[Document, float | None]]] = []
+    for query in unique_queries:
+        docs = pipeline.retrieve_documents_from_retriever(
+            retriever=retriever,
+            query=query,
+            vector_store=vector_store,
+            raise_on_error=True,
+            with_scores=True,
+            k=k,
+        )
+        if docs:
+            ranked_lists.append([(doc, _doc_score(doc)) for doc in docs])
+
+    if not ranked_lists:
+        return []
+    if len(ranked_lists) == 1:
+        return [doc for doc, _score in ranked_lists[0]][:k]
+
+    fused = rrf_fuse(ranked_lists)
+    docs = [doc for doc, _fused, _first_score, _first_idx in fused][:k]
+    logger.info(
+        f"pipeline=retrieval mode=multi_query routes={len(ranked_lists)} "
+        f"candidates={sum(len(items) for items in ranked_lists)} hits={len(docs)}"
+    )
+    return docs

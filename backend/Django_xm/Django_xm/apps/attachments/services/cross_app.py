@@ -25,11 +25,25 @@ def get_attachment_by_id(attachment_id, user=None):
 
 
 def soft_delete_session_attachments(session):
-    """软删除会话的所有附件"""
+    """软删除会话的所有附件，并清理会话级附件检索索引。"""
     ChatAttachment = apps.get_model("attachments", "ChatAttachment")
     ChatAttachment.objects.filter(session=session, is_deleted=False).update(
         is_deleted=True, deleted_at=timezone.now(), status=AttachmentStatus.DELETED
     )
+
+    try:
+        from Django_xm.apps.knowledge.services.rag_service import (
+            RagService,
+            attachment_scope,
+        )
+
+        session_id = getattr(session, "session_id", "")
+        if session_id:
+            RagService().delete_scope(attachment_scope(session_id))
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).warning(f"清理会话附件索引失败（可忽略）: {e}")
 
 
 def get_attachment_service():

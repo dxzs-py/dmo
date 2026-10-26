@@ -1,7 +1,7 @@
 import contextvars
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
@@ -49,6 +49,14 @@ _current_thread_id: contextvars.ContextVar[str] = contextvars.ContextVar(
 
 class AttachmentRagSearchInput(BaseModel):
     query: str = Field(description="检索查询，用于在用户上传的附件中搜索相关内容")
+    intent: Literal["auto", "precise", "comprehensive"] = Field(
+        default="auto",
+        description=(
+            "检索意图：precise=定位具体事实/数据/步骤；"
+            "comprehensive=整体性/总结性提问（如“这份附件主要写了什么”“全文结构”“有哪些章节”），"
+            "会放大召回数量以覆盖更多原文；auto=按关键词自动判断"
+        ),
+    )
 
 
 # ── 工具类 ──────────────────────────────────────────────────────────────────────
@@ -67,7 +75,8 @@ class AttachmentRagSearchTool(BaseTool):
         3. 加载附件文档分块 → UnifiedRagPipeline 检索
     """
 
-    name: str = "attachment_rag_search"
+    name: str = "attachment_search"
+    response_format: str = "content_and_artifact"
     metadata: dict = Field(
         default_factory=lambda: {
             "tier": "extended",
@@ -79,6 +88,7 @@ class AttachmentRagSearchTool(BaseTool):
     description: str = (
         "搜索用户在当前会话中上传的文件内容。当用户上传了文件并基于文件内容提问时使用此工具。"
         "参数：query - 搜索查询字符串（必填）"
+        "intent - 可选：整体/总结/概述类提问传 comprehensive，定位具体事实传 precise，不传则自动判断。"
         "注意：此工具自动检索当前会话中用户最近一次上传的附件，无需指定附件 ID。"
     )
     args_schema: type[BaseModel] = AttachmentRagSearchInput
@@ -126,9 +136,34 @@ class AttachmentRagSearchTool(BaseTool):
             # 图外调用无运行期上下文，属正常；返回空由调用方给出明确文案
             return ""
 
+    def _attachment_scope(self, thread_id: str):
+        """附件使用会话级 PG collection（名字服务端生成，不接受 LLM 传参）。"""
+        from Django_xm.apps.knowledge.services.rag_service import attachment_scope
+
+        return attachment_scope(thread_id)
+
+    def _ensure_index(self, scope, attachment_ids: list[int]) -> None:
+        """首次检索或附件集合变化时重建 PG 索引（lazy indexing）。"""
+        from Django_xm.apps.knowledge.services.index_service import IndexManager
+        from Django_xm.apps.knowledge.services.rag_retrieval import load_attachment_documents
+        from Django_xm.apps.knowledge.services.rag_service import RagService
+
+        marker = "attachment_ids:" + ",".join(str(i) for i in attachment_ids)
+        manager = IndexManager()
+        metadata = manager.load_metadata(scope.name) or {}
+        if manager.index_exists(scope.name) and metadata.get("description") == marker:
+            return
+
+        documents, _ = load_attachment_documents(attachment_ids)
+        for idx, doc in enumerate(documents):
+            doc.metadata.setdefault("source", f"attachment_{idx}")
+            doc.metadata.setdefault("chunk_index", idx)
+            doc.metadata.setdefault("total_chunks", len(documents))
+        RagService().index_scope(scope, documents, description=marker)
+
     # ── 核心逻辑 ────────────────────────────────────────────────────────────────
 
-    def _run(self, query: str) -> str:
+    def _run(self, query: str, intent: str = "auto") -> tuple[str, dict]:
         """同步执行 RAG 检索。
 
         Returns:
@@ -138,19 +173,19 @@ class AttachmentRagSearchTool(BaseTool):
         logger.info("AttachmentRAGSearch: query=%s, thread_id=%s", query[:80] if query else "", thread_id)
 
         if not thread_id:
-            return "无法确定当前会话，请重新发送消息。"
+            return "无法确定当前会话，请重新发送消息。", {"sources": []}
 
         # ── 1. 会话存在性校验（provider 注入，E5-10：异常细节只进日志）────────
         resolver = get_chat_session_exists_provider()
         if resolver is None:
             logger.warning("ChatSession 校验 provider 未注册（按未找到会话处理）: session_id=%s", thread_id)
-            return f"未找到会话 (session_id={thread_id})"
+            return f"未找到会话 (session_id={thread_id})", {"sources": []}
         try:
             if not resolver(thread_id):
-                return f"未找到会话 (session_id={thread_id})"
+                return f"未找到会话 (session_id={thread_id})", {"sources": []}
         except Exception:
             logger.warning("查找会话失败 (session_id=%s)", thread_id, exc_info=True)
-            return f"未找到会话 (session_id={thread_id})"
+            return f"未找到会话 (session_id={thread_id})", {"sources": []}
 
         # ── 2. 查找最近一次包含非图片附件的用户消息 ─────────────────────────
         try:
@@ -169,10 +204,10 @@ class AttachmentRagSearchTool(BaseTool):
             logger.exception("查询附件列表失败")
             # E5-10：异常文本可能携带 SQL/路径等内部细节，不进 LLM 上下文
             # （ToolCallCard 展示位）；全栈经上方 logger.exception 留档。
-            return f"错误：查询会话附件列表失败（{type(e).__name__}），请稍后重试。"
+            return f"错误：查询会话附件列表失败（{type(e).__name__}），请稍后重试。", {"sources": []}
 
         if not attachments:
-            return "当前会话没有上传附件。请先上传文件后再使用此工具检索。"
+            return "当前会话没有上传附件。请先上传文件后再使用此工具检索。", {"sources": []}
 
         # 遍历附件（按 message__created_at 降序），找到最近一条包含非图片附件的消息
         text_attachment_ids: list[int] = []
@@ -199,7 +234,7 @@ class AttachmentRagSearchTool(BaseTool):
                     found_text = True
 
         if not text_attachment_ids:
-            return "当前会话的附件均为图片格式，请使用 attachment_reader 工具读取图片内容。"
+            return "当前会话的附件均为图片格式，请使用 attachment_reader 工具读取图片内容。", {"sources": []}
 
         logger.info(
             "AttachmentRAGSearch: 找到 %d 个文本附件 (message_id=%s)",
@@ -207,44 +242,61 @@ class AttachmentRagSearchTool(BaseTool):
             last_message_id,
         )
 
-        # ── 3. 加载文档并检索 ──────────────────────────────────────────────
+        # ── 3. 会话级 PG 索引检索 ──────────────────────────────────────────────
         try:
-            from Django_xm.apps.knowledge.services.rag_retrieval import (
-                UnifiedRagPipeline,
-                load_attachment_documents,
-            )
+            from Django_xm.apps.knowledge.services.kb_search_tool import _format_result
+            from Django_xm.apps.knowledge.services.rag_service import RagRequest, RagService
 
-            documents, total_tokens = load_attachment_documents(text_attachment_ids)
-            pipeline = UnifiedRagPipeline()
-            result = pipeline.search(query, documents, total_tokens)
-            logger.info("AttachmentRAGSearch: 检索完成, 结果长度=%d", len(result))
-            # R3 1.11：检索结果源自用户上传附件（外部内容），进模型上下文前
-            # 对齐 file_reader/web_fetch 的 B4 注入隔离信封（先截断后包裹由
-            # pipeline 内部截断语义保证；错误分支为系统生成文案，不包裹）
+            scope = self._attachment_scope(thread_id)
+            session = getattr(attachments[0], "session", None) if attachments else None
+            user_id = getattr(session, "user_id", None)
+            if user_id:
+                from dataclasses import replace
+
+                scope = replace(scope, user_id=user_id)
+            self._ensure_index(scope, text_attachment_ids)
+            result = RagService().retrieve_for_scope(
+                RagRequest(
+                    query=query,
+                    scope=scope,
+                    k=5,
+                    metrics_kind="agent_attachment",
+                    intent=intent,
+                )
+            )
+            logger.info("AttachmentSearch: 检索完成, hits=%d", len(result.docs))
+            from Django_xm.apps.knowledge.rag_settings import get_rag_runtime_settings
             from Django_xm.apps.tools.langchain.external_content import wrap_external_content
 
-            return wrap_external_content(f"会话附件检索结果 (query={query[:80]})", result)
+            include_sources = get_rag_runtime_settings()["tool_include_sources"]
+            return (
+                wrap_external_content(
+                    f"会话附件检索结果 (query={query[:80]})", _format_result(result)
+                ),
+                {
+                    "sources": result.sources if include_sources else [],
+                    "metrics": result.metrics,
+                },
+            )
         except Exception as e:
-            logger.exception("AttachmentRAGSearch 检索失败")
-            # E5-10：异常文本可能携带内部细节，不进 LLM 上下文；类型名作为
-            # 有限细节保留，全栈经上方 logger.exception 留档。
-            return f"错误：附件检索过程中发生错误（{type(e).__name__}），请稍后重试。"
+            logger.exception("AttachmentSearch 检索失败")
+            return f"错误：附件检索过程中发生错误（{type(e).__name__}），请稍后重试。", {"sources": []}
 
-    async def _arun(self, query: str) -> str:
+    async def _arun(self, query: str, intent: str = "auto") -> tuple[str, dict]:
         """异步执行 RAG 检索，委托给同步 _run（sync_to_async 复制上下文，身份随行）。"""
         from asgiref.sync import sync_to_async
 
-        return await sync_to_async(self._run)(query=query)
+        return await sync_to_async(self._run)(query=query, intent=intent)
 
 
 # ── 单例 ────────────────────────────────────────────────────────────────────────
 
-attachment_rag_search = AttachmentRagSearchTool()
+attachment_search = AttachmentRagSearchTool()
 
 
 def get_attachment_rag_tools() -> list[BaseTool]:
     """返回附件 RAG 检索工具单例列表。"""
-    return [attachment_rag_search]
+    return [attachment_search]
 
 
-ATTACHMENT_RAG_TOOLS = [attachment_rag_search]
+ATTACHMENT_RAG_TOOLS = [attachment_search]

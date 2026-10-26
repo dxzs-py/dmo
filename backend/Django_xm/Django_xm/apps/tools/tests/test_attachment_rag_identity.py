@@ -1,6 +1,6 @@
 """C-1（P1 多租户安全）：AttachmentRagSearchTool 单例 thread_id 身份传递测试。
 
-缺陷（修复前）：模块级单例 attachment_rag_search 被有附件的请求共享注入
+缺陷（修复前）：模块级单例 attachment_search 被有附件的请求共享注入
 （tool_service.py 追加对象引用），thread_id 是实例可变字段，每次 invoke/ainvoke
 前由 _capture_thread_id 写入 self.thread_id；并发会话下 B 会话的 capture 覆写
 A 已捕获的值（capture 与 _run 之间隔着 super().ainvoke 回调调度与
@@ -31,7 +31,7 @@ django.setup()
 
 from django.test import SimpleTestCase
 
-from Django_xm.apps.tools.langchain.attachment_rag import attachment_rag_search
+from Django_xm.apps.tools.langchain.attachment_rag import attachment_search
 
 
 def _unique_session(prefix: str) -> str:
@@ -51,7 +51,7 @@ class InterleavedIdentityTests(SimpleTestCase):
 
         async def scenario():
             async def run_for(thread_id: str) -> str:
-                return await attachment_rag_search.ainvoke(
+                return await attachment_search.ainvoke(
                     "检索测试", config={"configurable": {"thread_id": thread_id}}
                 )
 
@@ -69,9 +69,9 @@ class InterleavedIdentityTests(SimpleTestCase):
         修复前：pydantic 字段恒存在且 capture 后携带会话值 → 本用例红。
         """
         session = _unique_session("sess-state")
-        attachment_rag_search.invoke("检索测试", config={"configurable": {"thread_id": session}})
+        attachment_search.invoke("检索测试", config={"configurable": {"thread_id": session}})
         self.assertFalse(
-            hasattr(attachment_rag_search, "thread_id"),
+            hasattr(attachment_search, "thread_id"),
             "单例不得携带 thread_id 实例状态（C-1 跨会话竞态根源）",
         )
 
@@ -82,14 +82,14 @@ class IdentityResolutionTests(SimpleTestCase):
     def test_sync_invoke_resolves_session_from_config(self):
         """同步 invoke：thread_id 从本次 config 捕获并落入检索结果。"""
         session = _unique_session("sess-sync")
-        result = attachment_rag_search.invoke("检索测试", config={"configurable": {"thread_id": session}})
+        result = attachment_search.invoke("检索测试", config={"configurable": {"thread_id": session}})
         self.assertIn(session, result)
 
     def test_run_without_identity_reports_session_unknown(self):
         """图外直接 _run（无 config、无图上下文）→ 返回明确提示而非错误。"""
-        result = attachment_rag_search._run("检索测试")
-        self.assertIn("无法确定当前会话", result)
+        text, _artifact = attachment_search._run("检索测试")
+        self.assertIn("无法确定当前会话", text)
 
     def test_ainvoke_without_config_reports_session_unknown(self):
-        result = asyncio.run(attachment_rag_search.ainvoke("检索测试"))
+        result = asyncio.run(attachment_search.ainvoke("检索测试"))
         self.assertIn("无法确定当前会话", result)

@@ -575,6 +575,7 @@ def _persist_to_db_sync(
 
         return {
             "message_id": str(assistant_msg.id),
+            "content": assistant_msg.content,
             "content_len": len(assistant_msg.content),
             "tool_calls_count": len(merged_tool_calls),
             "content_changed": content_changed,
@@ -659,6 +660,12 @@ async def _broadcast_message_updated(session_id: str, result: dict[str, Any]) ->
     后拉取的 ``Message.content`` + ``Message.tool_calls``，与触发浏览器一致）。
     广播失败仅记录 warning，不中断持久化流程。
 
+    载荷携带完整 ``content``（而非仅 ``content_len``）：正文快照
+    （STREAM_CONTENT_UPDATE）是 ``persist_history=False`` 不入回放历史的，
+    断线重连时若只能拿到长度，正文就永久丢失；带上正文后，重连回放可直接
+    自愈（前端 mergeMessageFromBackend 的保护规则是“本地为空或后端更长才
+    覆盖”，不会把已收到的更新内容回退）。
+
     Args:
         session_id: 会话 ID
         result: ``_persist_to_db_sync`` 返回的持久化结果
@@ -675,6 +682,7 @@ async def _broadcast_message_updated(session_id: str, result: dict[str, Any]) ->
                 "session_id": session_id,
                 "source": EventSource.CHAT.value,
                 "source_id": session_id,
+                "content": result.get("content", ""),
                 "content_len": result["content_len"],
                 "tool_calls_count": result["tool_calls_count"],
             },

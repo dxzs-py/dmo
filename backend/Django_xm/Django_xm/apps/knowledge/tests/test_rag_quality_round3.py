@@ -174,7 +174,7 @@ class MultiKbOwnershipTests(unittest.TestCase):
 
     def test_build_tool_drops_cross_tenant_kb_ids(self):
         """非本人 kb_id 构建期剔除并留痕；工具只含本人库。"""
-        from Django_xm.apps.knowledge.services import multi_kb_retriever
+        from Django_xm.apps.knowledge.services import kb_tool_builder
 
         with (
             self._patch_metadata(["user_7_mine"]),
@@ -182,9 +182,13 @@ class MultiKbOwnershipTests(unittest.TestCase):
                 "Django_xm.apps.knowledge.views_utils.build_user_index_name",
                 side_effect=lambda uid, kb: f"user_{uid}_{kb}",
             ),
-            self.assertLogs("Django_xm.apps.knowledge.services.multi_kb_retriever", level="WARNING") as logs,
+            mock.patch(
+                "Django_xm.apps.knowledge.services.retrieval_service.build_user_retriever_bundle",
+                return_value=SimpleNamespace(retriever=mock.MagicMock(), vector_store=None),
+            ),
+            self.assertLogs("Django_xm.apps.knowledge.services.kb_tool_builder", level="WARNING") as logs,
         ):
-            tool = multi_kb_retriever.build_retriever_tool_for_research(
+            tool = kb_tool_builder.build_kb_tool_for_research(
                 knowledge_base_ids=["mine", "other-user-kb"], user_id=7
             )
 
@@ -192,7 +196,7 @@ class MultiKbOwnershipTests(unittest.TestCase):
         self.assertTrue(any("other-user-kb" in message for message in logs.output))
 
     def test_build_tool_returns_none_when_all_denied(self):
-        from Django_xm.apps.knowledge.services import multi_kb_retriever
+        from Django_xm.apps.knowledge.services import kb_tool_builder
 
         with (
             self._patch_metadata([]),
@@ -201,29 +205,13 @@ class MultiKbOwnershipTests(unittest.TestCase):
                 side_effect=lambda uid, kb: f"user_{uid}_{kb}",
             ),
         ):
-            tool = multi_kb_retriever.build_retriever_tool_for_research(
+            tool = kb_tool_builder.build_kb_tool_for_research(
                 knowledge_base_ids=["ghost1", "ghost2"], user_id=7
             )
 
         self.assertIsNone(tool)
 
-    def test_search_multi_kb_prefix_guard_rejects_foreign_names(self):
-        """运行期前缀硬守卫：非 user_{uid}_ 前缀的库被剔除，不触碰向量库。"""
-        from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
-
-        manager_cls = mock.MagicMock(name="IndexManager")
-        with (
-            mock.patch(f"{_INDEX_SERVICE}.IndexManager", manager_cls),
-            mock.patch(
-                "Django_xm.apps.knowledge.services.embedding_service.get_embeddings"
-            ),
-        ):
-            output = UnifiedRagPipeline(scenario="knowledge_base").search_multi_kb(
-                kb_names=["user_999_victim"], query="查询", user_id=1
-            )
-
-        self.assertEqual(output, "知识库中暂无文档，请先上传文档。")
-        manager_cls.return_value.load_index.assert_not_called()
+    # C4：search_multi_kb 已删除（跨库检索统一走 RagService.retrieve_scopes）
 
 
 # ── 3.6 SearchAll 按库维度分组 ────────────────────────────────────────────────

@@ -301,141 +301,111 @@ class ChatService(ChatModeOrchestrationMixin, AgentStreamMixin, SubagentStreamMi
             )
         logger.info("[ChatExec] 执行完成")
 
-    async def _inject_deep_research_retriever_tools(self, data: dict[str, Any]) -> None:
-        """deep-research 知识库检索工具注入：为每个选中知识库创建 comprehensive 检索工具
+    async def _get_retriever_bundle(self, kb_id: str, retrieval_mode: str):
+        """P0-O2：优先取检索器 bundle（含 vector_store，供工具链路 Level 1）。
 
-        全部工具追加到 _retriever_tool_list，首个作为主检索器 _retriever_tool，
-        其余由 _handle_deep_research_mode 合并进 _deep_extra_tools。
-
-        方法体留本文件（阶段 5）：引用 chat_service 模块 globals 的
-        ``sync_to_async``（test_retriever_injection_degradation:56/:139 patch
-        打在本模块命名空间，名字解析在定义模块，迁出即失效）。
+        回退策略：旧实现/测试替身仅有 ``get_rag_retriever`` 时，包装为
+        (retriever, vector_store=None)，行为与改造前一致（Level 1 不可达）。
         """
-        kb_ids = data.get("selected_knowledge_bases") or []
-        single_kb = data.get("selected_knowledge_base")
-        if single_kb and single_kb not in kb_ids:
-            kb_ids.append(single_kb)
+        from types import SimpleNamespace
 
-        if not kb_ids:
-            return
+        bundle_getter = getattr(self._rag_service, "get_rag_retriever_bundle", None)
+        if bundle_getter is not None:
+            return await sync_to_async(bundle_getter)(kb_id, retrieval_mode=retrieval_mode)
+        retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
+            kb_id, retrieval_mode=retrieval_mode
+        )
+        if not retriever:
+            return None
+        return SimpleNamespace(retriever=retriever, vector_store=None)
 
-        from Django_xm.apps.knowledge.services.retriever_tool import create_retriever_tool
+    async def _build_kb_tool_bundles(
+        self, kb_ids: list[str], *, retrieval_mode: str, data: dict[str, Any]
+    ) -> dict:
+        """预构建知识库 bundle（失败记降级事件），供唯一检索工具使用。"""
+        from Django_xm.apps.knowledge.services.kb_search_tool import KbToolBundle
+        from Django_xm.apps.knowledge.services.rag_service import RagScope
+        from Django_xm.apps.knowledge.views_utils import build_user_index_name
 
         kb_info_map = {}
         try:
             kbs = await self._load_user_knowledge_bases()
             kb_info_map = {kb.get("id"): kb for kb in kbs}
         except Exception:
-            # 知识库列表读取失败时回退到使用 kb_id 作为名称
             logger.debug("读取知识库列表失败，使用 kb_id 作为名称")
 
+        bundles: dict = {}
+        user_id = self._rag_service.user_id
         for kb_id in kb_ids:
-            retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
-                kb_id, retrieval_mode="comprehensive"
-            )
-            if retriever:
-                kb_info = kb_info_map.get(kb_id)
-                kb_name = kb_id
-                kb_desc = ""
-                if kb_info:
-                    kb_name = kb_info.get("name", kb_id)
-                    kb_desc = kb_info.get("description", "")
-
-                tool_name = f"knowledge_base_{kb_id}".replace("-", "_").replace(" ", "_")
-                tool_desc = f"搜索知识库「{kb_name}」中的相关信息。"
-                if kb_desc:
-                    tool_desc += f" 知识库描述: {kb_desc}"
-
-                retriever_tool = create_retriever_tool(
-                    retriever,
-                    name=tool_name,
-                    description=tool_desc,
-                    retrieval_mode="comprehensive",
-                    kb_name=kb_name,
-                    kb_description=kb_desc,
-                )
-                data.setdefault("_retriever_tool_list", []).append(retriever_tool)
-            else:
-                # E5-02：注入失败不得静默——用户以为答案来自知识库，实际 LLM 凭
-                # 参数知识回答。追加降级事件由执行编排广播（用户可见提示）。
+            bundle = await self._get_retriever_bundle(kb_id, retrieval_mode)
+            if not bundle or not bundle.retriever:
                 data.setdefault("_stream_degradation_events", []).append(
                     {
                         "kb_id": kb_id,
                         "message": f"知识库「{kb_id}」暂时无法检索，本次回答将不使用该知识库内容",
                     }
                 )
-                logger.warning(f"[ChatExec] deep-research 检索器注入失败（已发降级提示）: kb={kb_id}")
+                logger.warning(f"[ChatExec] 检索器注入失败（已发降级提示）: kb={kb_id}")
+                continue
+            info = kb_info_map.get(kb_id) or {}
+            bundles[kb_id] = KbToolBundle(
+                kb_id=kb_id,
+                name=info.get("name", kb_id),
+                description=info.get("description", ""),
+                scope=RagScope(
+                    kind="persistent_kb",
+                    name=build_user_index_name(user_id, kb_id),
+                    user_id=user_id,
+                ),
+                retriever=bundle.retriever,
+                vector_store=bundle.vector_store,
+            )
+        return bundles
 
-        if data.get("_retriever_tool_list"):
-            data["_retriever_tool"] = data["_retriever_tool_list"][0]
-
-    async def _inject_agent_retriever_tools(self, data: dict[str, Any]) -> None:
-        """agent 模式知识库检索工具注入：为每个选中知识库创建 auto 检索工具（precise 主检索器 + comprehensive 备用）
-
-        方法体留本文件（阶段 5）：引用 chat_service 模块 globals 的
-        ``sync_to_async``（test_retriever_injection_degradation:56/:139 patch
-        打在本模块命名空间，名字解析在定义模块，迁出即失效）。
-        """
+    async def _inject_deep_research_retriever_tools(self, data: dict[str, Any]) -> None:
+        """deep-research：注入唯一跨库知识库检索工具（comprehensive）。"""
         kb_ids = data.get("selected_knowledge_bases") or []
         single_kb = data.get("selected_knowledge_base")
         if single_kb and single_kb not in kb_ids:
             kb_ids.append(single_kb)
+        if not kb_ids:
+            return
 
-        for kb_id in kb_ids:
-            retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
-                kb_id, retrieval_mode="precise"
-            )
-            if retriever:
-                try:
-                    comprehensive_retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
-                        kb_id, retrieval_mode="comprehensive"
-                    )
-                except Exception as e:
-                    logger.warning(f"创建 comprehensive 检索器失败: {e}")
-                    comprehensive_retriever = None
+        bundles = await self._build_kb_tool_bundles(
+            kb_ids, retrieval_mode="comprehensive", data=data
+        )
+        if not bundles:
+            return
 
-                from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
-                from Django_xm.apps.knowledge.services.retriever_tool import create_retriever_tool
+        from Django_xm.apps.knowledge.services.kb_search_tool import (
+            build_knowledge_base_search_tool,
+        )
 
-                kb_info = None
-                try:
-                    kbs = await self._load_user_knowledge_bases()
-                    kb_info = next((kb for kb in kbs if kb.get("id") == kb_id), None)
-                except Exception:
-                    # 知识库信息读取失败时回退到使用 kb_id 作为名称
-                    logger.debug("读取知识库 %s 信息失败", kb_id)
+        tool = build_knowledge_base_search_tool(bundles=bundles, k=5)
+        data.setdefault("_retriever_tool_list", []).append(tool)
+        data["_retriever_tool"] = tool
 
-                kb_name = kb_id
-                kb_desc = ""
-                if kb_info:
-                    kb_name = kb_info.get("name", kb_id)
-                    kb_desc = kb_info.get("description", "")
+    async def _inject_agent_retriever_tools(self, data: dict[str, Any]) -> None:
+        """agent：注入唯一跨库知识库检索工具（precise）。"""
+        kb_ids = data.get("selected_knowledge_bases") or []
+        single_kb = data.get("selected_knowledge_base")
+        if single_kb and single_kb not in kb_ids:
+            kb_ids.append(single_kb)
+        if not kb_ids:
+            return
 
-                tool_name = f"knowledge_base_{kb_id}".replace("-", "_").replace(" ", "_")
-                tool_desc = f"搜索知识库「{kb_name}」中的相关信息。"
-                if kb_desc:
-                    tool_desc += f" 知识库描述: {kb_desc}"
+        bundles = await self._build_kb_tool_bundles(
+            kb_ids, retrieval_mode="precise", data=data
+        )
+        if not bundles:
+            return
 
-                retriever_tool = create_retriever_tool(
-                    retriever,
-                    name=tool_name,
-                    description=tool_desc,
-                    retrieval_mode="auto",
-                    comprehensive_retriever=comprehensive_retriever,
-                    llm=get_helper_model(),
-                    kb_name=kb_name,
-                    kb_description=kb_desc,
-                )
-                data.setdefault("_extra_tools", []).append(retriever_tool)
-            else:
-                # E5-02：注入失败不得静默（同 deep-research 分支，用户可见降级提示）
-                data.setdefault("_stream_degradation_events", []).append(
-                    {
-                        "kb_id": kb_id,
-                        "message": f"知识库「{kb_id}」暂时无法检索，本次回答将不使用该知识库内容",
-                    }
-                )
-                logger.warning(f"[ChatExec] agent 检索器注入失败（已发降级提示）: kb={kb_id}")
+        from Django_xm.apps.knowledge.services.kb_search_tool import (
+            build_knowledge_base_search_tool,
+        )
+
+        tool = build_knowledge_base_search_tool(bundles=bundles, k=5)
+        data.setdefault("_extra_tools", []).append(tool)
 
     async def _build_stream_agent_and_input(
         self,

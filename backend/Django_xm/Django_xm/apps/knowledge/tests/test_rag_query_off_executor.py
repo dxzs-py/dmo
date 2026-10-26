@@ -48,6 +48,20 @@ from Django_xm.apps.knowledge.views_rag import RAGQueryView, SearchAllView
 
 _VIEWS_RAG = "Django_xm.apps.knowledge.views_rag"
 
+# P1 埋点：模块级隔离 Celery broker（测试环境不投递真任务）
+_METRICS_PATCHERS: list = []
+
+
+def setUpModule():
+    patcher = mock.patch(f"{_VIEWS_RAG}.retrieval_metrics.record_retrieval")
+    patcher.start()
+    _METRICS_PATCHERS.append(patcher)
+
+
+def tearDownModule():
+    while _METRICS_PATCHERS:
+        _METRICS_PATCHERS.pop().stop()
+
 _QUERY = "什么是 LangChain"
 _INDEX = "kb1"
 
@@ -63,6 +77,11 @@ def _query_request(path="/api/v1/knowledge/query/"):
 
 def _fake_metadata(num_documents=3, dim=1536):
     return {"num_documents": num_documents, "embedding_dimension": dim}
+
+
+def _fake_bundle():
+    """P0：views 层检索器构建门面返回 (retriever, vector_store) 打包对象。"""
+    return SimpleNamespace(retriever=object(), vector_store=object())
 
 
 class _FakeIndexManager:
@@ -149,7 +168,7 @@ class QueryViewOffExecutorTests(SimpleTestCase):
                 mock.patch(f"{_VIEWS_RAG}.IndexManager", return_value=manager),
                 mock.patch(f"{_VIEWS_RAG}.QueryCacheService.get_cached_query", return_value=None),
                 mock.patch(f"{_VIEWS_RAG}.QueryCacheService.cache_query_result"),
-                mock.patch(f"{_VIEWS_RAG}.build_user_retriever", return_value=object()),
+                mock.patch(f"{_VIEWS_RAG}.build_user_retriever_bundle", return_value=_fake_bundle()),
                 mock.patch(
                     f"{_VIEWS_RAG}.query_strict_rag", return_value={"answer": "a", "sources": [], "success": True}
                 ),
@@ -251,7 +270,15 @@ class FinalizeResponseCacheTests(SimpleTestCase):
         from types import SimpleNamespace as NS
 
         # model_seg/mode_seg 为 B5 新增：_prepare_request 产出的 prepared 均携带
-        return NS(query="什么是 LangChain", user_index_name="user_1_kb", k=4, model_seg="m-test", mode_seg="strict")
+        return NS(
+            query="什么是 LangChain",
+            user_index_name="user_1_kb",
+            user_id=1,
+            k=4,
+            model_seg="m-test",
+            mode_seg="strict",
+            started_at=time.perf_counter(),
+        )
 
     def test_degraded_result_not_cached(self):
         cache_write = mock.MagicMock()
@@ -330,7 +357,7 @@ class StreamEndpointTests(SimpleTestCase):
             mock.patch(f"{_VIEWS_RAG}.IndexManager", return_value=manager),
             mock.patch(f"{_VIEWS_RAG}.QueryCacheService.get_cached_query", return_value=None),
             mock.patch(f"{_VIEWS_RAG}.QueryCacheService.cache_query_result", cache_write),
-            mock.patch(f"{_VIEWS_RAG}.build_user_retriever", return_value=object()),
+            mock.patch(f"{_VIEWS_RAG}.build_user_retriever_bundle", return_value=_fake_bundle()),
             mock.patch(
                 f"{_VIEWS_RAG}.stream_strict_rag",
                 return_value=self._fake_stream_events(delay=0.02, degraded=False),
@@ -356,7 +383,7 @@ class StreamEndpointTests(SimpleTestCase):
             mock.patch(f"{_VIEWS_RAG}.IndexManager", return_value=manager),
             mock.patch(f"{_VIEWS_RAG}.QueryCacheService.get_cached_query", return_value=None),
             mock.patch(f"{_VIEWS_RAG}.QueryCacheService.cache_query_result", cache_write),
-            mock.patch(f"{_VIEWS_RAG}.build_user_retriever", return_value=object()),
+            mock.patch(f"{_VIEWS_RAG}.build_user_retriever_bundle", return_value=_fake_bundle()),
             mock.patch(f"{_VIEWS_RAG}.stream_strict_rag", return_value=self._fake_stream_events(delay=0.02)),
         ):
             response = vr.rag_query_stream(self._stream_request())
@@ -375,7 +402,7 @@ class StreamEndpointTests(SimpleTestCase):
             mock.patch(f"{_VIEWS_RAG}.IndexManager", return_value=manager),
             mock.patch(f"{_VIEWS_RAG}.QueryCacheService.get_cached_query", return_value=None),
             mock.patch(f"{_VIEWS_RAG}.QueryCacheService.cache_query_result", cache_write),
-            mock.patch(f"{_VIEWS_RAG}.build_user_retriever", return_value=object()),
+            mock.patch(f"{_VIEWS_RAG}.build_user_retriever_bundle", return_value=_fake_bundle()),
             mock.patch(f"{_VIEWS_RAG}.stream_strict_rag", return_value=iter([])),
         ):
             response = vr.rag_query_stream(self._stream_request())
@@ -434,7 +461,7 @@ class StreamEndpointTests(SimpleTestCase):
             mock.patch(f"{_VIEWS_RAG}.IndexManager", return_value=manager),
             mock.patch(f"{_VIEWS_RAG}.QueryCacheService.get_cached_query", return_value=None),
             mock.patch(f"{_VIEWS_RAG}.QueryCacheService.cache_query_result"),
-            mock.patch(f"{_VIEWS_RAG}.build_user_retriever", return_value=object()),
+            mock.patch(f"{_VIEWS_RAG}.build_user_retriever_bundle", return_value=_fake_bundle()),
             mock.patch(f"{_VIEWS_RAG}.stream_strict_rag", return_value=_slow_events()),
         ):
             response = vr.rag_query_stream(self._stream_request())

@@ -9,7 +9,7 @@
 - 1.7 受限命名空间：pathlib 剔除、精确模块匹配（urllib.request 同根逃逸封堵）
 - 1.9 MCP token 加密字段：密钥缺失拒绝保存（不落明文）
 - 1.10 僵尸进程：_reap_after_kill wait + SIGKILL 兜底
-- 1.11 attachment_rag_search 返回值包裹 wrap_external_content
+- 1.11 attachment_search 返回值包裹 wrap_external_content
 - 1.12 注册一致性：导出/装配/审批策略/只读白名单五处集合一致
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
@@ -416,25 +416,31 @@ class ReapAfterKillTests(SimpleTestCase):
 
 
 # ────────────────────────────────────────────────────────────────────────
-# 1.11 attachment_rag_search 外部内容信封
+# 1.11 attachment_search 外部内容信封
 # ────────────────────────────────────────────────────────────────────────
 
 
 class AttachmentRagWrapTests(SimpleTestCase):
     """R3 1.11：检索结果进模型上下文前包裹 wrap_external_content。"""
 
-    def _invoke_with_stubbed_retrieval(self, pipeline_result: str) -> str:
+    def _invoke_with_stubbed_retrieval(self, content: str):
         from Django_xm.apps.attachments import models as attachments_models
-        from Django_xm.apps.tools.langchain.attachment_rag import attachment_rag_search
+        from Django_xm.apps.knowledge.services.rag_service import RagResult
+        from Django_xm.apps.tools.langchain.attachment_rag import (
+            AttachmentRagSearchTool,
+            attachment_search,
+        )
 
         fake_att = SimpleNamespace(id=7, message_id=11, created_at=None)
         fake_attachment_model = mock.MagicMock()
         fake_attachment_model.objects.filter.return_value.select_related.return_value.order_by.return_value = [
             fake_att
         ]
-
-        fake_pipeline = mock.MagicMock()
-        fake_pipeline.return_value.search.return_value = pipeline_result
+        fake_result = RagResult(
+            docs=[SimpleNamespace(page_content=content, metadata={"source": "a.md"})],
+            sources=[{"source": "a.md", "scope": "session_attachment"}],
+            metrics={},
+        )
 
         with (
             mock.patch(
@@ -446,16 +452,15 @@ class AttachmentRagWrapTests(SimpleTestCase):
                 "Django_xm.apps.tools.langchain.file_reader.get_attachment_info",
                 return_value={"is_image": False},
             ),
+            mock.patch.object(AttachmentRagSearchTool, "_ensure_index"),
             mock.patch(
-                "Django_xm.apps.knowledge.services.rag_retrieval.load_attachment_documents",
-                return_value=([], 0),
-            ),
-            mock.patch(
-                "Django_xm.apps.knowledge.services.rag_retrieval.UnifiedRagPipeline",
-                fake_pipeline,
+                "Django_xm.apps.knowledge.services.rag_service.RagService.retrieve_for_scope",
+                return_value=fake_result,
             ),
         ):
-            return attachment_rag_search.invoke("检索词", config={"configurable": {"thread_id": "sess-wrap"}})
+            return attachment_search.invoke(
+                "检索词", config={"configurable": {"thread_id": "sess-wrap"}}
+            )
 
     def test_result_wrapped_in_external_content_envelope(self):
         from Django_xm.apps.tools.langchain.external_content import (
@@ -465,14 +470,17 @@ class AttachmentRagWrapTests(SimpleTestCase):
 
         result = self._invoke_with_stubbed_retrieval("片段1 ... 片段2")
         self.assertIn("会话附件检索结果", result)
-        self.assertIn(EXTERNAL_CONTENT_START.format(source="会话附件检索结果 (query=检索词)"), result)
+        self.assertIn(
+            EXTERNAL_CONTENT_START.format(source="会话附件检索结果 (query=检索词)"),
+            result,
+        )
         self.assertIn("片段1", result)
         self.assertTrue(result.strip().endswith(EXTERNAL_CONTENT_END))
 
     def test_error_branch_not_wrapped(self):
         """错误分支为系统生成文案，不包裹信封。"""
         from Django_xm.apps.attachments import models as attachments_models
-        from Django_xm.apps.tools.langchain.attachment_rag import attachment_rag_search
+        from Django_xm.apps.tools.langchain.attachment_rag import attachment_search
         from Django_xm.apps.tools.langchain.external_content import EXTERNAL_CONTENT_START
 
         fake_attachment_model = mock.MagicMock()
@@ -485,7 +493,7 @@ class AttachmentRagWrapTests(SimpleTestCase):
             ),
             mock.patch.object(attachments_models, "ChatAttachment", fake_attachment_model),
         ):
-            result = attachment_rag_search.invoke("q", config={"configurable": {"thread_id": "sess-err"}})
+            result = attachment_search.invoke("q", config={"configurable": {"thread_id": "sess-err"}})
         self.assertIn("错误：查询会话附件列表失败", result)
         self.assertNotIn(EXTERNAL_CONTENT_START[:12], result)
 
@@ -508,7 +516,9 @@ class ToolRegistryConsistencyTests(SimpleTestCase):
         {"ls", "glob", "grep", "read_file", "write_file", "edit_file", "execute", "write_todos"}
     )
     # 动态创建工具（agent 构建期按用户/知识库实例化，无模块级单例）
-    DYNAMIC_TOOLS: frozenset = frozenset({"activate_skill", "read_skill_resource", "knowledge_base"})
+    DYNAMIC_TOOLS: frozenset = frozenset(
+        {"activate_skill", "read_skill_resource", "knowledge_base", "knowledge_base_search"}
+    )
     # 系统编排工具（非审批类 interrupt，显式豁免：SYSTEM_ORCHESTRATION_TOOLS）
     ORCHESTRATION_EXEMPT: frozenset = frozenset({"wait_for_subagent"})
 

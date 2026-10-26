@@ -167,38 +167,47 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
             pass
 
     async def disconnect(self, close_code):
-        # 取消周期性清理任务
-        cleanup_task = getattr(self, "_cleanup_task", None)
-        if cleanup_task and not cleanup_task.done():
-            cleanup_task.cancel()
-            try:
-                await cleanup_task
-            except asyncio.CancelledError:
-                pass
+        # 断开日志必须无条件输出（含 close_code）：此前该日志在函数末尾且无 finally，
+        # consumer 协程被异常打断时不执行，日志里“一条断开都没有”，
+        # 导致 WebSocket 被服务端异常关闭的故障无法从日志定位。
+        try:
+            # 取消周期性清理任务
+            cleanup_task = getattr(self, "_cleanup_task", None)
+            if cleanup_task and not cleanup_task.done():
+                cleanup_task.cancel()
+                try:
+                    await cleanup_task
+                except asyncio.CancelledError:
+                    pass
 
-        if hasattr(self, "user_group"):
+            if hasattr(self, "user_group"):
+                try:
+                    await self.channel_layer.group_discard(self.user_group, self.channel_name)
+                except Exception as e:
+                    logger.warning(f"[RealtimeSync] 离开用户分组失败: {e}")
+
+            for group in getattr(self, "session_groups", set()):
+                try:
+                    await self.channel_layer.group_discard(group, self.channel_name)
+                except Exception as e:
+                    logger.warning(f"[RealtimeSync] 离开会话分组失败: {group}, {e}")
+
+            # 清理 task 通道分组
+            for group in getattr(self, "task_groups", set()):
+                try:
+                    await self.channel_layer.group_discard(group, self.channel_name)
+                except Exception as e:
+                    logger.warning(f"[RealtimeSync] 离开任务分组失败: {group}, {e}")
+        finally:
+            # WebSocket 断开时清理 DB 连接，防止长连接持有数据库连接导致池耗尽
             try:
-                await self.channel_layer.group_discard(self.user_group, self.channel_name)
+                await sync_to_async(close_old_connections)()
             except Exception as e:
-                logger.warning(f"[RealtimeSync] 离开用户分组失败: {e}")
-
-        for group in getattr(self, "session_groups", set()):
-            try:
-                await self.channel_layer.group_discard(group, self.channel_name)
-            except Exception as e:
-                logger.warning(f"[RealtimeSync] 离开会话分组失败: {group}, {e}")
-
-        # 清理 task 通道分组
-        for group in getattr(self, "task_groups", set()):
-            try:
-                await self.channel_layer.group_discard(group, self.channel_name)
-            except Exception as e:
-                logger.warning(f"[RealtimeSync] 离开任务分组失败: {group}, {e}")
-
-        # WebSocket 断开时清理 DB 连接，防止长连接持有数据库连接导致池耗尽
-        await sync_to_async(close_old_connections)()
-
-        logger.info(f"[RealtimeSync] 用户 {getattr(self, 'user_id', '?')} 已断开 WebSocket")
+                logger.warning(f"[RealtimeSync] 断开时清理数据库连接失败: {e}")
+            logger.info(
+                f"[RealtimeSync] 用户 {getattr(self, 'user_id', '?')} 已断开 WebSocket "
+                f"(close_code={close_code})"
+            )
 
     async def receive_json(self, content, **kwargs):
         action = content.get("action")

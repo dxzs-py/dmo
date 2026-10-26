@@ -17,6 +17,5 @@ TIMEOUT_DECISION = "_timeout"
 # 属工具命名约定（机制层），与业务 app 无关。
 RETRIEVER_TOOL_NAME_PREFIXES: Final[tuple[str, ...]] = (
     "knowledge_base_",
-    "knowledge_bases",
-    "knowledge_retrieve",
+    "attachment_",
 )

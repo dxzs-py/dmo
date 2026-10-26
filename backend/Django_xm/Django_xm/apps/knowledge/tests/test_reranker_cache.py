@@ -99,43 +99,32 @@ class GetFlashrankRerankerCacheTests(unittest.TestCase):
         self.assertEqual(cls.call_count, 2)
 
 
-class Level1UsesCachedFactoryTests(unittest.TestCase):
-    """Level 1 降级重排路径改经缓存工厂（不再直接构造 FlashRankReranker）。"""
+class Level1UsesRerankServiceTests(unittest.TestCase):
+    """P0-O3：Level 1 精排下沉 rerank_service（模型可配/分数闸门/失败回退单源）。"""
 
-    def test_level1_rerank_delegates_to_cached_factory(self):
-        """_degradation_level1_from_retriever 重排段消费 get_flashrank_reranker。"""
+    def test_level1_delegates_to_rerank_service(self):
+        """_degradation_level1_from_retriever 把去重后的候选交给 rerank_service。"""
         from langchain_core.documents import Document
 
-        factory = mock.MagicMock(
-            name="get_flashrank_reranker", return_value=mock.MagicMock(name="reranker")
-        )
-        compression_retriever = mock.MagicMock(name="compression_retriever")
-        compression_retriever.invoke.return_value = [Document(page_content="重排后", metadata={})]
-
+        reranked = [Document(page_content="重排后", metadata={})]
         fake_store = mock.MagicMock(name="vector_store")
-        # 3.1 后 Level 1 降级只有扩展向量检索路径（伪关键词召回已删除），
-        # 经 _ScoreThresholdRetriever 走 similarity_search_with_score
         fake_store.similarity_search_with_score.return_value = [
             (Document(page_content="向量召回", metadata={}), 0.9)
         ]
 
-        with (
-            mock.patch.object(rag_retrieval, "FLASHRANK_AVAILABLE", True),
-            mock.patch.object(rag_retrieval, "ADVANCED_RETRIEVERS_AVAILABLE", True),
-            mock.patch(f"{_RETRIEVAL_SERVICE}.get_flashrank_reranker", factory),
-            mock.patch.object(
-                rag_retrieval,
-                "ContextualCompressionRetriever",
-                mock.MagicMock(return_value=compression_retriever),
-                create=True,
-            ),
-        ):
-            docs = rag_retrieval.UnifiedRagPipeline(scenario="knowledge_base")._degradation_level1_from_retriever(
-                fake_store, "查询"
-            )
+        with mock.patch(
+            "Django_xm.apps.knowledge.services.rerank_service.rerank_documents",
+            return_value=reranked,
+        ) as rerank:
+            docs = rag_retrieval.UnifiedRagPipeline(
+                scenario="knowledge_base"
+            )._degradation_level1_from_retriever(fake_store, "查询")
 
-        factory.assert_called_once_with("ms-marco-MiniLM-L-12-v2", rag_retrieval.settings.rag_rerank_top_n)
         self.assertEqual([d.page_content for d in docs], ["重排后"])
+        rerank.assert_called_once()
+        call = rerank.call_args
+        self.assertEqual(call.args[1], "查询")
+        self.assertEqual(call.args[2], rag_retrieval.settings.rag_rerank_top_n)
 
 
 class RerankerTopNFromSettingsTests(unittest.TestCase):
@@ -162,13 +151,23 @@ class RerankerTopNFromSettingsTests(unittest.TestCase):
         return factory
 
     def test_create_retriever_passes_settings_top_n(self):
-        """use_reranker=True 时 top_n 从 settings.rag_rerank_top_n 透传（不再落默认 5）。"""
+        """use_reranker=True 时 top_n = min(k, settings.rag_rerank_top_n)。
+
+        P0（召回窗口解耦）：k 是调用方交付条数契约，精排保留数不再固定为
+        settings 值；默认 k=retriever_k=4 → top_n=4。防回归：若回退为无参
+        create_reranker()，会落默认 5，配置项成为死配置。
+        """
         factory = self._patch_env()
 
         vector_store = mock.MagicMock(name="vector_store")
         retrieval_service.create_retriever(vector_store, use_reranker=True)
 
-        factory.assert_called_once_with("ms-marco-MiniLM-L-12-v2", rag_retrieval.settings.rag_rerank_top_n)
+        expected_top_n = min(
+            rag_retrieval.settings.retriever_k, rag_retrieval.settings.rag_rerank_top_n
+        )
+        factory.assert_called_once_with(
+            rag_retrieval.settings.rag_rerank_model, expected_top_n
+        )
 
     def test_create_reranking_retriever_default_reranker_passes_settings_top_n(self):
         """create_reranking_retriever 未显式给重排器时，默认构造同样走 settings top_n。"""
@@ -177,7 +176,9 @@ class RerankerTopNFromSettingsTests(unittest.TestCase):
         base_retriever = mock.MagicMock(name="base_retriever")
         retrieval_service.create_reranking_retriever(base_retriever, reranker=None)
 
-        factory.assert_called_once_with("ms-marco-MiniLM-L-12-v2", rag_retrieval.settings.rag_rerank_top_n)
+        factory.assert_called_once_with(
+            rag_retrieval.settings.rag_rerank_model, rag_retrieval.settings.rag_rerank_top_n
+        )
 
     def test_settings_top_n_is_not_hardcoded_five(self):
         """配置值锁定：rag_rerank_top_n 存在且接线后不再依赖 create_reranker 默认 5。

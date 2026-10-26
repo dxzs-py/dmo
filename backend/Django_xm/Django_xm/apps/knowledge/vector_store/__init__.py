@@ -27,6 +27,32 @@ def dispose_vector_stores(stores) -> int:
     return disposed
 
 
+# 后端分数的合法语义值（C1/KV-2 契约）
+VALID_SCORE_SEMANTICS = ("similarity", "distance")
+
+
+def resolve_score_semantics(vector_store, default: str = "similarity") -> str:
+    """解析向量库实例声明的原生分数语义（C-2arch 单源）。
+
+    后端在 store 实例上烙印 ``native_score_semantics``（pgvector=distance，
+    其余=similarity，见 VectorStoreBackend._stamp_score_semantics）。
+
+    白名单归一的原因：测试与第三方实现常用 MagicMock 代替 store，
+    ``getattr`` 会返回子 mock 而非字符串——直接透传会让 search_vector_store
+    的非法语义校验抛 ValueError（测试环境失败，R5-4）。缺失或非法一律回退
+    default。
+
+    Args:
+        vector_store: 向量库实例
+        default: 声明缺失/非法时的回退语义
+
+    Returns:
+        "similarity" 或 "distance"
+    """
+    semantics = getattr(vector_store, "native_score_semantics", default)
+    return semantics if semantics in VALID_SCORE_SEMANTICS else default
+
+
 def search_vector_store(
     vector_store: VectorStore,
     query: str,
@@ -35,6 +61,7 @@ def search_vector_store(
     query_embedding: list[float] | None = None,
     *,
     score_semantics: str = "similarity",
+    search_kwargs: dict | None = None,
 ) -> list[tuple]:
     """向量库打分检索。
 
@@ -56,12 +83,16 @@ def search_vector_store(
         score_threshold: 相似度阈值（0~1），None 表示不过滤
         query_embedding: 预计算查询 embedding（可选）
         score_semantics: 后端原生分数语义，"similarity"（默认）或 "distance"
+        search_kwargs: 额外透传到底层检索的 kwargs（如 metadata filter）；
+            k 由本函数独立管理，同名字段被忽略
 
     Returns:
         [(Document, score)]，score 为相似度语义（None 保留），相关度降序
     """
-    if score_semantics not in ("similarity", "distance"):
+    if score_semantics not in VALID_SCORE_SEMANTICS:
         raise ValueError(f"未知 score_semantics: {score_semantics!r}")
+
+    extra = {key: value for key, value in (search_kwargs or {}).items() if key != "k"}
 
     logger.info(f"搜索向量库: query='{query[:50]}...', k={k}")
 
@@ -70,11 +101,13 @@ def search_vector_store(
             results = vector_store.similarity_search_with_score_by_vector(
                 query_embedding,
                 k=k,
+                **extra,
             )
         else:
             results = vector_store.similarity_search_with_score(
                 query=query,
                 k=k,
+                **extra,
             )
 
         if score_semantics == "distance":
@@ -108,6 +141,7 @@ from .pgvector_runtime import (
 from .registry import VectorStoreRegistry
 
 __all__ = [
+    "VALID_SCORE_SEMANTICS",
     # 向量存储后端
     "ChromaBackend",
     "FAISSBackend",
@@ -121,6 +155,7 @@ __all__ = [
     "dispose_vector_stores",
     # PGVector 运行时（预热/缓存重置）
     "reset_pgvector_cache",
+    "resolve_score_semantics",
     "search_vector_store",
     "warm_up_pgvector_runtime",
 ]

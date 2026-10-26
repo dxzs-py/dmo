@@ -186,7 +186,12 @@ class Settings(ProjectSettings):
     retriever_use_multi_query: bool = Field(default=True, description="全局分析模式是否启用 MultiQuery 扩展召回")
 
     retriever_use_reranker: bool = Field(
-        default=True, description="检索器是否启用 FlashRank 重排序（build_user_retriever 读取并透传 create_retriever）"
+        default=False,
+        description=(
+            "检索器是否启用 FlashRank 重排序。实测（30 题 Redis 语料）：开启后 Recall@6 "
+            "1.000→0.967、MRR 0.833→0.783，P50 14ms→2084ms（英文模型）——当前语料下负收益，"
+            "默认关闭；换更难语料复测后再决定"
+        ),
     )
 
     retriever_intent_classification_enabled: bool = Field(default=True, description="是否启用查询意图自动分类")
@@ -194,15 +199,199 @@ class Settings(ProjectSettings):
     retriever_map_reduce_batch_size: int = Field(default=4, ge=2, le=10, description="Map-Reduce 每批文档数")
 
     # ==================== Unified RAG Pipeline 配置 ====================
-    rag_score_threshold: float = Field(default=0.7, ge=0.0, le=1.0, description="RAG Pipeline 初始检索相似度阈值")
+    rag_score_threshold: float = Field(
+        default=0.35,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "RAG 召回阶段相似度阈值（精排之前）。工业口径为「宽召回 + 精排」："
+            "中文 bge-m3 相关片段常在 0.35~0.65，text-embedding-3-small 常在 0.30~0.55，"
+            "0.7 相当于要求近乎同义改写（系统性漏召回）。需用 evaluate_rag --score-thresholds 复验"
+        ),
+    )
 
-    rag_degraded_threshold: float = Field(default=0.4, ge=0.0, le=1.0, description="RAG Pipeline 降级检索相似度阈值")
+    rag_degraded_threshold: float = Field(
+        default=0.25, ge=0.0, le=1.0, description="RAG Pipeline 降级检索相似度阈值（Level 1 放宽召回）"
+    )
 
     rag_initial_k: int = Field(default=6, ge=1, le=50, description="RAG Pipeline 初始检索返回文档数")
 
-    rag_degraded_k: int = Field(default=12, ge=1, le=100, description="RAG Pipeline 降级检索返回文档数")
+    rag_degraded_k: int = Field(
+        default=30,
+        ge=1,
+        le=100,
+        description=(
+            "RAG Pipeline Level 1 降级检索候选数。不得小于 rag_recall_k，"
+            "否则「扩展召回」反而比正常路径窗口更小"
+        ),
+    )
 
-    rag_rerank_top_n: int = Field(default=6, ge=1, le=50, description="RAG Pipeline FlashRank 重排序保留数")
+    rag_recall_k: int = Field(
+        default=30,
+        ge=1,
+        le=200,
+        description=(
+            "RAG Pipeline 向量召回候选窗口（精排前）。启用 reranker 时向量检索先取 "
+            "rag_recall_k 条候选，再由 FlashRank 精排到 min(k, rag_rerank_top_n) 条；"
+            "不启用 reranker 时不生效（召回窗口等于调用方 k）"
+        ),
+    )
+
+    rag_rerank_top_n: int = Field(
+        default=6,
+        ge=1,
+        le=50,
+        description="RAG Pipeline FlashRank 重排序保留数上限（实际取 min(k, 本值)）",
+    )
+
+    rag_rerank_model: str = Field(
+        default="ms-marco-MiniLM-L-12-v2",
+        description=(
+            "FlashRank cross-encoder 模型标识。实测多语种 ms-marco-MultiBERT-L-12 在本项目中文语料上"
+            "未见优于英文 MiniLM（Recall 0.933 vs 0.967，P50 3584ms vs 2084ms），默认回退英文模型；"
+            "切换前需用评测对比"
+        ),
+    )
+
+    rag_rerank_score_threshold: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "精排后 relevance_score 过滤阈值（0=不过滤）。不同 reranker 的分数校准不同，"
+            "启用前需用评测确定（建议区间 0.05~0.2）"
+        ),
+    )
+
+    rag_multi_kb_rerank_enabled: bool = Field(
+        default=True, description="跨库检索在 RRF 融合后是否统一精排一次（1× 成本）"
+    )
+
+    # ==================== Hybrid（dense + sparse）检索 ====================
+    rag_hybrid_enabled: bool = Field(
+        default=False,
+        description=(
+            "是否启用混合召回（向量 + BM25，RRF 融合）。实测（DuRetrieval 100 题 / 2425 篇 / bge-m3）："
+            "dense MRR 0.971，hybrid 最优 0.963（0.9/0.1 权重），四组权重均未超过纯向量，"
+            "且 P50 +8ms；精确匹配子集（含数字/英文，27 题）亦无增益。当前默认关闭；"
+            "领域术语/编号密集场景可开启复测"
+        ),
+    )
+
+    rag_hybrid_dense_weight: float = Field(default=0.7, ge=0.0, le=1.0, description="Hybrid RRF 融合中的向量权重")
+
+    rag_hybrid_sparse_weight: float = Field(default=0.3, ge=0.0, le=1.0, description="Hybrid RRF 融合中的 BM25 权重")
+
+    # ==================== 质量增强（Phase 2，开发阶段效果优先）====================
+    rag_multi_query_enabled: bool = Field(
+        default=False,
+        description=(
+            "是否把 MultiQuery 改写作为额外召回路（原 query 始终保留；与 HyDE 并行）。"
+            "实测（30 题 Redis 语料）：MRR 0.833→0.869（+4%），但 P50 从 14ms 升到 20.4s"
+            "（HyDE+MQ 两次 LLM），当前默认关闭；难数据集复测后再决定"
+        ),
+    )
+
+    rag_multi_query_count: int = Field(
+        default=3, ge=1, le=8, description="MultiQuery 改写变体数（仅影响一路 LLM 输出，不增加 LLM 调用次数）"
+    )
+
+    rag_query_expansion_timeout: float = Field(
+        default=20.0,
+        ge=1.0,
+        le=120.0,
+        description="HyDE/MQ 查询扩展的等待超时（秒）；超时后仅用已生成的路，不阻断检索",
+    )
+
+    rag_context_window: int = Field(
+        default=1,
+        ge=0,
+        le=3,
+        description="邻块扩展窗口（chunk_index±N，0=关闭）。扩展块允许同文件多条，用于 small-to-big 上下文",
+    )
+
+    rag_max_chunks_per_source: int = Field(
+        default=2, ge=1, le=10, description="召回去冗余：同一源文件最多保留的 chunk 数（邻块扩展不计入）"
+    )
+
+    rag_dedupe_similarity: float = Field(
+        default=0.85, ge=0.0, le=1.0, description="召回去冗余的相似度阈值（embedding 余弦 / 2-gram Jaccard 共用）"
+    )
+
+    rag_dedupe_mode: str = Field(
+        default="embedding",
+        description=(
+            "召回去冗余实现: embedding（语义向量余弦，使用前端设置的 Embedding provider，"
+            "当前 ollama bge-m3）/ gram（2-gram Jaccard，零 IO 兑底）。embedding 不可用时自动回退 gram"
+        ),
+    )
+
+    rag_doc_max_tokens: int = Field(
+        default=800, ge=50, le=4000, description="单 chunk 上下文 token 上限（超出截断并注明）"
+    )
+
+    rag_context_max_tokens: int = Field(
+        default=3000, ge=200, le=32000, description="上下文总 token 预算（超预算整块丢弃并注明）"
+    )
+
+    rag_citation_verify_enabled: bool = Field(
+        default=True,
+        description="是否对答案引用做真实性校验（LLM Judge；只移除不被支持的 [n]，不改写正文）",
+    )
+
+    rag_citation_verify_model_mode: str = Field(
+        default="helper",
+        description=(
+            "引用校验使用的模型: helper（辅助轻量模型优先，主模型兜底，默认）/ "
+            "main（主模型，如 deepseek-flash，效果优先）"
+        ),
+    )
+
+    rag_citation_verify_max_sentences: int = Field(
+        default=8, ge=1, le=20, description="单次引用校验的句子上限（控制 LLM 成本）"
+    )
+
+    rag_attachment_ttl_days: int = Field(
+        default=7, ge=1, le=365, description="孤儿会话附件索引清理阈值（天）"
+    )
+
+    rag_tool_max_context_tokens: int = Field(
+        default=2000, ge=200, le=8000, description="Agent/学习/附件检索结果的上下文 token 预算"
+    )
+    rag_tool_include_sources: bool = Field(
+        default=True, description="工具是否向编排层返回结构化 sources（前端工具卡片展示）"
+    )
+    rag_attachment_collection_prefix: str = Field(
+        default="attach_", description="会话附件 collection 名前缀"
+    )
+
+    rag_agent_cache_ttl: int = Field(
+        default=300,
+        ge=0,
+        le=3600,
+        description=(
+            "Agent/学习/附件检索结果缓存 TTL（秒，0=关闭）。同一 scope 下相同 query+k+intent "
+            "直接复用文档列表，跳过 embedding 与向量查询；索引写入/删除时按 collection 失效"
+        ),
+    )
+
+    rag_intent_classification_enabled: bool = Field(
+        default=True,
+        description=(
+            "是否开启检索意图自动分类（auto）：命中总结/概述/整篇/有哪些等词时走 comprehensive "
+            "（放大召回数 + 放宽上下文预算），否则 precise。工具显式传 intent 时以显式值为准"
+        ),
+    )
+
+    analytics_retrieval_sample_rate: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "RAG 检索埋点采样率（1.0=全采样，0.0=关闭）。埋点经 Celery 异步落库，"
+            "用于观测命中率/空结果率/降级率/耗时，不影响检索主链"
+        ),
+    )
 
     rag_fulltext_token_threshold: int = Field(
         default=5000, ge=0, le=100000, description="RAG Pipeline 全文注入 token 阈值"
