@@ -76,7 +76,9 @@ const {
 
 // --- 命令处理逻辑 ---
 const { handleCommandSelect } = useChatCommands({
-  clearSelectedMessage: () => { selectedMessage.value = null },
+  clearSelectedMessage: () => {
+    selectedMessage.value = null
+  },
 })
 
 // --- 键盘快捷键 ---
@@ -108,10 +110,7 @@ const handleRemoveArtifact = (index) => {
 const { connectResearchSSE, disconnectResearchSSE } = useResearchApprovalListener()
 
 // --- 沙箱全局可用性（后端 AI 设置接口 sandbox_enabled；false 时深研模式沙箱开关置灰） ---
-const {
-  sandboxEnabled,
-  loadSandboxStatus,
-} = useSandboxAvailability()
+const { sandboxEnabled, loadSandboxStatus } = useSandboxAvailability()
 
 // --- WebSocket 实时同步 ---
 /** 当前通过 WebSocket 订阅的 sessionId */
@@ -177,9 +176,9 @@ const handleReject = (payload) => {
 const loadCurrentSessionDetail = async () => {
   const sessionId = sessionStore.currentSessionId
   if (sessionId) {
-    const session = sessionStore.sessions.find(s => s.id === sessionId)
+    const session = sessionStore.sessions.find((s) => s.id === sessionId)
     // Task 15 P0 修复：当本地仅用户消息无 AI 回复时，仍需从后端加载完整详情
-    const hasAssistantMessages = session?.messages?.some(m => m.role === 'assistant')
+    const hasAssistantMessages = session?.messages?.some((m) => m.role === 'assistant')
     if (!session || !session.messages || session.messages.length === 0 || !hasAssistantMessages) {
       await sessionStore.loadSessionDetail(sessionId)
     }
@@ -243,13 +242,16 @@ const initChatView = async () => {
 
   // 尝试切换到目标会话（容错：会话可能已被删除）
   if (targetSessionId && targetSessionId !== sessionStore.currentSessionId) {
-    const sessionExists = sessionStore.sessions.some(s => s.id === targetSessionId)
+    const sessionExists = sessionStore.sessions.some((s) => s.id === targetSessionId)
     if (sessionExists) {
       logger.log('[ChatView] 切换会话:', sessionStore.currentSessionId, '→', targetSessionId)
-      sessionStore.currentSessionId = targetSessionId
+      sessionStore.setCurrentSessionId(targetSessionId)
     } else {
       // 会话已被删除，降级使用当前会话或新建会话
-      logger.log('[ChatView] 目标会话已不存在，降级到当前会话:', sessionStore.currentSessionId || '(新建)')
+      logger.log(
+        '[ChatView] 目标会话已不存在，降级到当前会话:',
+        sessionStore.currentSessionId || '(新建)',
+      )
       if (!sessionStore.currentSessionId) {
         await sessionStore.createNewSession()
       }
@@ -262,10 +264,10 @@ const initChatView = async () => {
   await loadCurrentSessionDetail()
 
   if (researchTaskId) {
-    chatDeepResearchStore.researchTaskId = researchTaskId
+    chatDeepResearchStore.setChatResearchTaskId(researchTaskId)
     // 设置持久化研究上下文标识，不随消息发送清空
     const researchQuery = getQueryParam(route, 'research_query') || ''
-    chatDeepResearchStore.researchContextInfo = { taskId: researchTaskId, query: researchQuery }
+    chatDeepResearchStore.setChatResearchContext({ taskId: researchTaskId, query: researchQuery })
   }
   // 非 URL 跳转（如页面刷新）时，restoreChatResearchContext 已在 loadCurrentSessionDetail 中调用
   if (queryMessage) {
@@ -273,7 +275,9 @@ const initChatView = async () => {
     inputMessage.value = queryMessage
   }
 
-  // 深度研究 SSE 重连：如果当前会话有进行中的深度研究任务，自动建立 SSE 连接恢复审批监听
+  // 深度研究 SSE 重连：若当前会话仍有运行中的研究任务，重建 SSE
+  // 以补全历史审批（approval_history）并监听任务状态（status_change）；
+  // 实时审批事件仍由 WebSocket 通道推送，不经过 SSE。
   if (chatDeepResearchStore.researchTaskId) {
     connectResearchSSE(chatDeepResearchStore.researchTaskId)
   }
@@ -325,28 +329,32 @@ onDeactivated(() => {
 // 会话切换防抖：快速切换时只执行最后一次，避免请求风暴
 // （loadSessionAttachments + restoreFromSession + connectResearchSSE 各触发 HTTP/SSE 请求）
 // 200ms 对用户无感知，但能有效抑制连续点击会话列表产生的 N 倍请求
-watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
-  if (newId !== oldId) {
-    // 取消订阅旧会话的 WebSocket 事件
-    unsubscribeFromSessionEvents()
-    // 切换会话时断开旧的深度研究 SSE 连接
-    disconnectResearchSSE()
-    if (newId) {
-      await loadSessionAttachments(newId)
-      // 切换会话时恢复该会话的待审批状态
-      approvalStore.restoreFromSession(newId)
-      // 如果新会话有进行中的深度研究任务，自动建立 SSE 连接
-      chatDeepResearchStore.restoreChatResearchContext(newId)
-      if (chatDeepResearchStore.researchTaskId) {
-        connectResearchSSE(chatDeepResearchStore.researchTaskId)
+watchDebounced(
+  () => sessionStore.currentSessionId,
+  async (newId, oldId) => {
+    if (newId !== oldId) {
+      // 取消订阅旧会话的 WebSocket 事件
+      unsubscribeFromSessionEvents()
+      // 切换会话时断开旧的深度研究 SSE 连接
+      disconnectResearchSSE()
+      if (newId) {
+        await loadSessionAttachments(newId)
+        // 切换会话时恢复该会话的待审批状态
+        approvalStore.restoreFromSession(newId)
+        // 如果新会话有进行中的深度研究任务，自动建立 SSE 连接
+        chatDeepResearchStore.restoreChatResearchContext(newId)
+        if (chatDeepResearchStore.researchTaskId) {
+          connectResearchSSE(chatDeepResearchStore.researchTaskId)
+        }
+        // 订阅新会话的 WebSocket 事件
+        subscribeToSessionEvents(newId)
+      } else {
+        clearAttachments()
       }
-      // 订阅新会话的 WebSocket 事件
-      subscribeToSessionEvents(newId)
-    } else {
-      clearAttachments()
     }
-  }
-}, { debounce: 200 })
+  },
+  { debounce: 200 },
+)
 </script>
 
 <template>
@@ -367,8 +375,8 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
       :use-deep-thinking="useDeepThinking"
       @model-change="() => {}"
       @update:current-mode="handleModeChange"
-      @update:use-web-search="(val) => useWebSearch = val"
-      @update:use-deep-thinking="(val) => useDeepThinking = val"
+      @update:use-web-search="(val) => (useWebSearch = val)"
+      @update:use-deep-thinking="(val) => (useDeepThinking = val)"
       @toggle-right-panel="handleToggleRightPanel"
       @toggle-debug="handleToggleDebug"
     />
@@ -391,7 +399,9 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
                 <div class="welcome-icon">✨</div>
               </div>
               <h2 class="welcome-title">欢迎使用智能助手</h2>
-              <p class="welcome-desc">我可以帮你解答问题、分析代码、生成内容，还可以进行深度研究和工作流学习。</p>
+              <p class="welcome-desc">
+                我可以帮你解答问题、分析代码、生成内容，还可以进行深度研究和工作流学习。
+              </p>
               <div class="welcome-features">
                 <div class="feature-item">
                   <span class="feature-icon">🧠</span>
@@ -444,7 +454,9 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
           :attachments="pendingAttachments"
           :current-mode="chatStore.currentMode"
           :use-deep-thinking="useDeepThinking"
-          :model-supports-deep-thinking="modelStore.currentModelCapabilities.includes('deep_thinking')"
+          :model-supports-deep-thinking="
+            modelStore.currentModelCapabilities.includes('deep_thinking')
+          "
           :use-sandbox="chatStore.deepResearchSandboxEnabled"
           :sandbox-enabled="sandboxEnabled"
           :is-uploading="isUploading"
@@ -453,9 +465,9 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
           @attach="handleAttach"
           @remove-attachment="handleRemoveAttachment"
           @web-search="handleWebSearchToggle"
-          @update:selected-mcp-servers="(val) => selectedMcpServers = val"
-          @update:selected-tools="(val) => selectedTools = val"
-          @update:use-deep-thinking="(val) => useDeepThinking = val"
+          @update:selected-mcp-servers="(val) => (selectedMcpServers = val)"
+          @update:selected-tools="(val) => (selectedTools = val)"
+          @update:use-deep-thinking="(val) => (useDeepThinking = val)"
           @update:use-sandbox="chatStore.setDeepResearchSandboxEnabled"
           @stop-streaming="handleStopStreaming"
           @command-select="handleCommandSelect"
@@ -490,10 +502,10 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
   align-items: center;
   gap: 8px;
   padding: 6px 16px;
-  background: color-mix(in srgb, var(--color-info, #409eff) 12%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--color-info, #409eff) 20%, transparent);
+  background: color-mix(in srgb, var(--info) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--info) 20%, transparent);
   font-size: 13px;
-  color: var(--color-info, #409eff);
+  color: var(--info);
   flex-shrink: 0;
 }
 
@@ -530,8 +542,15 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
 }
 
 @keyframes pulse-bg {
-  0%, 100% { transform: scale(1); opacity: 0.12; }
-  50% { transform: scale(1.15); opacity: 0.06; }
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.12;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 0.06;
+  }
 }
 
 .welcome-icon {

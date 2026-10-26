@@ -35,6 +35,27 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
   const _getLast = (sessionId) => locateInSessions(sessions.value, sessionId)
   const _setLastField = (sessionId, field, value) => setLastMessageField(sessions.value, sessionId, field, value)
 
+  /**
+   * 判断消息是否有值得同步到后端的内容。
+   *
+   * 背景：WebSocket 断链期间前端收不到任何正文快照，本地 message.content 为空；
+   * 但工具卡片/定时同步仍会整条 PATCH（content: ''），会把后端已落库的正文清空。
+   * 正文、工具、来源、审批全为空时，本次同步没有任何信息量，直接跳过。
+   *
+   * @param {Object} message
+   * @returns {boolean}
+   */
+  const _hasSyncableContent = (message) => {
+    if (!message) return false
+    // 固化/版本切换属显式状态变更，即使正文为空也必须落库
+    if (message.isFinalized) return true
+    if ((message.content || '').trim()) return true
+    if (Array.isArray(message.toolCalls) && message.toolCalls.length > 0) return true
+    if (Array.isArray(message.sources) && message.sources.length > 0) return true
+    if (message.approval && Object.keys(message.approval).length > 0) return true
+    return false
+  }
+
   const addMessageToSession = async (sessionId, message, saveToBackend = true) => {
     const session = sessions.value.find(s => s.id === sessionId)
     if (session) {
@@ -115,6 +136,9 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
         }
       } else {
         const backendMsg = transformFrontendMessageToBackend(lastMessage)
+        // 空壳保护：本地没有正文/工具/来源/审批时不 PATCH，
+        // 避免把后端已持久化的正文写成空（WS 断链场景）
+        if (!_hasSyncableContent(lastMessage)) return
         // 签名检测：内容未变化则跳过 PATCH，避免流结束后重复请求
         const signature = `${lastMessage.backendId}:${lastMessage.content?.length}:${lastMessage.toolCalls?.length}:${lastMessage.sources?.length}`
         if (_lastSyncSignatures.get(sessionId) === signature) return
@@ -158,6 +182,7 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
         logger.error('Failed to sync message to backend:', error)
       }
     } else {
+      if (!_hasSyncableContent(message)) return
       const backendMsg = transformFrontendMessageToBackend(message)
       try {
         await chatAPI.updateMessage(message.backendId, backendMsg)

@@ -2,7 +2,7 @@
 
 职责边界：把"构建一个深研 Agent 所需的物料装配"从会话执行器（session_executor）
 中解耦——本模块只负责"造 agent"，不持有任何会话状态：
-- 知识库检索工具构建（build_retriever_tool_for_research）；
+- 知识库检索工具构建（build_kb_tool_for_research）；
 - MCP / 用户自选工具三分类加载（capabilities registry → tools 服务降级）；
 - Skills 包目录加载（SkillAdapter，同步 ORM 须经 sync_to_async 调用）；
 - 续研上下文文案模板与父任务文件继承（inherit_parent_files）；
@@ -107,9 +107,11 @@ async def build_research_agent(params: dict, *, thread_id: str, user_id: int | N
     retriever_tool = None
     if params.get("enable_doc_analysis") and params.get("knowledge_base_ids") and user_id:
         try:
-            from Django_xm.apps.knowledge.services.multi_kb_retriever import build_retriever_tool_for_research
+            from Django_xm.apps.knowledge.services.kb_tool_builder import (
+                build_kb_tool_for_research,
+            )
 
-            retriever_tool = await sync_to_async(build_retriever_tool_for_research)(
+            retriever_tool = await sync_to_async(build_kb_tool_for_research)(
                 knowledge_base_ids=params.get("knowledge_base_ids"),
                 user_id=user_id,
             )

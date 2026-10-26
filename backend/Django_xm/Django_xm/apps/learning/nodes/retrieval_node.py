@@ -70,29 +70,48 @@ def _load_and_retrieve(user_index_name: str, query: str, embeddings: Any, k: int
         logger.warning(f"[Retrieval Node] 加载索引 {user_index_name} 失败: {e}")
         return [], False
 
-    # Use UnifiedRagPipeline for retrieval with degradation
-    from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
-
-    pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-    docs = pipeline.retrieve_documents_from_retriever(
-        retriever=retriever,
-        query=query,
-        vector_store=None,  # PGVector can't do InMemoryVectorStore keyword search
+    # 统一走 RagService（检索 + 去重 + 邻块 + token 预算）
+    from Django_xm.apps.knowledge.services.rag_service import (
+        RagRequest,
+        RagScope,
+        RagService,
     )
 
-    if docs:
-        return docs, False
+    parts = user_index_name.split("_")
+    owner_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+    try:
+        result = RagService().retrieve(
+            RagRequest(
+                query=query,
+                scope=RagScope(
+                    kind="persistent_kb", name=user_index_name, user_id=owner_id
+                ),
+                k=k,
+                metrics_kind="learning",
+                # 学习流程保持既有检索行为（不做总结/全局分析意图分发）
+                intent="precise",
+            ),
+            retriever=retriever,
+            vector_store=vector_store,
+        )
+    except Exception as e:
+        logger.warning(f"[Retrieval Node] 检索失败: {user_index_name}, {e}")
+        return [], False
+
+    if result.docs:
+        return result.docs, result.degraded
 
     # Pipeline couldn't find anything; try full document load as Level 2 fallback
     logger.info(f"[Retrieval Node] 向量检索无结果，降级加载全库文档: {user_index_name}")
     try:
-        from Django_xm.apps.knowledge.services.rag_retrieval import load_kb_documents
+        from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline, load_kb_documents
 
         kb_docs, total_tokens = load_kb_documents([user_index_name])
         if not kb_docs:
             logger.warning(f"[Retrieval Node] 降级加载全库文档为空: {user_index_name}")
             return [], False
 
+        pipeline = UnifiedRagPipeline(scenario="knowledge_base")
         degraded_docs = pipeline.retrieve_documents(query, kb_docs, total_tokens)
         logger.info(
             f"[Retrieval Node] 降级检索完成: {user_index_name}, "
@@ -102,21 +121,6 @@ def _load_and_retrieve(user_index_name: str, query: str, embeddings: Any, k: int
     except Exception as e:
         logger.warning(f"[Retrieval Node] 降级检索失败: {user_index_name}, {e}")
         return [], False
-
-
-def _dedup_by_content(docs: list[Any]) -> list[Any]:
-    """按 page_content 去重，保留首次出现的文档。"""
-    seen = set()
-    result = []
-    for doc in docs:
-        content = getattr(doc, "page_content", None)
-        if content is None:
-            continue
-        if content in seen:
-            continue
-        seen.add(content)
-        result.append(doc)
-    return result
 
 
 def _run_web_search(query: str) -> list[str]:
@@ -231,7 +235,9 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
         if degraded:
             has_degraded = True
 
-    all_docs = _dedup_by_content(all_docs)
+    from Django_xm.apps.knowledge.services.rag_context_pipeline import build_context
+
+    all_docs = build_context(all_docs, apply_budget=True).docs if all_docs else []
     logger.info(f"[Retrieval Node] 主查询检索到 {len(all_docs)} 个去重文档{' (含降级)' if has_degraded else ''}")
 
     # 文档较少时使用关键点补充检索

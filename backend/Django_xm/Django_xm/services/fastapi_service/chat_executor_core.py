@@ -297,6 +297,10 @@ async def _finalize_chat_session(
             "success": fail_info is None,
             "stopped": stopped,
             "incomplete": incomplete,
+            # 后端已落库的正文长度：前端据此判断本地是否漏收正文
+            # （WS 断链期间正文快照不会进回放历史），>> 0 且本地为空时
+            # 触发一次快照校对，避免“看到工具卡片但没有结论”。
+            "content_length": len(content_state.get("content") or ""),
         }
         if fail_info:
             completion_data["error"] = fail_info.get("message", "")

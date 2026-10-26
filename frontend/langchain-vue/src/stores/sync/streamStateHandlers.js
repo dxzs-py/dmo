@@ -623,15 +623,16 @@ export const createStreamStateHandlers = (ctx) => {
       logger.info(`[Sync] stream_completed 携带 incomplete 标记（重生成中断，禁止固化）: session=${sessionId}, message=${messageId || '(兜底)'}`)
     }
 
-    // 记录后端 content_length 用于早期可观测性
-    // 实际完整性校验由 verifyMessageIntegrityAfterSync 通过后端快照对比完成
-    if (typeof payload.contentLength === 'number') {
+    // 记录后端已落库的正文长度（payload.data.content_length，toCamelCase 后为 contentLength）
+    // 用于早期可观测性与正文缺失补偿；完整性校验仍由 verifyMessageIntegrityAfterSync 负责
+    const backendContentLen = payload.data?.contentLength
+    if (typeof backendContentLen === 'number') {
       const localLen = (targetMsg.content || '').length
-      if (payload.contentLength > localLen) {
+      if (backendContentLen > localLen) {
         logger.warn(
           `[Sync] stream_completed 后端 contentLength 大于本地: ` +
           `session=${sessionId}, message=${messageId || '(兜底)'}, ` +
-          `local=${localLen}, backend=${payload.contentLength}`
+          `local=${localLen}, backend=${backendContentLen}`
         )
       }
     }
@@ -639,6 +640,21 @@ export const createStreamStateHandlers = (ctx) => {
     const isRequestBrowser = streamingSessions.has(sessionId)
 
     if (isRequestBrowser) {
+      // 正文补偿（WS 断链容错）：后端已落库 content_length > 0，而本地正文为空，
+      // 说明本轮正文快照全部漏收（正文快照 persist_history=False，回放不含正文）。
+      // 只补“空”：本地已有正文时不触发，避免旧快照回退新内容。
+      const localContentLen = (targetMsg.content || '').length
+      if (typeof backendContentLen === 'number'
+          && backendContentLen > 0
+          && localContentLen === 0) {
+        logger.warn(
+          `[Sync] stream_completed 检测到本地正文缺失，触发快照校对: ` +
+          `session=${sessionId}, message=${messageId || '(兜底)'}, backend=${backendContentLen}`
+        )
+        guardedRequestFullSync(sessionId).catch(() => {
+          logger.warn(`[Sync] 正文缺失快照校对失败: session=${sessionId}`)
+        })
+      }
       // 仅在 onStreamEnd 已完成 PATCH（状态为 SYNCING）时才允许兜底 COMPLETED
       // FINALIZING 状态表示 PATCH 尚未完成，不应绕过
       if (targetMsg.streamState === StreamState.SYNCING) {

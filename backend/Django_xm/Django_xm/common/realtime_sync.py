@@ -184,6 +184,7 @@ async def publish_tool_call(
     graph_interrupt_id: str | None = None,
     result: Any = None,
     error: str | None = None,
+    sources: list | None = None,
     auto_approved: bool = False,
     parent_tool_call_id: str | None = None,
     depth: int | None = None,
@@ -260,6 +261,8 @@ async def publish_tool_call(
         payload["cross_module_id"] = cross_module_id
     if result is not None:
         payload["result"] = result
+    if sources:
+        payload["sources"] = sources
     if error is not None:
         payload["error"] = error
     if auto_approved:

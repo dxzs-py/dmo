@@ -1160,13 +1160,15 @@ class ChatMessageUpdateView(BaseChatAPIView):
         if not message:
             raise NotFound("消息不存在")
 
+        data = self._drop_empty_content_override(message, request.data)
+
         # 固化检测：is_finalized 由 false→true 时，save 后广播 MESSAGE_FINALIZED
         # 供所有浏览器同步（其他 Tab 停止固化计时器、禁用重生成、版本切换降级只读）。
         was_finalized = bool(message.is_finalized)
-        wants_finalize = bool(request.data.get("is_finalized", False))
+        wants_finalize = bool(data.get("is_finalized", False))
 
         # 仅做输入校验（响应在下方用新实例序列化），契约传空映射
-        serializer = ChatMessageSerializer(message, data=request.data, partial=True, context={"research_task_map": {}})
+        serializer = ChatMessageSerializer(message, data=data, partial=True, context={"research_task_map": {}})
         if not serializer.is_valid():
             raise ValidationError(serializer.errors)
 
@@ -1195,4 +1197,35 @@ class ChatMessageUpdateView(BaseChatAPIView):
             ).data,
             message="消息更新成功",
         )
+
+    @staticmethod
+    def _drop_empty_content_override(message, data):
+        """空正文保护：禁止用空 content 覆盖已持久化的正文。
+
+        场景（真实故障）：WebSocket 断链期间前端收不到任何正文快照，本地
+        message.content 为空；随后工具卡片同步/finalize 仍会整条 PATCH，
+        把后端已落库的正文清空（实测 1192 字被写成空，且刷新后不可恢复）。
+
+        策略：入参 content 为空/空白且库中已有正文时，从本次更新中剔除该字段
+        （其余字段 tool_calls/versions/approval 等照常更新），保持库中正文不变。
+        非空入参、库中本就为空、非字符串值一律原样透传，行为不变。
+
+        Returns:
+            dict | QueryDict: 剔除空 content 后的可写数据
+        """
+        try:
+            incoming = data.get("content")
+        except Exception:  # pragma: no cover - 非映射类型兜底
+            return data
+        stored = message.content or ""
+        if not isinstance(incoming, str) or incoming.strip() or not stored.strip():
+            return data
+
+        sanitized = data.copy()
+        sanitized.pop("content", None)
+        logger.info(
+            f"[ChatMessageUpdate] 忽略空正文覆盖: message={message.id}, "
+            f"stored_len={len(stored)}"
+        )
+        return sanitized
 

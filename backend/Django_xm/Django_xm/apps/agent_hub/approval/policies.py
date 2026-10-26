@@ -396,13 +396,13 @@ class TodoWriteApprovalPolicy(ApprovalPolicy):
 
 
 class AttachmentRagSearchApprovalPolicy(ApprovalPolicy):
-    """attachment_rag_search 工具审批策略
+    """attachment_search 工具审批策略
 
     纯只读检索工具，固定 SAFE 级自动通过，仅审计。
     与 knowledge_base 检索工具对齐。
     """
 
-    tool_name = "attachment_rag_search"
+    tool_name = "attachment_search"
     # 只读工具：is_write_operation=False（默认），子 agent 中不上调风险等级
     # 继承基类的 assess_risk → 默认 SAFE → should_approve=False（自动通过）
 
@@ -527,7 +527,7 @@ class AttachmentReaderApprovalPolicy(ApprovalPolicy):
     """attachment_reader 工具审批策略（只读，SAFE 自动通过）
 
     读取当前用户名下的聊天附件（属主校验在工具层强制执行），
-    与 attachment_rag_search 口径对齐：固定 SAFE 自动通过，仅审计。
+    与 attachment_search 口径对齐：固定 SAFE 自动通过，仅审计。
     """
 
     tool_name = "attachment_reader"
@@ -637,5 +637,5 @@ READ_ONLY_TOOL_WHITELIST: tuple[str, ...] = (
     "todo_read",
     "activate_skill",
     "read_skill_resource",
-    "knowledge_base",
+    "knowledge_base_search",
 )

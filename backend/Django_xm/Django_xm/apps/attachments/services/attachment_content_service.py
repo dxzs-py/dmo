@@ -38,7 +38,7 @@ class AttachmentService:
     ) -> list:
         """构造多模态消息内容（纯图片场景）。
 
-        文本附件不再注入本消息——由 hint 引导 Agent 通过 attachment_rag_search /
+        文本附件不再注入本消息——由 hint 引导 Agent 通过 attachment_search /
         attachment_reader 工具按需检索，保持用户消息展示内容纯净。
         """
         from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_base64
@@ -148,7 +148,7 @@ class AttachmentService:
         if self.should_use_rag(attachment_ids):
             hint = (
                 f"用户上传了以下文件：{names_str}\n"
-                f"优先使用 attachment_rag_search 工具检索文件内容（自动检索会话附件，无需指定ID）。"
+                f"优先使用 attachment_search 工具检索文件内容（自动检索会话附件，无需指定ID）。"
                 f"仅在检索无相关性时，才使用 attachment_reader 读取单个文件全文，"
                 f"其 attachment_id 参数必须从以下对应关系取值：{id_labels}。"
             )

@@ -166,6 +166,34 @@ const outputDisplay = computed(() => {
   return result
 })
 
+// 从检索工具输出中提取来源（工具文本格式：[来源: xxx]）
+// 仅用于知识库/附件检索，其他工具无匹配项时不展示
+const resultSources = computed(() => {
+  const structured = props.toolCall?.sources
+  if (Array.isArray(structured) && structured.length) {
+    return structured.map((item) => ({
+      source: item.source || '未知',
+      score: typeof item.score === 'number' ? item.score : null,
+      scope: item.scope || '',
+    }))
+  }
+
+  const text = typeof outputDisplay.value.formatted === 'string'
+    ? outputDisplay.value.formatted
+    : ''
+  if (!text) return []
+  const seen = new Set()
+  const sources = []
+  for (const match of text.matchAll(/\[来源:\s*([^\]\n]+)\]/g)) {
+    const source = match[1].trim()
+    if (source && !seen.has(source)) {
+      seen.add(source)
+      sources.push({ source, score: null, scope: '' })
+    }
+  }
+  return sources
+})
+
 // 输入区 class 计算（移到 computed 避免模板内复杂表达式导致 Vue parser 报错）
 const inputContentClass = computed(() => [
   'section-content',
@@ -409,6 +437,16 @@ const summaryLine = computed(() =>
         <div v-if="shouldShowOutput" class="tool-call-section">
           <div class="section-title">输出结果</div>
           <pre v-if="outputDisplay.displayMode !== 'skip'" :class="outputContentClass">{{ outputDisplay.formatted }}</pre>
+          <div v-if="resultSources.length" class="sources-block">
+            <div class="sources-title">来源</div>
+            <ul class="sources-list">
+              <li v-for="item in resultSources" :key="`${item.source}-${item.scope}`">
+                {{ item.source }}
+                <span v-if="item.score !== null" class="source-score">{{ item.score.toFixed(2) }}</span>
+                <span v-if="item.scope === 'session_attachment'" class="source-scope">附件</span>
+              </li>
+            </ul>
+          </div>
           <!-- 拒绝/超时且无结果数据时给出占位反馈，保证输出结果区域不消失 -->
           <pre v-else-if="status === ToolCallStatus.REJECTED || status === ToolCallStatus.TIMEOUT" class="section-content section-content--rejected-feedback">
 {{ status === ToolCallStatus.REJECTED ? '已拒绝执行该工具，Agent 将调整策略继续' : '该工具审批超时，未执行' }}
@@ -608,6 +646,39 @@ const summaryLine = computed(() =>
 
 .tool-call-section {
   margin-top: 12px;
+}
+
+.sources-block {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--el-border-color-lighter);
+}
+
+.sources-title {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 4px;
+}
+
+.sources-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+  line-height: 1.6;
+}
+
+.source-score {
+  margin-left: 6px;
+  color: var(--el-text-color-secondary);
+}
+
+.source-scope {
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-secondary);
 }
 
 .section-title {

@@ -54,6 +54,12 @@ async def lifespan(app: FastAPI):
     await sync_to_async(warmup_cache)()
     await sync_to_async(warmup_system_config_cache)()
 
+    # 跨进程一致性自检：把 SECRET_KEY 指纹写进 fastapi.log，
+    # 与 django.log 的 [Startup] role=web 指纹对比，不一致即配置漂移
+    from Django_xm.common.startup_checks import log_startup_identity
+
+    log_startup_identity("fastapi")
+
     # 模块级单例（health 路由读取），lifespan 中初始化是 FastAPI 标准模式
     global _manager  # noqa: PLW0603
     _manager = SessionManager()

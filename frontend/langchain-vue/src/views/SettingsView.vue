@@ -322,6 +322,158 @@
         </el-form>
       </el-card>
 
+      <!-- RAG 检索增强 -->
+      <el-card v-if="isAdmin" style="margin-top: 16px;">
+        <template #header>
+          <div class="card-header">
+            <span>RAG 检索增强</span>
+            <el-tag type="info" size="small">保存后立即生效</el-tag>
+          </div>
+        </template>
+
+        <el-form label-width="150px">
+          <el-form-item label="精排（Rerank）">
+            <el-switch v-model="ragForm.useReranker" />
+            <span class="form-tip" style="margin-left: 12px;">
+              cross-encoder 重排；实测当前语料负收益，默认关闭
+            </span>
+          </el-form-item>
+          <el-form-item v-if="ragForm.useReranker" label="精排模型">
+            <el-select v-model="ragForm.rerankModel" style="width: 320px;">
+              <el-option label="MiniLM-L-12（英文，快）" value="ms-marco-MiniLM-L-12-v2" />
+              <el-option label="MultiBERT-L-12（多语种，慢）" value="ms-marco-MultiBERT-L-12" />
+              <el-option label="TinyBERT-L-2（最快）" value="ms-marco-TinyBERT-L-2-v2" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="混合召回（BM25）">
+            <el-switch v-model="ragForm.hybridEnabled" />
+            <span class="form-tip" style="margin-left: 12px;">
+              向量 + BM25 经 RRF 融合；实测未超过纯向量，默认关闭
+            </span>
+          </el-form-item>
+          <el-form-item v-if="ragForm.hybridEnabled" label="融合权重">
+            <span class="form-tip">向量</span>
+            <el-input-number
+              v-model="ragForm.hybridDenseWeight"
+              :min="0" :max="1" :step="0.05"
+              style="width: 120px; margin: 0 8px;"
+            />
+            <span class="form-tip">BM25</span>
+            <el-input-number
+              v-model="ragForm.hybridSparseWeight"
+              :min="0" :max="1" :step="0.05"
+              style="width: 120px; margin: 0 8px;"
+            />
+          </el-form-item>
+          <el-form-item label="多路查询（HyDE+MQ）">
+            <el-switch v-model="ragForm.multiQueryEnabled" />
+            <span class="form-tip" style="margin-left: 12px;">
+              增加 LLM 调用与延迟，默认关闭
+            </span>
+          </el-form-item>
+          <el-form-item label="引用真实性校验">
+            <el-switch v-model="ragForm.citationVerifyEnabled" />
+            <span class="form-tip" style="margin-left: 12px;">
+              LLM Judge 移除不被来源支持的 [n]，默认开启
+            </span>
+          </el-form-item>
+          <el-form-item v-if="ragForm.citationVerifyEnabled" label="校验模型">
+            <el-select v-model="ragForm.citationVerifyModelMode" style="width: 260px;">
+              <el-option label="辅助模型（默认，成本低）" value="helper" />
+              <el-option label="主模型（更强，成本高）" value="main" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="相似度阈值">
+            <el-input-number
+              v-model="ragForm.scoreThreshold"
+              :min="0" :max="1" :step="0.05"
+              style="width: 160px;"
+            />
+          </el-form-item>
+          <el-form-item label="召回窗口">
+            <el-input-number v-model="ragForm.recallK" :min="1" :max="200" style="width: 160px;" />
+            <span class="form-tip" style="margin-left: 12px;">rerank 前召回的候选数</span>
+          </el-form-item>
+          <el-form-item label="精排保留数">
+            <el-input-number v-model="ragForm.rerankTopN" :min="1" :max="50" style="width: 160px;" />
+          </el-form-item>
+          <el-form-item label="邻块扩展窗口">
+            <el-input-number v-model="ragForm.contextWindow" :min="0" :max="3" style="width: 160px;" />
+            <span class="form-tip" style="margin-left: 12px;">命中 chunk 前后各扩展 N 块（0 关闭）</span>
+          </el-form-item>
+          <el-form-item label="去重模式">
+            <el-select v-model="ragForm.dedupeMode" style="width: 240px;">
+              <el-option label="Embedding 余弦（默认，更准）" value="embedding" />
+              <el-option label="2-gram Jaccard（零 IO 兑底）" value="gram" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="单块 Token 上限">
+            <el-input-number
+              v-model="ragForm.docMaxTokens"
+              :min="50" :max="4000" :step="50"
+              style="width: 160px;"
+            />
+          </el-form-item>
+          <el-form-item label="上下文 Token 预算">
+            <el-input-number
+              v-model="ragForm.contextMaxTokens"
+              :min="200" :max="32000" :step="100"
+              style="width: 160px;"
+            />
+          </el-form-item>
+          <el-form-item label="工具上下文预算">
+            <el-input-number
+              v-model="ragForm.toolMaxContextTokens"
+              :min="200" :max="8000" :step="100"
+              style="width: 160px;"
+            />
+            <span class="form-tip" style="margin-left: 12px;">Agent / 学习 / 附件检索结果的总 token 上限</span>
+          </el-form-item>
+          <el-form-item label="工具返回来源">
+            <el-switch v-model="ragForm.toolIncludeSources" />
+            <span class="form-tip" style="margin-left: 12px;">关闭后工具只返回文本，不附带 sources</span>
+          </el-form-item>
+          <el-form-item label="检索结果缓存（秒）">
+            <el-input-number
+              v-model="ragForm.agentCacheTtl"
+              :min="0" :max="3600" :step="30"
+              style="width: 160px;"
+            />
+            <span class="form-tip" style="margin-left: 12px;">
+              Agent / 学习 / 附件同一检索的复用时长，0 = 关闭；索引变更时自动失效
+            </span>
+          </el-form-item>
+          <el-form-item label="意图自动分类">
+            <el-switch v-model="ragForm.intentClassificationEnabled" />
+            <span class="form-tip" style="margin-left: 12px;">
+              开启后“总结 / 概述 / 整篇 / 有哪些”类提问自动走全局分析（放大召回）
+            </span>
+          </el-form-item>
+          <el-form-item label="全局分析召回数">
+            <el-input-number
+              v-model="ragForm.comprehensiveK"
+              :min="4" :max="40"
+              style="width: 160px;"
+            />
+            <span class="form-tip" style="margin-left: 12px;">
+              comprehensive 意图（总结类）的召回文档数，越大覆盖越全、耗时越长
+            </span>
+          </el-form-item>
+          <el-form-item label="附件索引 TTL（天）">
+            <el-input-number
+              v-model="ragForm.attachmentTtlDays"
+              :min="1" :max="365"
+              style="width: 160px;"
+            />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :loading="ragSaving" @click="saveRagSettings">
+              保存 RAG 设置
+            </el-button>
+          </el-form-item>
+        </el-form>
+      </el-card>
+
       <!-- 关于 -->
       <el-card style="margin-top: 16px;">
         <template #header>
@@ -716,6 +868,57 @@ const resetSettings = () => {
   ElMessage.info('已重置为默认值')
 }
 
+// ===== RAG 检索增强 =====
+const ragSaving = ref(false)
+const ragForm = reactive({
+  useReranker: false,
+  rerankModel: 'ms-marco-MiniLM-L-12-v2',
+  scoreThreshold: 0.35,
+  recallK: 30,
+  rerankTopN: 6,
+  hybridEnabled: false,
+  hybridDenseWeight: 0.7,
+  hybridSparseWeight: 0.3,
+  multiQueryEnabled: false,
+  multiQueryCount: 3,
+  citationVerifyEnabled: true,
+  citationVerifyModelMode: 'helper',
+  dedupeMode: 'embedding',
+  contextWindow: 1,
+  maxChunksPerSource: 2,
+  docMaxTokens: 800,
+  contextMaxTokens: 3000,
+  toolMaxContextTokens: 2000,
+  toolIncludeSources: true,
+  agentCacheTtl: 300,
+  intentClassificationEnabled: true,
+  comprehensiveK: 6,
+  attachmentTtlDays: 7,
+})
+
+const applyRagSettings = (rag) => {
+  if (!rag) return
+  Object.keys(ragForm).forEach((key) => {
+    if (rag[key] !== undefined && rag[key] !== null) {
+      ragForm[key] = rag[key]
+    }
+  })
+}
+
+const saveRagSettings = async () => {
+  ragSaving.value = true
+  try {
+    const res = await modelAPI.updateAISettings({ ragRetrieval: { ...ragForm } })
+    applyRagSettings(res.data?.data?.ragRetrieval)
+    ElMessage.success('RAG 设置已保存（下次检索生效）')
+  } catch (e) {
+    logger.error('保存 RAG 设置失败:', e)
+    ElMessage.error('保存失败')
+  } finally {
+    ragSaving.value = false
+  }
+}
+
 // ===== 初始化 =====
 onMounted(async () => {
   loadPreferences()
@@ -759,6 +962,7 @@ onMounted(async () => {
         helperForm.modelName = current.helperModel?.modelName || ''
       }
 
+      applyRagSettings(data.ragRetrieval)
       onEmbeddingProviderChange()
     }
   } catch (e) {

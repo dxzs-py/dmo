@@ -74,13 +74,13 @@ class ToolService:
 
         # 附件工具有附件时始终注入（基础设施工具，不受用户工具开关控制）
         if attachment_ids:
-            from Django_xm.apps.tools.langchain.attachment_rag import attachment_rag_search
+            from Django_xm.apps.tools.langchain.attachment_rag import attachment_search
             from Django_xm.apps.tools.langchain.file_reader import attachment_reader
 
             existing = {t.name for t in tools}
-            if attachment_rag_search.name not in existing:
-                tools.append(attachment_rag_search)
-                existing.add(attachment_rag_search.name)
+            if attachment_search.name not in existing:
+                tools.append(attachment_search)
+                existing.add(attachment_search.name)
             if attachment_reader.name not in existing:
                 tools.append(attachment_reader)
                 existing.add(attachment_reader.name)

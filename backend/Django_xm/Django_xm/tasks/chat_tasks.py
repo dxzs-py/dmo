@@ -56,6 +56,49 @@ def cleanup_expired_attachments(self):
 
 @shared_task(
     bind=True,
+    name="chat.cleanup_attachment_indexes",
+    max_retries=1,
+    soft_time_limit=600,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=60,
+)
+def cleanup_attachment_indexes(self, days=None, dry_run=False):
+    """清理超期的会话附件检索索引（``attach_*``，TTL 设置页可改）。
+
+    与 ``manage.py cleanup_attachment_indexes`` 共用同一份实现
+    （``knowledge.services.attachment_index_cleanup``），由 Celery beat 每日调度。
+
+    Args:
+        days: 覆盖 TTL 天数（None 时读运行时设置 ``attachment_ttl_days``）
+        dry_run: 只统计不删除
+    """
+    from Django_xm.apps.knowledge.services.attachment_index_cleanup import (
+        cleanup_expired_attachment_indexes,
+    )
+
+    tracker = TrackedTask(self)
+    tracker.set_task_type("chat_cleanup")
+
+    try:
+        tracker.mark_started()
+        result = cleanup_expired_attachment_indexes(days=days, dry_run=dry_run)
+
+        logger.info(
+            f"[Celery Chat] 附件索引清理完成: prefix={result['prefix']}, "
+            f"TTL={result['days']}天, 扫描={result['scanned']}, "
+            f"删除={result['deleted']}, 失败={result['failed']}"
+        )
+        tracker.mark_success(result=result)
+        return {"status": "success", **result}
+    except Exception as e:
+        logger.exception("[Celery Chat] 附件索引清理任务失败")
+        tracker.mark_failure(error_message=str(e))
+        return {"status": "error", "error": str(e)}
+
+
+@shared_task(
+    bind=True,
     name="chat.index_old_attachments",
     max_retries=1,
     soft_time_limit=600,

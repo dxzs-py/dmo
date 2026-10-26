@@ -91,11 +91,11 @@ TOOL_USAGE_INSTRUCTIONS = """
 - 🌐 web_fetch: 抓取网页内容并转换为纯文本
 - 📄 file_reader: 读取指定路径的文件内容
 - 📎 attachment_reader: 读取用户上传的聊天附件全文
-- 📎 attachment_rag_search: 检索用户上传文件的内容（RAG 向量检索），自动定位最近上传的附件
+- 📎 attachment_search: 检索用户上传文件的内容（RAG 向量检索），自动定位最近上传的附件
 - 📁 fs_write_file / fs_read_file / fs_list_files / fs_search_files: 文件系统操作
 - ✅ todo_write / todo_read: 任务管理（创建/读取待办事项）
 - 🤖 spawn_sub_agent: 派生子代理（异步独立执行子任务）
-- 📚 knowledge_base_*: 搜索知识库中的相关信息
+- 📚 knowledge_base_search: 搜索知识库中的相关信息
 
 【MCP 工具】— 通过 MCP (Model Context Protocol) 协议连接的外部工具服务：
 {mcp_tools_section}
@@ -113,7 +113,7 @@ TOOL_USAGE_INSTRUCTIONS = """
 - 需要翻译文本时，使用 translate_text
 - 需要检测语言时，使用 detect_language
 - 用户上传了文件并基于文件提问时，使用 attachment_reader 读取完整文件内容
-- 用户上传了大文件或多文件、只需查找特定信息时，使用 attachment_rag_search 进行向量相似度检索，\
+- 用户上传了大文件或多文件、只需查找特定信息时，使用 attachment_search 进行向量相似度检索，\
 自动定位最近上传的附件，返回最相关片段
 - 需要读取服务器上的文件时，使用 file_reader
 - 需要获取网页内容时，使用 web_fetch
@@ -133,7 +133,7 @@ TOOL_USAGE_INSTRUCTIONS = """
 - 子代理适合处理独立的子任务，如探索、规划、验证等
 
 【工具使用通用规范（适用于所有工具，不仅 fs_*）】
-1. **避免无意义重复调用**：任何工具（calculator / web_search / weather_query / knowledge_base_* / fs_* 等）
+1. **避免无意义重复调用**：任何工具（calculator / web_search / weather_query / knowledge_base_search / fs_* 等）
    在短时窗口内对相同资源执行相同操作将被系统自动跳过（DEDUP），无需你显式记忆调用历史
 2. **检测到循环时停止**：如果系统提示"工具 X 对资源 Y 已连续 N 次调用"（BLOCK 事件），
    立即停止调用 X，基于已有结果回复用户或换一种思路
@@ -162,7 +162,7 @@ TOOL_USAGE_INSTRUCTIONS = """
 6. **任务完成后停止**：用户的核心需求满足后立即结束，不要追加无关优化
 
 知识库工具使用规范（重要）：
-- knowledge_base_* 工具返回的检索结果包含知识库信息和相关文档内容，你必须基于这些内容回答用户问题
+- knowledge_base_search 工具返回的检索结果包含知识库信息和相关文档内容，你必须基于这些内容回答用户问题
 - 回答用户问题时，必须忠实于检索结果中的内容，绝不允许编造或推断
 - 每个要点必须保留其领域上下文
 - 如果用户要求总结知识库内容，应基于检索结果给出完整的主题概览

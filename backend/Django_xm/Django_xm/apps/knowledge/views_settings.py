@@ -34,6 +34,7 @@ from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.exceptions import BaseAppError
 from Django_xm.common.responses import success_response
 
+from .rag_settings import get_rag_runtime_settings, save_rag_runtime_settings
 from .services.cross_app import get_index_manager
 
 logger = logging.getLogger(__name__)
@@ -172,6 +173,7 @@ class AISettingsView(APIView):
                     "fallback_embedding_provider": current_fallback_embedding,
                 },
                 "indexes": self._get_index_dimensions(),
+                "rag_retrieval": get_rag_runtime_settings(),
             }
         )
 
@@ -211,6 +213,7 @@ class AISettingsView(APIView):
         - helper_model: {"provider_id": "...", "model_name": "..."}
         - embedding_provider: {"provider_id": "..."}
         - fallback_embedding_provider: {"provider_id": "..."}
+        - rag_retrieval: {use_reranker/hybrid_enabled/...}
         """
         user = request.user
         chat_model = request.data.get("default_chat_model")
@@ -218,8 +221,14 @@ class AISettingsView(APIView):
         helper_model = request.data.get("helper_model")
         embedding_provider = request.data.get("embedding_provider")
         fallback_embedding = request.data.get("fallback_embedding_provider")
+        rag_retrieval = request.data.get("rag_retrieval")
 
         dimension_info = None
+        rag_updated = None
+
+        # 0. 保存 RAG 检索增强设置（白名单字段 + 范围归一，即时生效）
+        if rag_retrieval is not None:
+            rag_updated = save_rag_runtime_settings(rag_retrieval)
 
         # 1. 保存默认聊天模型
         if chat_model is not None:
@@ -393,6 +402,7 @@ class AISettingsView(APIView):
         return success_response(
             data={
                 "dimension_info": dimension_info,
+                "rag_retrieval": rag_updated or get_rag_runtime_settings(),
             },
             message="设置已保存",
         )

@@ -11,7 +11,7 @@
 # tools/__init__.py 直连子模块导入——装配集包含导出面看不到的影子工具
 from .attachment_rag import (
     ATTACHMENT_RAG_TOOLS,
-    attachment_rag_search,
+    attachment_search,
     get_attachment_rag_tools,
 )
 from .calc import calculator, get_calculator_tools
@@ -77,8 +77,8 @@ __all__ = [
     "TRANSLATION_TOOLS",
     "WEATHER_TOOLS",
     "ResearchFileSystem",
-    "attachment_rag_search",
     "attachment_reader",
+    "attachment_search",
     # 计算器
     "calculator",
     "create_tavily_search_tool",

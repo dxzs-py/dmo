@@ -65,6 +65,7 @@ export const useSessionStore = defineStore('session', () => {
     loadSessionDetail: sessionList.loadSessionDetail,
     createNewSession: sessionCrud.createNewSession,
     switchSession: sessionCrud.switchSession,
+    setCurrentSessionId: sessionCrud.setCurrentSessionId,
     deleteSession: sessionCrud.deleteSession,
     removeSession: sessionCrud.removeSession,
     updateSessionTitle: sessionCrud.updateSessionTitle,

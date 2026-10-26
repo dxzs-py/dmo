@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 CACHE_PREFIX_QUERY = "rag_query"
 CACHE_PREFIX_EMBEDDING = "embedding"
 CACHE_PREFIX_VECTOR = "vector_search"
+# Agent/学习/附件检索结果缓存（rag_agent_cache_ttl 驱动；只缓存非空文档列表）
+CACHE_PREFIX_AGENT_DOCS = "rag_agent_docs"
 
 # 跨 app 散落前缀（各自有独立写入方，统一登记以便全量清理与分类统计；
 # 键值与历史字面量严格一致，故不会造成任何缓存失配）
@@ -60,6 +62,7 @@ CACHE_PREFIX_LABELS = {
     CACHE_PREFIX_QUERY: "RAG 查询缓存",
     CACHE_PREFIX_EMBEDDING: "Embedding 缓存",
     CACHE_PREFIX_VECTOR: "向量检索缓存",
+    CACHE_PREFIX_AGENT_DOCS: "Agent 检索结果缓存",
     CACHE_PREFIX_DASHBOARD: "分析看板缓存",
     CACHE_PREFIX_USAGE_STATS: "用量统计缓存",
     CACHE_PREFIX_CHAT: "聊天配置缓存",
@@ -383,17 +386,25 @@ class VectorSearchCacheService:
     """
 
     @classmethod
-    def get_cached_search(cls, query: str, index_name: str, k: int = 4) -> list | None:
-        """获取缓存的向量搜索结果"""
-        key = generate_vector_search_cache_key(query, index_name, k)
+    def get_cached_search(
+        cls, query: str, index_name: str, k: int = 4, score_threshold: float | None = None
+    ) -> list | None:
+        """获取缓存的向量搜索结果（score_threshold 参与键，避免阈值变更后命中旧结果）"""
+        key = generate_vector_search_cache_key(query, index_name, k, score_threshold)
         return CacheService.get(key)
 
     @classmethod
     def cache_search_result(
-        cls, query: str, results: list, index_name: str, k: int = 4, ttl: int = CacheTTL.VECTOR_SEARCH
+        cls,
+        query: str,
+        results: list,
+        index_name: str,
+        k: int = 4,
+        ttl: int = CacheTTL.VECTOR_SEARCH,
+        score_threshold: float | None = None,
     ) -> bool:
-        """缓存向量搜索结果"""
-        key = generate_vector_search_cache_key(query, index_name, k)
+        """缓存向量搜索结果（score_threshold 参与键，读写同口径）"""
+        key = generate_vector_search_cache_key(query, index_name, k, score_threshold)
         return CacheService.set(key, results, ttl)
 
     @classmethod
@@ -560,7 +571,7 @@ def invalidate_knowledge_cache(user_id=None, user_index_name=None):
     """统一知识库缓存失效接口
 
     在知识库/文档增删改操作后调用，
-    使查询缓存、向量搜索缓存失效。
+    使查询缓存、向量搜索缓存、Agent 检索结果缓存失效。
 
     Args:
         user_id: 用户 ID（保留参数兼容既有调用方；历史上失效的
@@ -570,3 +581,6 @@ def invalidate_knowledge_cache(user_id=None, user_index_name=None):
     if user_index_name is not None:
         QueryCacheService.invalidate_index_queries(user_index_name)
         VectorSearchCacheService.invalidate_index_queries(user_index_name)
+        # Agent/学习/附件的检索结果缓存（rag_agent_cache_ttl）：索引内容变了必须失效，
+        # 否则 TTL 窗口内 Agent 仍拿到旧文档。前缀常量与写入侧共用，不裸写字符串。
+        CacheService.delete_pattern(f"{CACHE_PREFIX_AGENT_DOCS}:{user_index_name}:*")

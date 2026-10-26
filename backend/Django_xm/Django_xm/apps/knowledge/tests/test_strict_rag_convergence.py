@@ -57,6 +57,28 @@ _STRICT_RAG = "Django_xm.apps.knowledge.services.strict_rag_chain"
 _KEYWORD_FALLBACK = "Django_xm.apps.knowledge.services.keyword_fallback"
 _RAG_RETRIEVAL = "Django_xm.apps.knowledge.services.rag_retrieval"
 
+# Phase 2：查询扩展与引用校验会调真实 LLM；模块级固定为单路原 query + 校验旁路
+_PATCHERS: list = []
+
+
+def setUpModule():
+    expand = mock.patch(
+        f"{_STRICT_RAG}._build_queries_sync", side_effect=lambda q, m, h: [q]
+    )
+    expand.start()
+    _PATCHERS.append(expand)
+    citation = mock.patch(
+        "Django_xm.apps.knowledge.services.citation_verifier.verify_answer_citations",
+        side_effect=lambda answer, sources, **kwargs: (answer, {}),
+    )
+    citation.start()
+    _PATCHERS.append(citation)
+
+
+def tearDownModule():
+    while _PATCHERS:
+        _PATCHERS.pop().stop()
+
 _QUERY = "什么是 LangChain"
 _COLLECTION = "test_collection"
 _K = 6
@@ -94,7 +116,9 @@ class QueryStrictRagTests(unittest.TestCase):
     ):
         pipeline_cls, instance = _make_pipeline(retrieve_docs=retrieve_docs, retrieve_exc=retrieve_exc)
         fake_llm = create_fake_llm()
-        hyde_sync = mock.MagicMock(return_value="改写后的假设文档")
+        hyde_sync = mock.MagicMock(
+            side_effect=lambda q, m, h: ["改写后的假设文档"] if h else [q]
+        )
         with (
             mock.patch(f"{_RAG_RETRIEVAL}.UnifiedRagPipeline", pipeline_cls),
             mock.patch(f"{_RAG_RETRIEVAL}.load_kb_documents") as load_kb,
@@ -104,7 +128,7 @@ class QueryStrictRagTests(unittest.TestCase):
             ) as fallback,
             mock.patch(f"{_KEYWORD_FALLBACK}.record_degradation_metric") as record_metric,
             mock.patch(f"{_STRICT_RAG}._resolve_chat_model", return_value=fake_llm),
-            mock.patch(f"{_STRICT_RAG}._hyde_rewrite_query_sync", hyde_sync),
+            mock.patch(f"{_STRICT_RAG}._build_queries_sync", hyde_sync),
         ):
             result = query_strict_rag(
                 mock.MagicMock(), _QUERY, k=_K, use_hyde=use_hyde, collection_name=_COLLECTION
@@ -116,10 +140,10 @@ class QueryStrictRagTests(unittest.TestCase):
         doc = _normal_doc()
         result, instance, fallback, _, fake_llm, hyde_sync, _ = self._run(retrieve_docs=[doc])
 
-        self.assertEqual(
-            result,
-            {"answer": "回答甲回答乙", "sources": result["sources"], "retrieved_docs": [doc], "success": True},
-        )
+        self.assertEqual(result["answer"], "回答甲回答乙")
+        self.assertEqual(result["retrieved_docs"], [doc])
+        self.assertTrue(result["success"])
+        self.assertEqual(result["retrieval_meta"]["routes"], 1)
         self.assertNotIn("degraded", result)
         self.assertEqual(len(result["sources"]), 1)
         self.assertEqual(result["sources"][0]["source"], "a.md")
@@ -130,7 +154,7 @@ class QueryStrictRagTests(unittest.TestCase):
         # 初始检索经 Pipeline，未走降级
         instance.retrieve_documents_from_retriever.assert_called_once()
         fallback.assert_not_called()
-        hyde_sync.assert_not_called()
+        hyde_sync.assert_called_once()
 
     def test_embedding_error_falls_back_with_original_query(self):
         """embedding 故障：降级关键词检索收到原始 query（非改写查询）+ collection + k 关键字参数。"""
@@ -182,7 +206,8 @@ class QueryStrictRagTests(unittest.TestCase):
         """HyDE 改写仅用于向量检索；prompt 与降级路径使用原始 query。"""
         result, instance, _, _, fake_llm, hyde_sync, _ = self._run(retrieve_docs=[_normal_doc()], use_hyde=True)
 
-        hyde_sync.assert_called_once_with(_QUERY, llm=None)
+        hyde_sync.assert_called_once()
+        self.assertEqual(hyde_sync.call_args.args[0], _QUERY)
         # 检索使用改写后查询
         retrieve_kwargs = instance.retrieve_documents_from_retriever.call_args.kwargs
         self.assertEqual(retrieve_kwargs["query"], "改写后的假设文档")
@@ -192,10 +217,9 @@ class QueryStrictRagTests(unittest.TestCase):
         self.assertNotIn("degraded", result)
 
     def test_hyde_disabled_skips_rewrite(self):
-        """use_hyde=False：不调用改写，检索直接用原始 query。"""
-        _, instance, _, _, _, hyde_sync, _ = self._run(retrieve_docs=[_normal_doc()], use_hyde=False)
+        """use_hyde=False：不调用 HyDE，检索直接用原始 query。"""
+        _, instance, _, _, _, _, _ = self._run(retrieve_docs=[_normal_doc()], use_hyde=False)
 
-        hyde_sync.assert_not_called()
         retrieve_kwargs = instance.retrieve_documents_from_retriever.call_args.kwargs
         self.assertEqual(retrieve_kwargs["query"], _QUERY)
 
@@ -213,7 +237,7 @@ class StreamStrictRagTests(unittest.TestCase):
             mock.patch(f"{_KEYWORD_FALLBACK}.keyword_search_fallback", return_value=[]),
             mock.patch(f"{_KEYWORD_FALLBACK}.record_degradation_metric"),
             mock.patch(f"{_STRICT_RAG}._resolve_chat_model", return_value=fake_llm),
-            mock.patch(f"{_STRICT_RAG}._hyde_rewrite_query_sync", hyde_sync),
+            mock.patch(f"{_STRICT_RAG}._build_queries_sync", hyde_sync),
         ):
             events = list(
                 stream_strict_rag(
@@ -259,7 +283,7 @@ class StreamStrictRagTests(unittest.TestCase):
         events, _, _, hyde_sync, _ = self._collect(retrieve_docs=[_normal_doc()], use_hyde=True)
 
         hyde_sync.assert_called_once()
-        self.assertEqual(events[0]["message"], "正在改写查询...")
+        self.assertEqual(events[0]["message"], "正在扩展查询...")
         self.assertEqual(events[1]["message"], "正在检索文档...")
 
 
@@ -278,7 +302,10 @@ class AstreamStrictRagTests(unittest.IsolatedAsyncioTestCase):
             ) as fallback,
             mock.patch(f"{_KEYWORD_FALLBACK}.record_degradation_metric") as record_metric,
             mock.patch(f"{_STRICT_RAG}._resolve_chat_model", return_value=fake_llm),
-            mock.patch(f"{_STRICT_RAG}._hyde_rewrite_query", mock.MagicMock(return_value="改写后的假设文档")),
+            mock.patch(
+                f"{_STRICT_RAG}._build_queries_sync",
+                side_effect=lambda q, m, h: [q],
+            ),
         ):
             events = []
             async for event in astream_strict_rag(
@@ -305,8 +332,10 @@ class AstreamStrictRagTests(unittest.IsolatedAsyncioTestCase):
         )
 
         fallback.assert_called_once()
-        self.assertEqual(fallback.call_args.args, (_QUERY, _COLLECTION, _K))
-        self.assertEqual(fallback.call_args.kwargs, {})
+        # Phase 2：async 流式与检索合并为同一同步步骤（_prepare_and_retrieve），
+        # 降级走 sync 编排的关键字参数形态
+        self.assertEqual(fallback.call_args.args, (_QUERY, _COLLECTION))
+        self.assertEqual(fallback.call_args.kwargs, {"k": _K})
         record_metric.assert_called_once()
         types = [e["type"] for e in events]
         self.assertEqual(types, ["heartbeat", "degradation", "heartbeat", "chunk", "chunk", "sources"])
@@ -345,6 +374,7 @@ class AstreamStrictRagTests(unittest.IsolatedAsyncioTestCase):
             mock.patch(
                 f"{_STRICT_RAG}._resolve_chat_model", return_value=create_fake_llm()
             ),
+            mock.patch(f"{_STRICT_RAG}._build_queries_sync", return_value=[_QUERY]),
         ):
             events = []
             async for event in astream_strict_rag(

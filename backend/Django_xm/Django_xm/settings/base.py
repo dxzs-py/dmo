@@ -14,12 +14,30 @@ dev.py 和 prod.py 的公共配置基类，消除重复代码。
 
 import os
 import sys
+import warnings
 from datetime import timedelta
 from pathlib import Path
 
-from dotenv import load_dotenv  # # 加载 .env 文件到环境变量
+from dotenv import dotenv_values, load_dotenv  # # 加载 .env 文件到环境变量
 
-load_dotenv()
+# 显式加载项目根 .env（绝对路径）：load_dotenv() 无参版本依赖调用栈/工作目录，
+# 不同进程（runserver / run_fastapi / celery）若解析到不同 .env 或漏加载，
+# 会得到不同的 SECRET_KEY（channel layer 曾用 SECRET_KEY 做对称加密，
+# 密钥不一致会让 consumer 解密失败并踢掉整条 WebSocket 连接）。
+_PROJECT_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(_PROJECT_ENV_FILE)
+
+# 环境变量优先于 .env（默认 override=False）；若两者不一致，说明本进程与
+# 其它按 .env 启动的进程会使用不同的 SECRET_KEY，必须显式告警便于排查。
+_ENV_SECRET_KEY = (os.environ.get("SECRET_KEY") or "").strip()
+_FILE_SECRET_KEY = (dotenv_values(_PROJECT_ENV_FILE).get("SECRET_KEY") or "").strip()
+if _ENV_SECRET_KEY and _FILE_SECRET_KEY and _ENV_SECRET_KEY != _FILE_SECRET_KEY:
+    warnings.warn(
+        f"SECRET_KEY 与 {_PROJECT_ENV_FILE} 不一致：本进程使用的是环境变量中的值，"
+        "与其它按 .env 启动的进程可能不同（会导致跨进程 JWT 校验失败）",
+        RuntimeWarning,
+        stacklevel=1,
+    )
 
 _project_root = Path(__file__).resolve().parent.parent.parent  # # 项目根路径加入 sys.path，确保模块可导入
 if str(_project_root) not in sys.path:
@@ -188,9 +206,19 @@ CACHES = {
 #   发现死连接自动剔除并重建，避免复用已断开连接导致 ConnectionError。
 # - socket_keepalive=True + socket_connect_timeout：TCP 层保活与连接建立超时。
 #   注意：channels_redis 4.3.0 不支持 set_heartbeat 参数，勿传入（会 TypeError）。
+# 加密说明（重要）：
+# 不再配置 ``symmetric_encryption_keys``。该选项用各进程自己的 SECRET_KEY 做对称
+# 加密/解密，一旦 Django / FastAPI / Celery 进程的 SECRET_KEY 不一致（例如某个进程
+# 由 IDE/终端带入了旧环境变量），receive() 反序列化会抛
+# ``cryptography.fernet.InvalidToken``；channels_redis 对此没有兜底（core.py
+# receive_single 直接 deserialize），异常会打死整个 consumer 协程 → WebSocket 以
+# 1011 关闭且不触发 disconnect()，表现为“生成期间连接每秒断一次、结束后才回放”。
+# 事件历史（realtime_events）本就以明文 JSON 存 Redis，加密只保护临时队列，
+# 收益有限却把“配置不一致”放大成“实时通道不可用”，故移除；
+# 同时改用 ResilientRedisChannelLayer 对单条坏消息兜底（不打断连接）。
 CHANNEL_LAYERS = {
     "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "BACKEND": "Django_xm.common.channels_layer.ResilientRedisChannelLayer",
         "CONFIG": {
             "hosts": [
                 {
@@ -202,7 +230,6 @@ CHANNEL_LAYERS = {
                     "retry_on_timeout": True,
                 }
             ],
-            "symmetric_encryption_keys": [SECRET_KEY],
         },
     }
 }
@@ -379,6 +406,7 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_TASK_ROUTES = {
     "rag.upload_documents": {"queue": "rag"},
     "chat.cleanup_expired_attachments": {"queue": "chat"},
+    "chat.cleanup_attachment_indexes": {"queue": "chat"},
     "chat.index_old_attachments": {"queue": "chat"},
     "chat.check_storage_alerts": {"queue": "chat"},
     "chat.cleanup_checkpoints": {"queue": "chat"},
@@ -420,6 +448,13 @@ CELERY_BEAT_SCHEDULE = {
     "cleanup-expired-attachments-daily": {
         "task": "chat.cleanup_expired_attachments",
         "schedule": crontab(hour=ATTACHMENT_CLEANUP_HOUR, minute=0),
+    },
+    # 会话附件检索索引（PG collection attach_*）TTL 回收：与上面的“附件实体清理”
+    # 不同——这里只回收孤立的向量 collection/IndexMetadata，TTL 取设置页
+    # rag_attachment_ttl_days（默认 7 天），错开 20 分钟执行避免与实体清理抢 IO。
+    "cleanup-attachment-indexes-daily": {
+        "task": "chat.cleanup_attachment_indexes",
+        "schedule": crontab(hour=ATTACHMENT_CLEANUP_HOUR, minute=20),
     },
     "cleanup-old-task-records-daily": {
         "task": "base.cleanup_old_task_records",
@@ -680,6 +715,24 @@ LOGGING = {
         "Django_xm.apps.research": {
             "handlers": ["console", "file"],
             "level": "DEBUG",
+            "propagate": False,
+        },
+        # ASGI / 通道层：daphne 的 "Exception inside application"、channels 的
+        # consumer 异常、channels_redis 的解密/连接告警必须进文件日志——
+        # 否则 WebSocket 被服务端异常关闭时只留在控制台，日志里“看起来一切正常”。
+        "daphne": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "channels": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "channels_redis": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
             "propagate": False,
         },
         # FastAPI 执行服务：DEBUG 完整记录（8001 进程写入 fastapi.log；

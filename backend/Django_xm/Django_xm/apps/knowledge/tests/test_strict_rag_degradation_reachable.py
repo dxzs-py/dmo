@@ -148,6 +148,8 @@ class AstreamReachabilityTests(unittest.IsolatedAsyncioTestCase):
             mock.patch(f"{_KEYWORD_FALLBACK}.record_degradation_metric"),
             mock.patch(f"{_RAG_RETRIEVAL}.load_kb_documents", return_value=([], 0)),
             mock.patch(f"{_STRICT_RAG}._resolve_chat_model", return_value=fake_llm),
+            # Phase 2：查询扩展会调 LLM，测试固定为单路原 query
+            mock.patch(f"{_STRICT_RAG}._build_queries_sync", return_value=[_QUERY]),
         ):
             events = []
             async for event in astream_strict_rag(
@@ -160,8 +162,10 @@ class AstreamReachabilityTests(unittest.IsolatedAsyncioTestCase):
             types, ["heartbeat", "degradation", "heartbeat", "chunk", "chunk", "sources"]
         )
         self.assertEqual(events[1]["message"], KEYWORD_DEGRADATION_NOTICE)
-        # 降级检索经 to_thread 位置传参 (query, collection, k)
-        self.assertEqual(fallback.call_args.args, (_QUERY, _COLLECTION, _K))
+        # Phase 2：async 流式与检索合并为同一同步步骤（_prepare_and_retrieve），
+        # 降级走 sync 编排的关键字参数形态
+        self.assertEqual(fallback.call_args.args, (_QUERY, _COLLECTION))
+        self.assertEqual(fallback.call_args.kwargs, {"k": _K})
 
 
 class RaiseOnErrorContractTests(unittest.TestCase):
@@ -187,17 +191,30 @@ class RaiseOnErrorContractTests(unittest.TestCase):
             )
 
     def test_strict_chain_calls_with_raise_on_error(self):
-        """strict_rag_chain 两侧入口必须以 raise_on_error=True 调 Pipeline（接线锁定）。"""
+        """strict_rag_chain 两侧入口必须以 raise_on_error=True 调 Pipeline（接线锁定）。
+
+        P0 更新：调用形态由 ``vector_store=None, raise_on_error=True`` 改为
+        ``vector_store=vector_store, raise_on_error=True, with_scores=True, k=k``——
+        Level 1 降级需要 store 实例，k 用于对齐精排保留数。行为断言见
+        test_level1_wiring.Level1WiringTests。
+        """
+        from Django_xm.apps.knowledge.services import rag_context_pipeline as ctx
+        from Django_xm.apps.knowledge.services import rag_service as svc
         from Django_xm.apps.knowledge.services import strict_rag_chain as src
 
         with open(src.__file__, encoding="utf-8") as fh:
             source = fh.read()
-        # 匹配实际调用形态（docstring 中的 raise_on_error=True 提及不计）
-        self.assertEqual(
-            source.count("vector_store=None, raise_on_error=True"),
+        self.assertGreaterEqual(
+            source.count("retrieve_many"),
             2,
-            "sync/async 两侧检索均须传 raise_on_error=True",
+            "sync/async 两侧检索均须经 RagService.retrieve_many",
         )
+        with open(svc.__file__, encoding="utf-8") as fh:
+            self.assertIn("retrieve_multi_query", fh.read(), "RagService 内部须走多路融合")
+        with open(ctx.__file__, encoding="utf-8") as fh:
+            pipeline_source = fh.read()
+        self.assertIn("dedupe_documents", pipeline_source, "上下文管线须执行去重")
+        self.assertIn("expand_adjacent", pipeline_source, "上下文管线须执行邻块扩展")
 
 
 class TypedErrorContractTests(unittest.TestCase):

@@ -43,7 +43,6 @@ from .kb_service import (
     upload_documents,
 )
 from .keyword_fallback import (
-    build_retrieval_grams,
     is_embedding_error,
     keyword_search_fallback,
     record_degradation_metric,
@@ -60,9 +59,6 @@ from .retrieval_service import (
     create_reranker,
     create_reranking_retriever,
     create_retriever,
-)
-from .retriever_tool import (
-    create_retriever_tool,
 )
 from .splitters import (
     SplitterType,
@@ -86,13 +82,11 @@ __all__ = [
     "SearchType",
     "SplitterType",
     "astream_strict_rag",
-    "build_retrieval_grams",
     "create_knowledge_base",
     "create_multi_query_retriever",
     "create_reranker",
     "create_reranking_retriever",
     "create_retriever",
-    "create_retriever_tool",
     "delete_document",
     "delete_knowledge_base",
     "enhance_chunk_metadata",

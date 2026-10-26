@@ -89,14 +89,15 @@ class LoadAndRetrieveTests(unittest.TestCase):
 
     def test_normal_path_delegates_to_pipeline(self):
         docs = [_doc("片段一", "a.md")]
-        result, degraded, instance, _ = self._run(retrieve_docs=docs)
+        result, degraded, instance, manager = self._run(retrieve_docs=docs)
 
         self.assertEqual(result, docs)
         self.assertFalse(degraded)
         instance.retrieve_documents_from_retriever.assert_called_once()
         kwargs = instance.retrieve_documents_from_retriever.call_args.kwargs
         self.assertEqual(kwargs["query"], "RAG 检索")
-        self.assertIsNone(kwargs["vector_store"])
+        # C3：统一走 RagService，学习链路也透传 vector_store（Level 1 可达）
+        self.assertIs(kwargs["vector_store"], manager.load_index.return_value)
 
     def test_index_missing_returns_empty(self):
         result, degraded, instance, _ = self._run(load_index_exc=FileNotFoundError("索引不存在"))

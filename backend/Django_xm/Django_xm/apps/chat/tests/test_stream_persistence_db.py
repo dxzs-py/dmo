@@ -610,6 +610,9 @@ class PersistStreamResultOrchestrationTests(unittest.TestCase):
                 "session_id": "sess-1",
                 "source": "chat",
                 "source_id": "sess-1",
+                # 正文必须随事件下发：正文快照 persist_history=False 不入回放，
+                # 仅带 content_len 会导致断线重连后正文无法恢复
+                "content": "最终内容",
                 "content_len": len("最终内容"),
                 "tool_calls_count": 0,
             },

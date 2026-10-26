@@ -22,9 +22,11 @@ django_asgi_app = get_asgi_application()
 # - FastAPI 执行服务（8001）：main.py lifespan（sync_to_async）
 from Django_xm.apps.ai_engine.models import warmup_system_config_cache
 from Django_xm.apps.ai_engine.services.registry_service import warmup_cache
+from Django_xm.common.startup_checks import log_startup_identity
 
 warmup_cache()
 warmup_system_config_cache()
+log_startup_identity("web")
 
 # 导入 WebSocket 路由（必须在 get_asgi_application() 之后，
 # 因为 routing 依赖 Django apps 已初始化）

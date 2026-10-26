@@ -29,29 +29,40 @@ class RAGChatService:
         self.user_id = user_id
         self._chat_service = chat_service
 
-    def get_rag_retriever(
+    def get_rag_retriever_bundle(
         self, index_name: str, k: int = 4, search_type: SearchType = "similarity", retrieval_mode: str = "precise"
     ):
-        from Django_xm.apps.knowledge.services.retrieval_service import build_user_retriever
+        """构建检索器 + 底层向量库（P0-O2：工具链路 Level 1 需要 store）。
+
+        Returns:
+            UserRetrieverBundle | None；未登录/索引不可用时返回 None
+        """
+        from Django_xm.apps.knowledge.services.retrieval_service import build_user_retriever_bundle
 
         if not self.user_id:
-            logger.warning("get_rag_retriever: user_id 为空，跳过")
+            logger.warning("get_rag_retriever_bundle: user_id 为空，跳过")
             return None
         try:
-            logger.info(f"get_rag_retriever: index_name={index_name}, user_id={self.user_id}")
-            # B-1/D-1：检索器构建编排（index_exists/空索引/metadata/维度探测/
-            # load_index/create_retriever + comprehensive 参数映射 D-3）单源委托
-            # knowledge.build_user_retriever；索引全名规则经 views_utils 单源
-            retriever = build_user_retriever(
+            logger.info(f"get_rag_retriever_bundle: index_name={index_name}, user_id={self.user_id}")
+            bundle = build_user_retriever_bundle(
                 self.user_id,
                 index_name,
                 k=k,
                 mode=retrieval_mode,
                 search_type=search_type,
             )
-            if retriever is None:
-                logger.warning(f"get_rag_retriever: 索引不可用: index_name={index_name}")
-            return retriever
+            if bundle is None:
+                logger.warning(f"get_rag_retriever_bundle: 索引不可用: index_name={index_name}")
+            return bundle
         except Exception:
-            logger.exception("获取 RAG 检索器失败")
+            logger.exception("获取 RAG 检索器 bundle 失败")
             return None
+
+    def get_rag_retriever(
+        self, index_name: str, k: int = 4, search_type: SearchType = "similarity", retrieval_mode: str = "precise"
+    ):
+        """兼容旧接口：只返回检索器（bundle 的薄封装）。"""
+        bundle = self.get_rag_retriever_bundle(
+            index_name, k=k, search_type=search_type, retrieval_mode=retrieval_mode
+        )
+        return bundle.retriever if bundle is not None else None

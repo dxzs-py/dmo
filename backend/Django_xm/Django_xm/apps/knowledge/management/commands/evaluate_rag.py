@@ -1,7 +1,8 @@
 """RAG 检索质量评估命令
 
 指标：Recall@K / Precision@K / HitRate / MRR / 检索时延(P50/P95)
-策略消融：similarity(纯向量) / similarity + FlashRank 重排序 / PostgreSQL 全文检索降级
+策略消融：similarity(纯向量) / similarity + FlashRank 重排序 /
+hybrid（dense + 2-gram 关键词 RRF + 重排）/ PostgreSQL 关键词降级
 
 用法：
     conda activate langchain_xm
@@ -18,6 +19,10 @@
     python manage.py evaluate_rag --kb eval_redis --eval-set data/eval/rag_eval_set.jsonl \
         --strategies dense --top-k 6
 
+    # 4) 阈值敏感性对比（P0：验证「阈值在精排之前生效」后的收益）
+    python manage.py evaluate_rag --kb eval_redis --eval-set data/eval/rag_eval_set.jsonl \
+        --score-thresholds 0.3,0.4,0.5,0.7 --output data/eval/rag_threshold_report.md
+
 评测集格式（JSONL，逐行一个 case）：
     {"query": "...", "relevant": ["03_持久化机制.md"]}
     relevant 为「该问题答案所在的源文件名」，按文件名（basename）匹配。
@@ -26,6 +31,9 @@
 - 已对齐：rerank 消融策略显式传 use_reranker=True——线上 precise/comprehensive
   检索器现由 settings.retriever_use_reranker（默认 True，B8/D1 接线）控制，
   两侧重排序行为一致。
+- 已对齐（P0）：召回窗口与精排窗口解耦——dense+rerank 走
+  ThresholdVectorStoreRetriever(k=rag_recall_k) → FlashRank(top_n=min(k, rag_rerank_top_n))，
+  相似度阈值在精排之前生效；--score-thresholds 可扫描不同阈值。
 - 仍存在的差异：HyDE 改写与 comprehensive（MMR + MultiQuery 叠加）模式仅线上
   存在，本命令未覆盖；本命令的 dense 策略为纯 similarity 检索，无 MultiQuery。
 """
@@ -39,6 +47,7 @@ from django.core.management.base import BaseCommand, CommandError
 from langchain_core.documents import Document
 
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.apps.knowledge.config import settings
 from Django_xm.apps.knowledge.services.document_service import (
     load_documents_from_directory,
 )
@@ -50,7 +59,7 @@ from Django_xm.apps.knowledge.services.splitters import split_documents
 
 logger = get_logger(__name__)
 
-ALL_STRATEGIES = ("dense", "dense+rerank", "keyword")
+ALL_STRATEGIES = ("dense", "dense+rerank", "hybrid", "keyword")
 
 
 def _basename(value) -> str:
@@ -97,6 +106,62 @@ class Command(BaseCommand):
         parser.add_argument("--build-corpus", action="store_true", help="先构建/重建语料索引")
         parser.add_argument("--corpus", default=None, help="语料目录（配合 --build-corpus）")
         parser.add_argument("--top-k", type=int, default=4, help="Top-K，默认 4")
+        parser.add_argument(
+            "--score-thresholds",
+            default="",
+            help=(
+                "相似度阈值敏感性对比，逗号分隔（如 0.3,0.4,0.5,0.7）。"
+                "为空时按 0.0（不过滤）运行，保持与历史报告可比"
+            ),
+        )
+        parser.add_argument(
+            "--pipeline",
+            default="retrieval",
+            choices=["retrieval", "multi_query", "full", "agent"],
+            help=(
+                "评测链路：retrieval=单路检索；multi_query=多路查询+RRF；"
+                "full=多路+去冗+邻块扩展；agent=RagService 统一链路（含去重/邻块/预算）"
+            ),
+        )
+        parser.add_argument(
+            "--dedupe-mode",
+            default=None,
+            choices=["gram", "embedding"],
+            help="去重实现（仅 pipeline=full 生效）：gram 或 embedding",
+        )
+        parser.add_argument(
+            "--embedding-provider",
+            default=None,
+            help="embedding provider（如 ollama）；为空时走系统默认链",
+        )
+        parser.add_argument(
+            "--no-rerank",
+            action="store_true",
+            help="关闭精排（消融用；dense+rerank/hybrid 退化为纯召回）",
+        )
+        parser.add_argument(
+            "--rerank-model",
+            default=None,
+            help="覆盖 rag_rerank_model（消融用，如 ms-marco-MiniLM-L-12-v2）",
+        )
+        parser.add_argument(
+            "--rerank-top-n",
+            type=int,
+            default=None,
+            help="精排保留数（默认等于 --top-k，保证与评测 K 同口径）",
+        )
+        parser.add_argument(
+            "--dense-weight",
+            type=float,
+            default=None,
+            help="Hybrid RRF 向量权重覆盖（消融用，如 0.85）",
+        )
+        parser.add_argument(
+            "--sparse-weight",
+            type=float,
+            default=None,
+            help="Hybrid RRF BM25 权重覆盖（消融用，如 0.15）",
+        )
         parser.add_argument(
             "--strategies",
             default=",".join(ALL_STRATEGIES),
@@ -167,18 +232,114 @@ class Command(BaseCommand):
 
     # ── 检索策略 ──────────────────────────────────────────────────────────────
 
-    def _make_retriever(self, strategy: str, store, top_k: int):
+    def _make_retriever(
+        self,
+        strategy: str,
+        store,
+        top_k: int,
+        score_threshold: float = 0.0,
+        *,
+        use_reranker: bool = True,
+        rerank_top_n: int | None = None,
+    ):
+        """按策略构建检索器。
+
+        P0：dense / dense+rerank / hybrid 均显式传 score_threshold（阈值是检索器的
+        固定环节，精排之前生效）；显式传 use_hybrid 以区分纯向量与混合召回
+        （否则全局 rag_hybrid_enabled=True 会让 dense 与 hybrid 两组重合）。
+        """
         if strategy == "dense":
-            return create_retriever(store, search_type="similarity", k=top_k)
+            return create_retriever(
+                store,
+                search_type="similarity",
+                k=top_k,
+                score_threshold=score_threshold,
+                use_hybrid=False,
+            )
         if strategy == "dense+rerank":
-            return create_retriever(store, search_type="similarity", k=top_k, use_reranker=True)
+            return create_retriever(
+                store,
+                search_type="similarity",
+                k=top_k,
+                use_reranker=use_reranker,
+                rerank_top_n=rerank_top_n or top_k,
+                score_threshold=score_threshold,
+                use_hybrid=False,
+            )
+        if strategy == "hybrid":
+            return create_retriever(
+                store,
+                search_type="similarity",
+                k=top_k,
+                use_reranker=use_reranker,
+                rerank_top_n=rerank_top_n or top_k,
+                score_threshold=score_threshold,
+                use_hybrid=True,
+            )
         if strategy == "keyword":
             from Django_xm.apps.knowledge.services.keyword_fallback import keyword_search_fallback
 
             return keyword_search_fallback
         raise CommandError(f"未知策略: {strategy}")
 
-    def _run_strategy(self, strategy: str, retriever, cases: list[dict], top_k: int) -> dict:
+    def _retrieve(
+        self,
+        query: str,
+        strategy: str,
+        retriever,
+        top_k: int,
+        *,
+        store=None,
+        pipeline: str = "retrieval",
+        llm=None,
+    ):
+        """按策略/pipeline 执行一次检索（不生成答案）。"""
+        if strategy == "keyword":
+            return retriever(query, self.kb_name, top_k)
+
+        if pipeline == "retrieval":
+            return retriever.invoke(query)
+
+        if pipeline == "agent":
+            from Django_xm.apps.knowledge.services.rag_service import (
+                RagRequest,
+                RagScope,
+                RagService,
+            )
+
+            scope = RagScope(kind="persistent_kb", name=self.kb_name)
+            return RagService().retrieve(
+                RagRequest(query=query, scope=scope, k=top_k),
+                retriever=retriever,
+                vector_store=store,
+            ).docs
+
+        from Django_xm.apps.knowledge.services.query_expansion import (
+            build_retrieval_queries_sync,
+        )
+        from Django_xm.apps.knowledge.services.rag_retrieval import retrieve_multi_query
+
+        queries = build_retrieval_queries_sync(query, llm=llm)
+        docs = retrieve_multi_query(retriever, queries, vector_store=store, k=top_k)
+
+        if pipeline == "full":
+            from Django_xm.apps.knowledge.services.strict_rag_chain import _enhance_context
+
+            docs = _enhance_context(docs, collection_name=self.kb_name)
+        return docs
+
+    def _run_strategy(
+        self,
+        strategy: str,
+        retriever,
+        cases: list[dict],
+        top_k: int,
+        score_threshold: float = 0.0,
+        *,
+        store=None,
+        pipeline: str = "retrieval",
+        llm=None,
+    ) -> dict:
         evaluator = RAGEvaluator(llm=None)
         rows: list[dict] = []
         latencies: list[float] = []
@@ -194,10 +355,9 @@ class Command(BaseCommand):
 
             t0 = time.perf_counter()
             try:
-                if strategy == "keyword":
-                    docs = retriever(query, self.kb_name, top_k)
-                else:
-                    docs = retriever.invoke(query)
+                docs = self._retrieve(
+                    query, strategy, retriever, top_k, store=store, pipeline=pipeline, llm=llm
+                )
             except Exception as exc:
                 logger.warning(f"[{strategy}][{idx}] 检索失败: {exc}")
                 docs = []
@@ -236,6 +396,12 @@ class Command(BaseCommand):
 
         return {
             "strategy": strategy,
+            "label": (
+                (strategy if score_threshold == 0.0 else f"{strategy}@{score_threshold:g}")
+                + ("" if pipeline == "retrieval" else f"[{pipeline}]")
+            ),
+            "score_threshold": score_threshold,
+            "pipeline": pipeline,
             "k": top_k,
             "case_count": len(cases),
             "recall": _mean(recalls),
@@ -255,7 +421,31 @@ class Command(BaseCommand):
         kb = options["kb"]
         self.kb_name = kb
         top_k = options["top_k"]
-        embeddings = get_embeddings(use_cache=True)
+        embeddings = get_embeddings(
+            use_cache=True,
+            preferred_provider=options.get("embedding_provider") or None,
+        )
+
+        # 评测消融：去重实现（仅本次进程生效）
+        if options.get("dedupe_mode"):
+            settings.rag_dedupe_mode = options["dedupe_mode"]
+        if options.get("rerank_model"):
+            settings.rag_rerank_model = options["rerank_model"]
+        if options.get("dense_weight") is not None:
+            settings.rag_hybrid_dense_weight = options["dense_weight"]
+        if options.get("sparse_weight") is not None:
+            settings.rag_hybrid_sparse_weight = options["sparse_weight"]
+        use_reranker = not options.get("no_rerank")
+
+        pipeline = options["pipeline"]
+        llm = None
+        if pipeline in ("multi_query", "full"):
+            try:
+                from Django_xm.apps.knowledge.config import get_chat_model
+
+                llm = get_chat_model(streaming=False)
+            except Exception as e:
+                raise CommandError(f"pipeline={pipeline} 需要可用 LLM: {e}") from e
 
         # 预热 embedding：否则首个被评估的策略会独自承担 provider 初始化与首次请求的冷启动
         # 开销，造成策略之间时延指标不可比（实测差异可达 4 倍）。
@@ -283,6 +473,26 @@ class Command(BaseCommand):
         cases = self._load_eval_set(eval_path)
         self.stdout.write(f"评测集: {eval_path}（{len(cases)} 题）")
 
+        thresholds_raw = (options.get("score_thresholds") or "").strip()
+        if thresholds_raw:
+            try:
+                score_thresholds = [
+                    float(part) for part in thresholds_raw.split(",") if part.strip()
+                ]
+            except ValueError as exc:
+                raise CommandError(f"--score-thresholds 必须是逗号分隔的浮点数: {exc}") from exc
+            for threshold in score_thresholds:
+                if not 0.0 <= threshold <= 1.0:
+                    raise CommandError(f"阈值必须在 0~1 之间: {threshold}")
+        else:
+            # 历史口径：不传阈值时不过滤（0.0），保证旧报告可比
+            score_thresholds = [0.0]
+        if not score_thresholds:
+            raise CommandError("--score-thresholds 不能为空")
+        self.stdout.write(
+            f"阈值扫描: {', '.join('不过滤' if th == 0.0 else f'{th:g}' for th in score_thresholds)}"
+        )
+
         manager = IndexManager()
         try:
             store = manager.load_index(kb, embeddings)
@@ -291,17 +501,41 @@ class Command(BaseCommand):
 
         results = []
         for strategy in strategies:
-            self.stdout.write(f"\n=== 策略: {strategy} (K={top_k}) ===")
-            retriever = self._make_retriever(strategy, store, top_k)
-            result = self._run_strategy(strategy, retriever, cases, top_k)
-            results.append(result)
-            self.stdout.write(
-                f"Recall@{top_k}={result['recall']:.4f}  "
-                f"Precision@{top_k}={result['precision']:.4f}  "
-                f"HitRate={result['hit_rate']:.4f}  "
-                f"MRR={result['mrr']:.4f}  "
-                f"P50={result['latency_p50_ms']}ms  P95={result['latency_p95_ms']}ms"
-            )
+            for threshold in score_thresholds:
+                # keyword 策略无阈值语义：只跑一次，避免重复报告
+                if strategy == "keyword" and threshold != score_thresholds[0]:
+                    continue
+                label = strategy if threshold == 0.0 else f"{strategy}@{threshold:g}"
+                threshold_display = "不过滤" if threshold == 0.0 else f"{threshold:g}"
+                self.stdout.write(
+                    f"\n=== 策略: {label} (K={top_k}, 阈值={threshold_display}) ==="
+                )
+                retriever = self._make_retriever(
+                    strategy,
+                    store,
+                    top_k,
+                    threshold,
+                    use_reranker=use_reranker,
+                    rerank_top_n=options.get("rerank_top_n"),
+                )
+                result = self._run_strategy(
+                    strategy,
+                    retriever,
+                    cases,
+                    top_k,
+                    threshold,
+                    store=store,
+                    pipeline=pipeline,
+                    llm=llm,
+                )
+                results.append(result)
+                self.stdout.write(
+                    f"Recall@{top_k}={result['recall']:.4f}  "
+                    f"Precision@{top_k}={result['precision']:.4f}  "
+                    f"HitRate={result['hit_rate']:.4f}  "
+                    f"MRR={result['mrr']:.4f}  "
+                    f"P50={result['latency_p50_ms']}ms  P95={result['latency_p95_ms']}ms"
+                )
 
         report = self._render_report(kb, top_k, corpus_stats, results)
         self.stdout.write("\n" + report)
@@ -328,6 +562,14 @@ class Command(BaseCommand):
             "",
             f"- 索引：`{kb}`",
             f"- Top-K：{top_k}",
+            f"- 召回窗口（rerank 前）：{settings.rag_recall_k}",
+            (
+                "- 阈值扫描："
+                + ", ".join(
+                    "不过滤" if th == 0.0 else f"{th:g}"
+                    for th in sorted({res.get("score_threshold", 0.0) for res in results})
+                )
+            ),
             (
                 f"- 评测集：{results[0]['case_count'] if results else 0} 题"
                 f"（标注口径：章节级 ground truth，按源文件名匹配）"
@@ -344,19 +586,22 @@ class Command(BaseCommand):
             "",
             "## 策略对比",
             "",
-            f"| 检索策略 | Recall@{top_k} | Precision@{top_k}（文档级） | HitRate | MRR | 时延 P50 | 时延 P95 |",
-            "| --- | --- | --- | --- | --- | --- | --- |",
+            f"| 检索策略 | 阈值 | Recall@{top_k} | Precision@{top_k}（文档级） | HitRate | MRR | 时延 P50 | 时延 P95 |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
         for res in results:
+            threshold = res.get("score_threshold", 0.0)
+            th_display = "不过滤" if threshold == 0.0 else f"{threshold:g}"
             lines.append(
-                f"| {res['strategy']} | **{res['recall']:.3f}** | {res['precision_doc']:.3f} | "
-                f"{res['hit_rate']:.3f} | {res['mrr']:.3f} | {res['latency_p50_ms']} ms | {res['latency_p95_ms']} ms |"
+                f"| {res.get('label', res['strategy'])} | {th_display} | **{res['recall']:.3f}** | "
+                f"{res['precision_doc']:.3f} | {res['hit_rate']:.3f} | {res['mrr']:.3f} | "
+                f"{res['latency_p50_ms']} ms | {res['latency_p95_ms']} ms |"
             )
 
         for res in results:
             lines += [
                 "",
-                f"## 逐题明细 · {res['strategy']}",
+                f"## 逐题明细 · {res.get('label', res['strategy'])}",
                 "",
                 "| # | Query | 期望 | Top-1 命中 | Recall | MRR | 时延(ms) |",
                 "| --- | --- | --- | --- | --- | --- | --- |",
@@ -380,6 +625,8 @@ class Command(BaseCommand):
             "> - `Precision@K（文档级）` = 命中文档数 / 返回结果涉及的文档数。若改用 chunk 当分母，",
             ">   会因同一文档的多个 chunk 同时进入 Top-K 而被系统性低估（本项目实测 0.25 vs 1.00）。",
             "> - 时延为单进程内预热后测得；不同策略对比需各自独立进程运行，否则首个策略会承担冷启动开销。",
+            "> - 阈值过滤发生在**精排之前**（P0）：dense+rerank 策略同样受该阈值约束，",
+            ">   用于验证「先过滤低相关候选、再精排」组合的收益。",
             "> - 本评测集仅 22 篇语料、问题按章节范围构造，存在**天花板效应**（Recall 易饱和），",
             ">   更适合作为回归基线（regression baseline），而非模型选型依据。",
         ]

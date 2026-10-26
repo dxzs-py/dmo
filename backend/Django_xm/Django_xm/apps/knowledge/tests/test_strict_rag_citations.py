@@ -43,6 +43,40 @@ _STRICT_RAG = "Django_xm.apps.knowledge.services.strict_rag_chain"
 _KEYWORD_FALLBACK = "Django_xm.apps.knowledge.services.keyword_fallback"
 _RAG_RETRIEVAL = "Django_xm.apps.knowledge.services.rag_retrieval"
 
+# Phase 2：查询扩展与引用校验会调真实 LLM；模块级固定为单路原 query + 校验旁路
+_PATCHERS: list = []
+
+
+def setUpModule():
+    expand = mock.patch(
+        f"{_STRICT_RAG}._build_queries_sync", side_effect=lambda q, m, h: [q]
+    )
+    expand.start()
+    _PATCHERS.append(expand)
+    citation = mock.patch(
+        "Django_xm.apps.knowledge.services.citation_verifier.verify_answer_citations",
+        side_effect=lambda answer, sources, **kwargs: (answer, {}),
+    )
+    citation.start()
+    _PATCHERS.append(citation)
+    # C1：上下文统一走 RagService.build_context；本文件只验证引用格式/编号，
+    # 固定跳过上下文增强（identity，避免真实 embedding/邻块）
+    from types import SimpleNamespace
+
+    enhance = mock.patch(
+        "Django_xm.apps.knowledge.services.rag_service.build_context",
+        side_effect=lambda docs, **kwargs: SimpleNamespace(
+            docs=docs, sources=[], citations=[], budget_exceeded=False
+        ),
+    )
+    enhance.start()
+    _PATCHERS.append(enhance)
+
+
+def tearDownModule():
+    while _PATCHERS:
+        _PATCHERS.pop().stop()
+
 _QUERY = "什么是 LangChain"
 _K = 4
 

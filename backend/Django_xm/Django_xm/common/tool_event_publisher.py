@@ -42,6 +42,7 @@ async def publish_tool_lifecycle_event(
     parameters: dict | None = None,
     result: Any = None,
     error: Any = None,
+    sources: list | None = None,
     cross_module_id: str = "",
     parent_tool_call_id: str = "",
     depth: int = 0,
@@ -168,6 +169,7 @@ async def publish_tool_lifecycle_event(
                 result=result,
                 error=error,
                 parameters=transition_parameters,
+                sources=sources,
             )
         except Exception as e:
             logger.warning(

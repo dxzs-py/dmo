@@ -293,6 +293,19 @@ class AttachmentLifecycleService:
         attachment.deleted_at = timezone.now()
         attachment.save(update_fields=["status", "is_deleted", "deleted_at"])
 
+        # 清理会话级附件检索索引（下次检索按剩余附件懒重建）
+        try:
+            from Django_xm.apps.knowledge.services.rag_service import (
+                RagService,
+                attachment_scope,
+            )
+
+            session_id = getattr(getattr(attachment, "session", None), "session_id", "")
+            if session_id:
+                RagService().delete_scope(attachment_scope(session_id))
+        except Exception as e:
+            logger.warning(f"删除会话附件索引失败（可忽略）: {e}")
+
         logger.info(f"附件已软删除: {attachment.original_name} (id={attachment.id})")
 
     @transaction.atomic

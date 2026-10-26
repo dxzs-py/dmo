@@ -428,15 +428,19 @@ class ToolEventExtractor:
                 }
             )
         else:
-            events.append(
-                {
-                    "event_type": EventType.TOOL_CALL_COMPLETED,
-                    "tool_call_id": tc_id,
-                    "tool_name": tool_name,
-                    "parameters": tool_parameters,
-                    "result": content_str,
-                }
-            )
+            event = {
+                "event_type": EventType.TOOL_CALL_COMPLETED,
+                "tool_call_id": tc_id,
+                "tool_name": tool_name,
+                "parameters": tool_parameters,
+                "result": content_str,
+            }
+            # 结构化来源（工具 response_format=content_and_artifact）：
+            # 透传到 tool_call_completed payload，前端 ToolCallCard 展示 source/score/scope
+            artifact = getattr(message, "artifact", None)
+            if isinstance(artifact, dict) and artifact.get("sources"):
+                event["sources"] = artifact["sources"]
+            events.append(event)
         return events
 
     def _resolve_tool_parameters(self, tc_id: str) -> dict:

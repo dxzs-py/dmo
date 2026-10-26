@@ -625,7 +625,9 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[
 
     # RP-08：缓存读前置到 store 构建链（metadata 读取/embeddings 实例化/load_index）之前，
     # 命中时跳过全部构建开销（含一次可能的 PG engine 建立）；归属校验（index_exists）保留在前
-    cached_results = VectorSearchCacheService.get_cached_search(query, user_index_name, top_k)
+    cached_results = VectorSearchCacheService.get_cached_search(
+        query, user_index_name, top_k, score_threshold=app_cfg.rag_score_threshold
+    )
     if cached_results is not None:
         logger.info("向量搜索缓存命中")
         return cached_results
@@ -664,7 +666,10 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[
             "score": float(score) if score is not None else 0,
         }
         search_results.append(item)
-    VectorSearchCacheService.cache_search_result(query, search_results, user_index_name, top_k)
+    VectorSearchCacheService.cache_search_result(
+        query, search_results, user_index_name, top_k,
+        score_threshold=app_cfg.rag_score_threshold,
+    )
 
     return search_results
 

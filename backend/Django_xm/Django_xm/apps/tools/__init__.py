@@ -15,7 +15,7 @@ from .errors import (
     create_tool_result,
     exception_to_tool_error,
 )
-from .langchain.attachment_rag import ATTACHMENT_RAG_TOOLS, attachment_rag_search, get_attachment_rag_tools
+from .langchain.attachment_rag import ATTACHMENT_RAG_TOOLS, attachment_search, get_attachment_rag_tools
 from .langchain.calc import calculator, get_calculator_tools
 from .langchain.file_reader import FILE_READER_TOOLS, attachment_reader, file_reader, get_file_reader_tools
 from .langchain.filesystem import (
@@ -812,8 +812,8 @@ __all__ = [
     "ToolErrorCode",
     "ToolResult",
     "ToolStatus",
-    "attachment_rag_search",
     "attachment_reader",
+    "attachment_search",
     "calculator",
     "clear_extension_tools",
     "create_skill_base_tools",

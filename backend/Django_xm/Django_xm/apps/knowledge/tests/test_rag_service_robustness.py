@@ -12,8 +12,8 @@
   只传 user_id 是空转。
 - B6：多文件上传逐文件容错（对齐 document_service.load_directory 口径）——
   坏文件跳过并记录失败原因，返回部分成功报告；全失败才整体失败。
-- B7：retriever_tool._arun_comprehensive 检索经 asyncio.to_thread 离开事件循环
-  （与 _arun precise 分支同构，守护测试防回退为事件循环内同步直调）。
+- B7：检索脱离事件循环——已迁移到新工具口径：``kb_search_tool/_arun`` 经
+  ``asyncio.to_thread`` 调用，守护测试防回退为事件循环内同步直调。
 
 运行（backend/Django_xm 目录）：
     python manage.py test Django_xm.apps.knowledge.tests.test_rag_service_robustness --settings=Django_xm.settings.test
@@ -23,7 +23,7 @@ import os
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest import IsolatedAsyncioTestCase, mock
+from unittest import mock
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.test")
 import django
@@ -41,14 +41,9 @@ from Django_xm.apps.cache_manager.services.cache_service import (
 )
 from Django_xm.apps.knowledge.models import Document, IndexMetadata
 from Django_xm.apps.knowledge.services import kb_service
-from Django_xm.apps.knowledge.services.retriever_tool import (
-    KB_RESULT_INSTRUCTION,
-    SyncSafeRetrieverTool,
-)
 from Django_xm.common.error_codes import ErrorCode
 
 _KB_SERVICE = "Django_xm.apps.knowledge.services.kb_service"
-_RETRIEVER_TOOL = "Django_xm.apps.knowledge.services.retriever_tool"
 _RAG_RETRIEVAL = "Django_xm.apps.knowledge.services.rag_retrieval"
 _CROSS_APP = "Django_xm.apps.chat.services.cross_app"
 
@@ -320,28 +315,4 @@ class UploadPartialSuccessTests(TestCase):
         self.assertIn("bad2.txt", str(ctx.exception))
 
 
-# ── B7：comprehensive 异步检索离开事件循环（守护）──────────────────
 
-
-class ComprehensiveAsyncThreadOffloadTests(IsolatedAsyncioTestCase):
-    """B7：_arun_comprehensive 经 asyncio.to_thread 调度（与 precise 分支同构）。"""
-
-    async def test_arun_comprehensive_offloads_via_to_thread(self):
-        pipeline_result = SimpleNamespace(status="ok", text="KB内容", error=None)
-        with (
-            mock.patch(f"{_RAG_RETRIEVAL}.UnifiedRagPipeline") as pipeline_cls,
-            mock.patch(
-                f"{_RETRIEVER_TOOL}.asyncio.to_thread", new_callable=mock.AsyncMock, return_value=pipeline_result
-            ) as to_thread_mock,
-        ):
-            pipeline_cls.return_value.search_with_retriever.return_value = pipeline_result
-            tool = SyncSafeRetrieverTool(retriever=None)
-            result = await tool._arun_comprehensive("总结知识库")
-
-        to_thread_mock.assert_awaited_once()
-        args, kwargs = to_thread_mock.await_args
-        self.assertIs(args[0], pipeline_cls.return_value.search_with_retriever)
-        self.assertEqual(kwargs["query"], "总结知识库")
-        # ok 状态：KB 指令前缀 + 真实检索内容（_search_message 契约）
-        self.assertIn(KB_RESULT_INSTRUCTION, result)
-        self.assertIn("KB内容", result)
