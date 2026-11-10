@@ -1,7 +1,7 @@
 from .views_chat import (
     BaseChatAPIView,
     ChatFinalizeView,
-    ChatMessageCreateView,
+    ChatMessageCollectionView,
     ChatMessagePairDeleteView,
     ChatMessageUpdateView,
     ChatModesView,
@@ -21,7 +21,7 @@ __all__ = [
     "BaseChatAPIView",
     "ChatCommandsView",
     "ChatFinalizeView",
-    "ChatMessageCreateView",
+    "ChatMessageCollectionView",
     "ChatMessagePairDeleteView",
     "ChatMessageUpdateView",
     "ChatModesView",

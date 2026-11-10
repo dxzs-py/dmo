@@ -18,6 +18,7 @@ import { formatFileSize, getFileIcon, formatTokenCount } from '../../utils/forma
 import { isApprovalDisabled } from '../../utils/approvalGate'
 import { buildSubagentsFromMessage } from '../../utils/subagentAggregation'
 import { filterMainToolCalls } from '../../utils/inlineContent'
+import { resolveAttachmentProcessingText } from '../../utils/attachmentProcessing'
 import { copyToClipboard } from '../../utils/dom'
 import { useSubagents } from '../../composables/useSubagents'
 import { useSubagentExpansion } from '../../composables/useSubagentExpansion'
@@ -158,6 +159,13 @@ const showAttachmentProcessing = computed(() => {
   if (!props.message.content || props.message.content.trim() === '') return true
   return false
 })
+// 文案派生：Agent 首调 attachment_search 懒建检索索引是真实耗时窗口
+// （后端 _ensure_index 同步阻塞），该阶段经既有 tool_call_* 事件天然可见，
+// 从 message.toolCalls 派生索引文案，无需后端新增进度事件；
+// 其余阶段回退 attachmentProcessing.message（preparing）或通用兜底。
+const attachmentProcessingText = computed(() =>
+  resolveAttachmentProcessingText(mainToolCalls.value, attachmentProcessing.value?.message),
+)
 const showDeepResearchCard = computed(() => {
   return props.message.role === 'assistant' && !!props.message.researchTaskId && !props.message.researchTaskDeleted
 })
@@ -451,7 +459,7 @@ function handleBranchChange(versionIndex) {
       <div v-else class="message-text assistant-text">
         <div v-if="showAttachmentProcessing" class="attachment-processing-bar">
           <el-icon class="is-loading" :size="14"><Loading /></el-icon>
-          <span class="attachment-processing-text">{{ attachmentProcessing.message || '正在处理文档...' }}</span>
+          <span class="attachment-processing-text">{{ attachmentProcessingText }}</span>
         </div>
         <!-- 统一渲染管线：推理区 → 正文内联工具切段（ToolCallCard + spawn 后
              SubAgentCard）→ orphans 子代理卡（spec unify-agent-research-display-architecture） -->

@@ -51,6 +51,8 @@ export const useChatStore = defineStore('chat', () => {
   const lastStreamError = ref(null)
   const attachmentProcessing = ref(null)
   const approvalStore = useApprovalStore()
+  const sessionStore = useSessionStore()
+  const modelStore = useModelStore()
 
   const {
     isStreaming,
@@ -70,7 +72,7 @@ export const useChatStore = defineStore('chat', () => {
    * 1. 前端中止：abort waitForStreamEnd / AbortController，立即恢复 UI 交互；
    * 2. 后端停止：发布 SIGNAL_STOP 信令到 _activeStream.sessionId（流式发起时
    *    捕获的会话），终止 FastAPI 执行协程（优雅停止，保留 checkpoint 与已输出
-   *    内容），而非仅断开前端 SSE；
+   *    内容），而非仅中止前端的流式等待；
    * 3. 状态标记：普通发送停止 → 消息标记 stopped（允许固化为主版本）；
    *    重生成中断 → 当前版本标记 incomplete（禁止固化为主版本）。
    * 无活跃流时仅中止本地等待，不发信令、不标记任何会话（防止误标切换后的
@@ -96,7 +98,6 @@ export const useChatStore = defineStore('chat', () => {
 
     // 本地状态标记（触发浏览器即时反馈；非触发浏览器由后端 stream_completed(stopped) 广播同步）
     // 定位收敛（spec 组 5）：末条 assistant 定位走 resolveStreamTargetMessage（无 messageId → 扫描兜底）
-    const sessionStore = useSessionStore()
     const session = sessionStore.sessions.find(s => s.id === sessionId)
     const lastAssistant = resolveStreamTargetMessage(session, null)
     if (lastAssistant) {
@@ -135,12 +136,10 @@ export const useChatStore = defineStore('chat', () => {
    * @returns {Object} streamChat 请求 payload
    */
   const buildStreamChatPayload = ({ sessionId, message, chatHistory, selectedKnowledgeBaseId, overrides = {} }) => {
-    const modelStore = useModelStore()
-    const sessionStore = useSessionStore()
     const modelConfig = modelStore.getModelConfig()
     return {
       message,
-      clientMessageId: generateId(), // Task 6.2：幂等键，fetchSSE 重试复用同一 id 保证后端只受理一次
+      clientMessageId: generateId(), // Task 6.2：幂等键，重试复用同一 id 保证后端只受理一次（去重避免重复创建消息）
       chatHistory,
       mode: currentMode.value,
       useDeepThinking: modelStore.thinkingEnabled,
@@ -172,7 +171,6 @@ export const useChatStore = defineStore('chat', () => {
     isLoading.value = true
     lastStreamError.value = null
 
-    const sessionStore = useSessionStore()
     let sessionId = sessionStore.currentSessionId
     const selectedKnowledgeBaseId = sessionStore.selectedKnowledgeBase?.id || null
 
@@ -226,14 +224,19 @@ export const useChatStore = defineStore('chat', () => {
     } catch (finalizeErr) {
       logger.warn('[ChatStore] 发送前版本固化失败（不阻塞发送）:', finalizeErr)
     }
-    // 通知 syncStore 流式开始，跳过 WebSocket message_updated（避免 SSE 流式内容被快照覆盖）
+    // 通知 syncStore 流式开始，跳过 WebSocket message_updated（避免流式内容被快照覆盖）
     const syncStore = useSyncStore()
     syncStore.startStreaming(sessionId)
     // 惰性获取聊天深度研究桥接层（chat.js 不静态依赖 research / 桥接层，
     // 首次发送消息时动态加载并缓存，供研究分支回调与状态读写使用）
     const chatDeepResearch = await _getChatDeepResearch()
     chatDeepResearch.clearChatDeepResearchTask()
-    attachmentProcessing.value = null
+    // 附件处理进度提示（激活 ChatMessage.vue 的 attachment-processing-bar）：
+    // 仅本浏览器本地状态，非权威 UI 文案；带附件发送时进入 preparing 阶段，
+    // 正文首 chunk 到达或流结束（finally）后自动隐藏/清除。
+    attachmentProcessing.value = options.attachmentIds?.length
+      ? { stage: 'preparing', message: '正在处理附件...' }
+      : null
     const currentResearchTaskId = chatDeepResearch.researchTaskId
     // 不再清空 researchTaskId，深度研究审批依赖此值路由到正确的 API
     // 仅在 clearAll / 登出 / 会话删除时清空
@@ -254,7 +257,7 @@ export const useChatStore = defineStore('chat', () => {
       researchContext: currentResearchContextInfo || null,
     }
     // 用户消息由后端 ChatStreamView 在流式开始时创建并广播，前端不再重复创建
-    sessionStore.addMessageToSession(sessionId, userMessage, false)
+    sessionStore.addMessageToSession(sessionId, userMessage)
 
     const assistantMessage = createEmptyAssistantMessage({
       id: nanoid(),
@@ -262,15 +265,15 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: new Date().toISOString(),
       plan: null,
     })
-    // AI 消息由后端 SSE 流创建并广播，前端只创建本地占位
-    sessionStore.addMessageToSession(sessionId, assistantMessage, false)
+    // AI 消息由后端创建并经 WebSocket 广播，前端只创建本地占位
+    sessionStore.addMessageToSession(sessionId, assistantMessage)
 
     // D-9 收敛：流式期间 5s 同步轮询统一由 useStreamSyncPolling 管理
     const { startStreamSyncPolling, stopStreamSyncPolling } = useStreamSyncPolling(() =>
-      sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false })
+      sessionStore.syncLastMessageToBackend(sessionId)
     )
     try {
-      // 流式输出期间每 5 秒同步 assistant 消息到后端（仅 PATCH 不 POST 创建）
+      // 流式输出期间每 5 秒同步 assistant 消息到后端（PATCH）
       startStreamSyncPolling()
 
       const messages = sessionStore.getSessionMessages(sessionId) || []
@@ -357,7 +360,7 @@ export const useChatStore = defineStore('chat', () => {
         const lastMsg = (sessionStore.getSessionMessages(sessionId) || []).slice(-1)[0]
         if (lastMsg) {
           const { finalizeStream } = useStreamFinalizer()
-          await finalizeStream(sessionId, lastMsg, { allowCreate: false })
+          await finalizeStream(sessionId, lastMsg)
         }
       }
     } finally {
@@ -367,9 +370,9 @@ export const useChatStore = defineStore('chat', () => {
       _activeStream = null
       syncStore.stopStreaming(sessionId)
       sessionStore.touchSessionUpdatedAt(sessionId)
-      if (attachmentProcessing.value && attachmentProcessing.value.stage !== 'complete') {
-        attachmentProcessing.value = null
-      }
+      // 无条件清理：附件进度是瞬时 UI 状态，新方案不产生 complete 阶段事件，
+      // 流结束（成功/失败/中止）一律清除，避免残留影响下一轮
+      attachmentProcessing.value = null
     }
   }
 
@@ -383,8 +386,10 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
 
-    const sessionStore = useSessionStore()
     const sid = sessionStore.currentSessionId
+    // 重新生成不携带附件（overrides 无 attachmentIds，后端不走附件分支），
+    // 此处仅兜底清理可能残留的附件进度提示（本方法 finally 不清理该 ref）
+    attachmentProcessing.value = null
     const selectedKnowledgeBaseId = sessionStore.selectedKnowledgeBase?.id || null
     const messages = sessionStore.getSessionMessages(sid)
 
@@ -445,7 +450,7 @@ export const useChatStore = defineStore('chat', () => {
     // 与 sendMessage 对齐：通知 syncStore 流式开始。缺失会导致：
     // 1) stream_completed/finalized 广播到达时本浏览器不被识别为请求浏览器，
     //    最终化链（stream_finalized/chatFinalize/finalizeToolCalls）路径不一致；
-    // 2) realtime 未标记 SSE 活跃，SSE 流式期间 WS 断开被误报为"连接已断开"。
+    // 2) realtime 未标记流式活跃（streamingActiveCount），流式期间 WS 断开被误报为"连接已断开"。
     // 结束标记由 useStreamFinalizer 的 finally stopStreaming（成功路径）+
     // 本方法 finally（失败/中止路径兜底）共同覆盖，与 sendMessage 一致。
     const syncStore = useSyncStore()
@@ -453,10 +458,10 @@ export const useChatStore = defineStore('chat', () => {
 
     // D-9 收敛：流式期间 5s 同步轮询统一由 useStreamSyncPolling 管理
     const { startStreamSyncPolling, stopStreamSyncPolling } = useStreamSyncPolling(() =>
-      sessionStore.syncLastMessageToBackend(sid, { allowCreate: false })
+      sessionStore.syncLastMessageToBackend(sid)
     )
     try {
-      // 流式输出期间每 5 秒同步消息到后端（仅 PATCH）
+      // 流式输出期间每 5 秒同步消息到后端（PATCH 同步）
       startStreamSyncPolling()
 
       const chatHistory = messages
@@ -503,7 +508,7 @@ export const useChatStore = defineStore('chat', () => {
       // 审批中断（INTERRUPTED）场景由 useStreamFinalizer 状态守卫自动跳过。
       if (result.success && !result.aborted) {
         const { finalizeStream } = useStreamFinalizer()
-        await finalizeStream(sid, currentMessage, { messageIndex, allowCreate: false })
+        await finalizeStream(sid, currentMessage, { messageIndex })
         // Task 6.3：流式结束后末轮存在未固化多版本，重新启动 5 分钟超时固化
         // 计时器（重新生成完成且用户无有效操作时超时固化当前选中版本）
         sessionStore.resetFinalizeTimer(sid)
@@ -565,7 +570,6 @@ export const useChatStore = defineStore('chat', () => {
   })
 
   const deleteMessagePair = async (sessionId, backendId, frontendId) => {
-    const sessionStore = useSessionStore()
     // 删除期间置灰禁用发送/重新生成（Task 7.4），删除完成恢复
     isDeleting.value = true
     try {

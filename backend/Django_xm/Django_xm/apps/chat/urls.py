@@ -11,7 +11,8 @@ urlpatterns = [
     path("sessions/", views.ChatSessionListView.as_view(), name="chat_sessions_list"),
     path("sessions/create/", views.ChatSessionCreateView.as_view(), name="chat_sessions_create"),
     path("sessions/<str:session_id>/", views.ChatSessionDetailView.as_view(), name="chat_sessions_detail"),
-    path("sessions/<str:session_id>/messages/", views.ChatMessageCreateView.as_view(), name="chat_messages_create"),
+    # 会话消息集合路径：仅承载 DELETE（清空消息）
+    path("sessions/<str:session_id>/messages/", views.ChatMessageCollectionView.as_view(), name="chat_messages_collection"),
     # 消息资源路由：承载 PATCH 更新（消息单条删除 REST 通道已随 WS 化改造下线，
     # 遵循 tools app dj-06 资源化路由约定：资源明细路径唯一，方法由视图分发）
     path("messages/<int:message_id>/", views.ChatMessageUpdateView.as_view(), name="chat_messages_detail"),

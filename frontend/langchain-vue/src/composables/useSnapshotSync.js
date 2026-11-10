@@ -252,10 +252,9 @@ function createSnapshotSyncInstance({ kind, id }) {
         // 本地存在：状态提升合并（仅当本地缺失或后端更新时写，不整体覆盖）
         _reconcileMessageField(localMsg, transformed)
       } else {
-        // 本地缺失：状态提升——从快照补入消息。
-        // saveToBackend=false：快照校对不应将本地补入的消息回写后端
-        // （addMessageToSession 内部已做 versions 初始化）
-        sessionStore.addMessageToSession(id, transformed, false)
+        // 本地缺失：状态提升——从快照补入消息（仅本地，不回写后端）。
+        // addMessageToSession 内部已做 versions 初始化
+        sessionStore.addMessageToSession(id, transformed)
       }
       reconciledCount++
     }

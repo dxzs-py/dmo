@@ -76,7 +76,7 @@ const settings = {
   apiValidation: {
     // 用户输入框单条消息上限（streamMessage 请求体 message 字段）
     messageMaxLength: 10000,
-    // 后端持久化的历史消息内容上限（聊天历史校验 / addMessage / updateMessage 截断），
+    // 后端持久化的历史消息内容上限（聊天历史校验 / updateMessage 截断），
     // 与用户输入口径不同：历史条目可能包含流式累积的长回复，放宽至 50000
     historyMessageMaxLength: 50000,
     chatHistoryMaxItems: 50,

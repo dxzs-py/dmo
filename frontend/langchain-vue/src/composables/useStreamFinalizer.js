@@ -7,10 +7,6 @@ import { StreamState } from '@/types'
 /**
  * 统一流式最终化 composable
  *
- * 当前仅审批恢复流（approval.js _executeApprovalStream 的 finally 块）使用；
- * chat.js sendMessage / regenerateMessage 尚未接入本 composable，
- * 其流式最终化仍由各自 onStreamEnd 内联实现。
- *
  * 最终化流程：
  * FINALIZING → waitForSyncLock → flushPendingSync → waitForSyncLock →
  * SYNCING → syncLastMessageToBackend → waitForSyncLock → chatFinalize → COMPLETED
@@ -19,7 +15,7 @@ import { StreamState } from '@/types'
  * ```js
  * const { finalizeStream } = useStreamFinalizer()
  * // 默认操作最后一条消息
- * await finalizeStream(sessionId, lastMsg, { allowCreate: false })
+ * await finalizeStream(sessionId, lastMsg)
  * // 指定同步索引 + 自定义状态设置回调（默认操作最后一条消息）
  * await finalizeStream(sessionId, currentMsg, {
  *   messageIndex: idx,
@@ -36,13 +32,12 @@ export function useStreamFinalizer() {
    *
    * @param {string} sessionId - 会话 ID
    * @param {object} lastMsg - 最后一条助手消息引用（用于读取 backendId/id 和状态守卫）
-   * @param {{ allowCreate?: boolean, setStreamState?: (state: string) => void, messageIndex?: number }} [options]
-   * @param {boolean} [options.allowCreate=false] - 是否允许创建新消息
+   * @param {{ setStreamState?: (state: string) => void, messageIndex?: number }} [options]
    * @param {Function} [options.setStreamState] - 自定义状态设置函数，默认使用 setStreamStateToLastMessage
    * @param {number} [options.messageIndex] - 指定同步的消息索引，未传入时同步最后一条消息
    * @returns {Promise<boolean>} 是否成功完成最终化
    */
-  async function finalizeStream(sessionId, lastMsg, { allowCreate = false, setStreamState, messageIndex } = {}) {
+  async function finalizeStream(sessionId, lastMsg, { setStreamState, messageIndex } = {}) {
     if (!sessionId || !lastMsg) return false
 
     // 状态守卫：COMPLETED/ERROR 是终态，不应重复最终化
@@ -67,9 +62,8 @@ export function useStreamFinalizer() {
       sessionStore.clearToolSyncTimer(sessionId)
 
       // 2. 等待现有同步完成 → flush pending → 等待 flush 完成
-      //    传入 messageIndex 时按索引 flush，否则 flush 最后一条消息
       await sessionStore.waitForSyncLock(sessionId)
-      await sessionStore.flushPendingSync(sessionId, messageIndex !== undefined ? { messageIndex } : {})
+      await sessionStore.flushPendingSync(sessionId)
       await sessionStore.waitForSyncLock(sessionId)
 
       // 3. SYNCING：明确表示正在执行 PATCH 同步
@@ -78,9 +72,9 @@ export function useStreamFinalizer() {
       // 4. 最终 PATCH → 等待 PATCH 完成
       //    传入 messageIndex 时按索引同步，否则同步最后一条消息
       if (messageIndex !== undefined) {
-        await sessionStore.syncMessageToBackend(sessionId, messageIndex, { allowCreate })
+        await sessionStore.syncMessageToBackend(sessionId, messageIndex)
       } else {
-        await sessionStore.syncLastMessageToBackend(sessionId, { allowCreate })
+        await sessionStore.syncLastMessageToBackend(sessionId)
       }
       await sessionStore.waitForSyncLock(sessionId)
 

@@ -160,7 +160,7 @@ describe('executeApproval：REST 审批执行（/approvals/{interrupt_id}/resume
     const syncStore = useSyncStore()
     expect(syncStore.startStreaming).toHaveBeenCalledWith('s1')
     expect(sessionStore.setStreamStateToLastMessage).toHaveBeenCalledWith('s1', StreamState.STREAMING)
-    expect(sessionStore.syncLastMessageToBackend).toHaveBeenCalledWith('s1', { allowCreate: false })
+    expect(sessionStore.syncLastMessageToBackend).toHaveBeenCalledWith('s1')
     // 通过时不设 approved（避免覆盖"处理中"状态），失败也不应误标 rejected
     expect(sessionStore.updateToolCallApprovalState).not.toHaveBeenCalledWith('s1', 'tc-1', 'approved')
     expect(sessionStore.updateToolCallApprovalState).not.toHaveBeenCalledWith('s1', 'tc-1', 'rejected')
@@ -275,7 +275,7 @@ describe('executeApproval：REST 审批执行（/approvals/{interrupt_id}/resume
     expect(entry.approvalData.state).toBe('pending')
     const sessionStore = useSessionStore()
     expect(sessionStore.updateToolCallApprovalState).toHaveBeenCalledWith('s7', 'tc-7', 'pending')
-    expect(sessionStore.syncLastMessageToBackend).toHaveBeenCalledWith('s7', { allowCreate: false })
+    expect(sessionStore.syncLastMessageToBackend).toHaveBeenCalledWith('s7')
   })
 
   it('防重复：approvalData 已是 processing 时直接忽略，不触发 REST 调用（失败路径）', async () => {
@@ -493,7 +493,7 @@ describe('审批列表填充与去重（pendingApprovals Map）', () => {
     // 审批事件到达后 debounce(200ms) 同步到后端，且去重后仅一次
     vi.advanceTimersByTime(200)
     expect(sessionStore.syncLastMessageToBackend).toHaveBeenCalledTimes(1)
-    expect(sessionStore.syncLastMessageToBackend).toHaveBeenCalledWith('s-fill', { allowCreate: false })
+    expect(sessionStore.syncLastMessageToBackend).toHaveBeenCalledWith('s-fill')
   })
 
   it('restoreFromSSEHistory：pending 恢复 deep_research 条目并同步会话，重复恢复跳过', () => {

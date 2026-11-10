@@ -35,9 +35,9 @@ export const createEventHandlers = (ctx) => {
     if (_approvalSyncTimers[sessionId]) clearTimeout(_approvalSyncTimers[sessionId])
     _approvalSyncTimers[sessionId] = setTimeout(() => {
       if (messageBackendId) {
-        sessionStore.syncMessageByBackendIdToBackend(sessionId, messageBackendId, { allowCreate: false }).catch(() => {})
+        sessionStore.syncMessageByBackendIdToBackend(sessionId, messageBackendId).catch(() => {})
       } else {
-        sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
+        sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
       }
       delete _approvalSyncTimers[sessionId]
     }, APPROVAL_SYNC_DEBOUNCE_MS)
@@ -199,7 +199,7 @@ export const createEventHandlers = (ctx) => {
         sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: 'timeout' })
       }
       // 同步审批状态到后端，防止刷新后状态丢失
-      sessionStore.syncLastMessageToBackend(effectiveSessionId, { allowCreate: false }).catch(() => {})
+      sessionStore.syncLastMessageToBackend(effectiveSessionId).catch(() => {})
     } else if (existingEntry?.taskId) {
       // 独立 deep_research：同步超时状态到 researchStore，
       // 否则 toolCall.approval.state 残留 pending 导致 isWaiting 仍为 true，审批面板不消失
@@ -290,7 +290,7 @@ export const createEventHandlers = (ctx) => {
     if (effectiveSessionId) {
       sessionStore.updateToolCallApprovalState(effectiveSessionId, toolCallId, 'processing')
       sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: 'processing' })
-      sessionStore.syncLastMessageToBackend(effectiveSessionId, { allowCreate: false }).catch(() => {})
+      sessionStore.syncLastMessageToBackend(effectiveSessionId).catch(() => {})
     } else if (existingEntry?.taskId) {
       // 独立 deep_research：同步审批状态到 researchStore（跨浏览器按钮禁用一致性）
       getResearchStore()
@@ -319,7 +319,7 @@ export const createEventHandlers = (ctx) => {
     if (effectiveSessionId) {
       sessionStore.updateToolCallApprovalState(effectiveSessionId, toolCallId, 'waiting')
       sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: 'waiting' })
-      sessionStore.syncLastMessageToBackend(effectiveSessionId, { allowCreate: false }).catch(() => {})
+      sessionStore.syncLastMessageToBackend(effectiveSessionId).catch(() => {})
     } else if (existingEntry?.taskId) {
       // 独立 deep_research：同步"等待同批"状态到 researchStore
       getResearchStore()
@@ -386,7 +386,7 @@ export const createEventHandlers = (ctx) => {
       sessionStore.updateToolCallApprovalState(effectiveSessionId, toolCallId, finalState)
       sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: finalState })
       // 同步审批状态到后端，防止刷新后状态丢失
-      sessionStore.syncLastMessageToBackend(effectiveSessionId, { allowCreate: false }).catch(() => {})
+      sessionStore.syncLastMessageToBackend(effectiveSessionId).catch(() => {})
     } else if (existingEntry?.taskId) {
       // 独立 deep_research：同步终态审批状态到 researchStore（跨浏览器一致性）
       getResearchStore()

@@ -13,10 +13,7 @@
 import { chatAPI } from '@/api/chat'
 import { useUserStore } from '../user'
 import { logger } from '../../utils/logger'
-import {
-  isApiSuccess,
-  transformFrontendMessageToBackend,
-} from '../../utils/sessionTransformers'
+import { transformFrontendMessageToBackend } from '../../utils/sessionTransformers'
 import {
   locateInSessions,
   setLastMessageField,
@@ -56,31 +53,19 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
     return false
   }
 
-  const addMessageToSession = async (sessionId, message, saveToBackend = true) => {
+  const addMessageToSession = (sessionId, message) => {
     const session = sessions.value.find(s => s.id === sessionId)
-    if (session) {
-      const messageWithVersions = {
-        ...message,
-        versions: [createMessageVersion(message)],
-        currentVersion: 0
-      }
-      session.messages.push(messageWithVersions)
-      session.messageCount = session.messages.length
-
-      if (saveToBackend && userStore.isLoggedIn) {
-        const backendMsg = transformFrontendMessageToBackend(messageWithVersions)
-        chatAPI.addMessage(sessionId, backendMsg).then(res => {
-          if (isApiSuccess(res) && res.data.data?.id) {
-            messageWithVersions.backendId = res.data.data.id
-          }
-        }).catch(error => {
-          logger.error('Failed to save message to backend:', error)
-        })
-      }
+    if (!session) return
+    const messageWithVersions = {
+      ...message,
+      versions: [createMessageVersion(message)],
+      currentVersion: 0
     }
+    session.messages.push(messageWithVersions)
+    session.messageCount = session.messages.length
   }
 
-  // 防止 syncLastMessageToBackend 并发调用导致创建重复消息
+  // 防止 syncLastMessageToBackend 并发调用导致重复 PATCH
   const _syncLocks = new Map()
   // 记录上次同步的消息签名，避免重复 PATCH 相同内容
   const _lastSyncSignatures = new Map()
@@ -100,16 +85,16 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
    * @param {string} sessionId
    */
   const flushPendingSync = async (sessionId) => {
-    await syncLastMessageToBackend(sessionId, { allowCreate: false })
+    await syncLastMessageToBackend(sessionId)
   }
 
   /**
-   * 同步最后一条消息到后端（PATCH 已有，或 POST 创建）
+   * 同步最后一条消息到后端（PATCH 已有消息）。
+   * 消息记录由后端 ChatStreamView 创建并经 WebSocket 广播 MESSAGE_ADDED，
+   * 本地尚未拿到 backendId 时跳过，等待广播补齐。
    * @param {string} sessionId
-   * @param {{ allowCreate?: boolean }} [options]
-   *   - allowCreate: 为 false 时禁止 POST 创建新消息（后端 SSE 负责创建）
    */
-  const syncLastMessageToBackend = async (sessionId, { allowCreate = true } = {}) => {
+  const syncLastMessageToBackend = async (sessionId) => {
     if (!userStore.isLoggedIn) return
 
     // 防止并发：如果已有同步操作在进行，等待它完成
@@ -123,31 +108,19 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
       if (!session || session.messages.length === 0) return
 
       const lastMessage = session.messages[session.messages.length - 1]
-      if (!lastMessage.backendId) {
-        if (!allowCreate) return  // 后端 SSE 流负责创建，前端禁止 POST
-        const backendMsg = transformFrontendMessageToBackend(lastMessage)
-        try {
-          const res = await chatAPI.addMessage(sessionId, backendMsg)
-          if (isApiSuccess(res) && res.data.data?.id) {
-            lastMessage.backendId = res.data.data.id
-          }
-        } catch (error) {
-          logger.error('Failed to sync message to backend:', error)
-        }
-      } else {
-        const backendMsg = transformFrontendMessageToBackend(lastMessage)
-        // 空壳保护：本地没有正文/工具/来源/审批时不 PATCH，
-        // 避免把后端已持久化的正文写成空（WS 断链场景）
-        if (!_hasSyncableContent(lastMessage)) return
-        // 签名检测：内容未变化则跳过 PATCH，避免流结束后重复请求
-        const signature = `${lastMessage.backendId}:${lastMessage.content?.length}:${lastMessage.toolCalls?.length}:${lastMessage.sources?.length}`
-        if (_lastSyncSignatures.get(sessionId) === signature) return
-        _lastSyncSignatures.set(sessionId, signature)
-        try {
-          await chatAPI.updateMessage(lastMessage.backendId, backendMsg)
-        } catch (error) {
-          logger.error('Failed to update message in backend:', error)
-        }
+      if (!lastMessage.backendId) return
+      const backendMsg = transformFrontendMessageToBackend(lastMessage)
+      // 空壳保护：本地没有正文/工具/来源/审批时不 PATCH，
+      // 避免把后端已持久化的正文写成空（WS 断链场景）
+      if (!_hasSyncableContent(lastMessage)) return
+      // 签名检测：内容未变化则跳过 PATCH，避免流结束后重复请求
+      const signature = `${lastMessage.backendId}:${lastMessage.content?.length}:${lastMessage.toolCalls?.length}:${lastMessage.sources?.length}`
+      if (_lastSyncSignatures.get(sessionId) === signature) return
+      _lastSyncSignatures.set(sessionId, signature)
+      try {
+        await chatAPI.updateMessage(lastMessage.backendId, backendMsg)
+      } catch (error) {
+        logger.error('Failed to update message in backend:', error)
       }
     })()
 
@@ -163,32 +136,19 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
    * 按消息索引精确同步指定消息到后端（useStreamFinalizer 依赖）
    * @param {string} sessionId
    * @param {number} messageIndex
-   * @param {{ allowCreate?: boolean }} [options]
    */
-  const syncMessageToBackend = async (sessionId, messageIndex, { allowCreate = true } = {}) => {
+  const syncMessageToBackend = async (sessionId, messageIndex) => {
     if (!userStore.isLoggedIn) return
     const session = sessions.value.find(s => s.id === sessionId)
     if (!session?.messages || !session.messages[messageIndex]) return
     const message = session.messages[messageIndex]
-    if (!message.backendId) {
-      if (!allowCreate) return
-      const backendMsg = transformFrontendMessageToBackend(message)
-      try {
-        const res = await chatAPI.addMessage(sessionId, backendMsg)
-        if (isApiSuccess(res) && res.data.data?.id) {
-          message.backendId = res.data.data.id
-        }
-      } catch (error) {
-        logger.error('Failed to sync message to backend:', error)
-      }
-    } else {
-      if (!_hasSyncableContent(message)) return
-      const backendMsg = transformFrontendMessageToBackend(message)
-      try {
-        await chatAPI.updateMessage(message.backendId, backendMsg)
-      } catch (error) {
-        logger.error('Failed to update message in backend:', error)
-      }
+    if (!message.backendId) return
+    if (!_hasSyncableContent(message)) return
+    const backendMsg = transformFrontendMessageToBackend(message)
+    try {
+      await chatAPI.updateMessage(message.backendId, backendMsg)
+    } catch (error) {
+      logger.error('Failed to update message in backend:', error)
     }
   }
 
@@ -197,7 +157,7 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
   const _debouncedToolSync = (sessionId) => {
     if (_toolSyncTimers[sessionId]) clearTimeout(_toolSyncTimers[sessionId])
     _toolSyncTimers[sessionId] = setTimeout(() => {
-      syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
+      syncLastMessageToBackend(sessionId).catch(() => {})
       delete _toolSyncTimers[sessionId]
     }, 300)
   }
@@ -206,9 +166,8 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
    * 按 messageBackendId 精确同步指定消息到后端
    * @param {string} sessionId
    * @param {string} messageBackendId - 后端消息 ID
-   * @param {{ allowCreate?: boolean }} [options]
    */
-  const syncMessageByBackendIdToBackend = async (sessionId, messageBackendId, { allowCreate = true } = {}) => {
+  const syncMessageByBackendIdToBackend = async (sessionId, messageBackendId) => {
     if (!userStore.isLoggedIn || !messageBackendId) return
 
     const session = sessions.value.find(s => s.id === sessionId)
@@ -222,24 +181,11 @@ export const createMessageFlowSlice = (sessionList, runtimeDeps) => {
       return
     }
 
-    if (!message.backendId) {
-      if (!allowCreate) return
-      const backendMsg = transformFrontendMessageToBackend(message)
-      try {
-        const res = await chatAPI.addMessage(sessionId, backendMsg)
-        if (isApiSuccess(res) && res.data.data?.id) {
-          message.backendId = res.data.data.id
-        }
-      } catch (error) {
-        logger.error('Failed to sync message by backendId to backend:', error)
-      }
-    } else {
-      const backendMsg = transformFrontendMessageToBackend(message)
-      try {
-        await chatAPI.updateMessage(message.backendId, backendMsg)
-      } catch (error) {
-        logger.error('Failed to update message by backendId in backend:', error)
-      }
+    const backendMsg = transformFrontendMessageToBackend(message)
+    try {
+      await chatAPI.updateMessage(message.backendId, backendMsg)
+    } catch (error) {
+      logger.error('Failed to update message by backendId in backend:', error)
     }
   }
 

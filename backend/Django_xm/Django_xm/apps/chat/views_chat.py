@@ -458,24 +458,13 @@ class ChatStreamView(BaseChatAPIView):
         original_attachment_ids = list(attachment_ids)
         original_message = data["message"]  # 保存原始消息，用于深度研究任务名等场景
         data["_original_message"] = original_message
-        pending_progress = []
         if attachment_ids:
             try:
                 from Django_xm.apps.attachments.services.cross_app import get_attachment_service
 
                 att_svc = get_attachment_service()
 
-                def progress_callback(stage, message):
-                    pending_progress.append(
-                        {
-                            "type": "attachment_processing",
-                            "data": {"stage": stage, "message": message},
-                        }
-                    )
-
-                user_content = att_svc.build_user_content(
-                    data["message"], attachment_ids, progress_callback=progress_callback
-                )
+                user_content = att_svc.build_user_content(data["message"], attachment_ids)
                 if user_content["type"] == "text":
                     data["message"] = user_content["content"]
                     data["_preloaded_attachment_type"] = "text"
@@ -1000,39 +989,12 @@ class ChatSessionDetailView(BaseChatAPIView):
         return success_response(data=response_data, message="会话删除成功")
 
 
-class ChatMessageCreateView(BaseChatAPIView):
-    @extend_schema(request=ChatMessageSerializer, responses=ChatMessageSerializer)
-    @log_view_action
-    @transaction.atomic
-    def post(self, request, session_id):
-        from Django_xm.apps.cache_manager.services.cache_service import invalidate_chat_cache
+class ChatMessageCollectionView(BaseChatAPIView):
+    """会话消息集合资源：只承载 DELETE（清空会话消息）。
 
-        session = self.get_session_or_404(session_id, request.user)
-        if not session:
-            raise NotFound("会话不存在")
-
-        serializer = ChatMessageSerializer(data=request.data, context={"research_task_map": {}})
-        if not serializer.is_valid():
-            logger.warning(f"消息验证失败: {serializer.errors}, 请求数据: {request.data}")
-            raise ValidationError(serializer.errors)
-
-        message = serializer.save(session=session)
-
-        attachment_ids = request.data.get("attachment_ids") or []
-        if attachment_ids:
-            from Django_xm.apps.attachments.services.cross_app import get_attachment_service
-
-            get_attachment_service().link_attachments_to_message(message, attachment_ids)
-
-        invalidate_chat_cache(user_id=request.user.id)
-
-        return success_response(
-            data=ChatMessageSerializer(
-                message, context={"research_task_map": build_research_task_map([message])}
-            ).data,
-            message="消息发送成功",
-            http_status=status.HTTP_201_CREATED,
-        )
+    HTTP 请求链路中，单条消息的创建统一由 ChatStreamView 在流式开始时完成
+    并广播 MESSAGE_ADDED；本视图只负责清空消息。
+    """
 
     @extend_schema(exclude=True)
     @log_view_action
@@ -1040,10 +1002,10 @@ class ChatMessageCreateView(BaseChatAPIView):
     def delete(self, request, session_id):
         """清空会话全部消息（软删除 + checkpoint 重建 + 广播同步）。
 
-        与 POST 共用集合资源路径（dj-06 资源化路由约定：资源路径唯一，方法由视图分发），
-        供前端 /clear 命令一键清空当前会话消息。语义与链式截断
-        （ChatMessagePairDeleteView）保持一致：软删除、事务提交后重建 checkpoint、
-        广播 MESSAGES_DELETED 多端同步。
+        集合资源路径仅由 DELETE 承载（dj-06 资源化路由约定：资源路径唯一，
+        方法由视图分发），供前端 /clear 命令一键清空当前会话消息。
+        语义与链式截断（ChatMessagePairDeleteView）保持一致：软删除、
+        事务提交后重建 checkpoint、广播 MESSAGES_DELETED 多端同步。
         """
         session = self.get_session_or_404(session_id, request.user)
         if not session:

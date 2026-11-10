@@ -22,7 +22,6 @@ import { ref } from 'vue'
 
 vi.mock('../../api/chat', () => ({
   chatAPI: {
-    addMessage: vi.fn().mockResolvedValue({ data: { data: {} } }),
     updateMessage: vi.fn().mockResolvedValue({ data: { data: {} } }),
     deleteSession: vi.fn().mockResolvedValue({ data: { data: {} } }),
   },

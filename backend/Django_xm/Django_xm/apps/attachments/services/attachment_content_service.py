@@ -110,7 +110,6 @@ class AttachmentService:
         self,
         user_message: str,
         attachment_ids: list[int],
-        progress_callback=None,
     ) -> dict[str, Any]:
         """构建用户消息内容。
 

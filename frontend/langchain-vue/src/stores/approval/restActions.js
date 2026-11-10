@@ -144,7 +144,7 @@ export const createRestActions = (ctx) => {
       // 同步消息到后端
       if (sessionId) {
         try {
-          await sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false })
+          await sessionStore.syncLastMessageToBackend(sessionId)
         } catch (syncErr) {
           logger.error('[ApprovalStore] 审批后同步消息失败:', syncErr)
         }
@@ -181,7 +181,7 @@ export const createRestActions = (ctx) => {
         } catch (e) { logger.warn('[ApprovalStore] 更新 researchStore pending 失败:', e) }
       }
       // 同步恢复后的状态到后端
-      sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
+      sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
     }
   }
 
@@ -241,7 +241,7 @@ export const createRestActions = (ctx) => {
       if (sessionId) {
         sessionStore.updateToolCallApprovalState(sessionId, toolCallId, 'waiting')
         sessionStore.setApprovalToLastMessage(sessionId, { ...resData, state: 'waiting' })
-        sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
+        sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
       }
       ElMessage.info(resData.message || '本工具已审批，等待同批次其他工具审批完成后开始执行...')
       const err = new Error('waiting_for_others')
@@ -259,7 +259,7 @@ export const createRestActions = (ctx) => {
         pendingApprovals.value.delete(toolCallId)
         sessionStore.updateToolCallApprovalState(sessionId, toolCallId, idempotentState)
         sessionStore.setApprovalToLastMessage(sessionId, { ...resData, state: idempotentState })
-        sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
+        sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
       }
       logger.info(`[ApprovalStore] 审批幂等响应：${toolCallId} 状态=${idempotentState}`)
       const err = new Error('idempotent')

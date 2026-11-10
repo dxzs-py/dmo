@@ -438,39 +438,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/ChatSessionDetail'
           description: ''
-  /api/v1/chat/sessions/{session_id}/messages/:
-    post:
-      operationId: chat_sessions_messages_create
-      parameters:
-      - in: path
-        name: session_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - chat
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ChatMessage'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/ChatMessage'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/ChatMessage'
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ChatMessage'
-          description: ''
   /api/v1/chat/sessions/create/:
     post:
       operationId: chat_sessions_create_create

@@ -11,7 +11,7 @@ import { logger } from '../utils/logger'
  * 用法（Pinia store action 内亦可安全使用，本 composable 不注册生命周期钩子，
  * 清理由调用方 finally 保证）：
  *   const { startStreamSyncPolling, stopStreamSyncPolling } = useStreamSyncPolling(
- *     () => sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false })
+ *     () => sessionStore.syncLastMessageToBackend(sessionId)
  *   )
  *   try {
  *     startStreamSyncPolling()

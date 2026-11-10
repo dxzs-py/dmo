@@ -1,10 +1,9 @@
 """DELETE /chat/sessions/<session_id>/messages/ 清空会话消息测试（ARCH-18）。
 
 背景（ARCH-18）：
-- 前端 /clear 命令调用 DELETE /chat/sessions/<sid>/messages/，
-  但该集合路径此前仅注册 POST（ChatMessageCreateView），运行时 405；
-- 修复：ChatMessageCreateView 补 delete 方法，软删除全部消息 +
-  checkpoint 重建 + 广播 MESSAGES_DELETED，语义对齐单条/链式删除。
+- 前端 /clear 命令调用 DELETE /chat/sessions/<sid>/messages/ 清空会话消息；
+- 实现：ChatMessageCollectionView.delete 软删除全部消息 + checkpoint 重建 +
+  广播 MESSAGES_DELETED，语义对齐单条/链式删除。
 
 覆盖：
 - 清空成功：200 + 全部消息软删除（记录保留可审计）
@@ -33,7 +32,7 @@ CHAT_URL = "/api/v1/chat/"
 
 
 class ClearSessionMessagesTests(TestCase):
-    """ChatMessageCreateView.delete 清空会话消息行为。"""
+    """ChatMessageCollectionView.delete 清空会话消息行为。"""
 
     def setUp(self):
         self.client = APIClient()

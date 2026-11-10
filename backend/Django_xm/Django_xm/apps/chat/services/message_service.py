@@ -1,13 +1,11 @@
 """
-消息持久化服务
+会话查询服务
+
+按属主与 session_id 获取会话；prefetch_attachments 用于会话详情序列化前
+预取消息与附件，避免 N+1。
 """
 
-import logging
-
 from django.core.exceptions import ObjectDoesNotExist
-from django.db import transaction
-
-logger = logging.getLogger(__name__)
 
 
 def get_user_session(user, session_id, prefetch_attachments=False):
@@ -37,39 +35,3 @@ def get_user_session(user, session_id, prefetch_attachments=False):
         return queryset.get(session_id=session_id, user=user, is_deleted=False)
     except ObjectDoesNotExist:
         return None
-
-
-class MessagePersistenceService:
-    @transaction.atomic
-    def save_message_pair(
-        self,
-        session,
-        user_content: str,
-        ai_content: str,
-        user_role: str = "user",
-        ai_role: str = "assistant",
-        attachment_ids: list[int] | None = None,
-        token_count: int = 0,
-        token_detail: dict | None = None,
-        model: str | None = None,
-        response_time: float = 0,
-    ):
-        from Django_xm.apps.attachments.services.cross_app import get_attachment_service
-        from Django_xm.apps.chat.models import ChatMessage
-
-        user_message = ChatMessage.objects.create(session=session, role=user_role, content=user_content)
-
-        if attachment_ids:
-            get_attachment_service().link_attachments_to_message(user_message, attachment_ids)
-
-        ai_message = ChatMessage.objects.create(
-            session=session,
-            role=ai_role,
-            content=ai_content,
-            token_count=token_count,
-            token_detail=token_detail or {},
-            model=model,
-            response_time=response_time,
-        )
-
-        return user_message, ai_message

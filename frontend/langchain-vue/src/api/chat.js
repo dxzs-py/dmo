@@ -99,15 +99,6 @@ export const chatAPI = {
     return apiClient.delete(`/chat/sessions/${sessionId}/`, { params })
   },
 
-  addMessage(sessionId, data) {
-    if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
-    const messageData = { ...data }
-    const maxLen = settings.apiValidation.historyMessageMaxLength
-    if (messageData.content && messageData.content.length > maxLen) messageData.content = messageData.content.slice(0, maxLen)
-    if (!['user', 'assistant', 'system'].includes(messageData.role)) messageData.role = 'user'
-    return apiClient.post(`/chat/sessions/${sessionId}/messages/`, messageData)
-  },
-
   updateMessage(messageId, data) {
     if (!messageId) return Promise.reject(new Error('消息ID不能为空'))
     const updateData = { ...data }
